@@ -1,0 +1,148 @@
+.libraryPanel {
+  width: 230px;
+  background-color: var(--mx-bg-panel);
+  border-left: 1px solid var(--mx-border-light);
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  flex-shrink: 0;
+  overflow: hidden;
+  z-index: 20;
+}
+
+.panelHeader {
+  height: 28px;
+  background-color: var(--mx-bg-panel-dark);
+  color: var(--mx-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--mx-border-light);
+}
+
+.panelHeaderTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbolList {
+  flex: 1;
+  overflow-y: auto;
+  background-color: #141518;
+  margin: 6px;
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-md);
+  font-size: var(--mx-font-size-base);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.symbolItem {
+  padding: 6px 8px;
+  border-radius: var(--mx-radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--mx-text-muted);
+  transition: all 0.12s ease;
+}
+
+.symbolItem:hover {
+  background-color: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+}
+
+.symbolItem.selected {
+  background-color: var(--mx-selection-bg);
+  color: var(--mx-text-inverse);
+  border-left: 2px solid var(--mx-selection);
+}
+
+.symbolIcon {
+  font-size: 12px;
+}
+
+.symbolName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.symbolKindBadge {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: var(--mx-radius-xs);
+  background-color: var(--mx-bg-input);
+  color: var(--mx-text-subtle);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.symbolItem.selected .symbolKindBadge {
+  background-color: var(--mx-accent-subtle);
+  color: var(--mx-accent);
+}
+
+.emptyNotice {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--mx-text-subtle);
+  font-size: var(--mx-font-size-sm);
+  line-height: 1.5;
+}
+
+.libraryFooter {
+  padding: 8px;
+  border-top: 1px solid var(--mx-border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background-color: var(--mx-bg-panel-dark);
+}
+
+.buttonRow {
+  display: flex;
+  gap: 6px;
+}
+
+.libBtn {
+  flex: 1;
+  height: 26px;
+  background-color: var(--mx-bg-input);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-sm);
+  color: var(--mx-text-main);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.12s ease;
+}
+
+.libBtn:hover:not(:disabled) {
+  background-color: var(--mx-bg-input-hover);
+  border-color: var(--mx-accent);
+}
+
+.libBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

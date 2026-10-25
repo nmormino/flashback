@@ -1,0 +1,390 @@
+.pickerPopover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  width: 290px;
+  background-color: var(--mx-bg-panel, #1e2024);
+  border: 1px solid var(--mx-border, #333842);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  padding: 12px;
+  z-index: 1200;
+  color: var(--mx-text, #e2e8f0);
+  font-size: 12px;
+  user-select: none;
+}
+
+.pickerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--mx-border-subtle, #282c34);
+}
+
+.pickerTitle {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--mx-text-bright, #ffffff);
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: var(--mx-text-muted, #94a3b8);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.closeBtn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+/* Mode tabs: [ Solid ] [ Linear Gradient ] [ Radial Gradient ] */
+.modeTabs {
+  display: flex;
+  background-color: var(--mx-bg-canvas, #121316);
+  border-radius: 4px;
+  padding: 2px;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.modeTab {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--mx-text-muted, #94a3b8);
+  padding: 5px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.modeTab:hover {
+  color: var(--mx-text, #e2e8f0);
+}
+
+.modeTab.active {
+  background-color: var(--mx-accent, #3b82f6);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Gradient interactive bar and stop pins */
+.gradientBarContainer {
+  margin: 8px 0 16px 0;
+  position: relative;
+}
+
+.gradientBar {
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: crosshair;
+  position: relative;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.stopsTrack {
+  position: relative;
+  height: 18px;
+  margin-top: 4px;
+}
+
+.stopPin {
+  position: absolute;
+  top: 0;
+  width: 14px;
+  height: 16px;
+  transform: translateX(-50%);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 10;
+}
+
+.stopPinArrow {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 6px solid #e2e8f0;
+}
+
+.stopPinSquare {
+  width: 12px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1.5px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.stopPin.selected .stopPinArrow {
+  border-bottom-color: var(--mx-accent, #3b82f6);
+}
+
+.stopPin.selected .stopPinSquare {
+  border-color: var(--mx-accent, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5), 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+
+/* Stop details row */
+.stopDetailsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 6px 8px;
+  background-color: var(--mx-bg-canvas, #121316);
+  border-radius: 4px;
+}
+
+.stopColorPickerWrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stopColorPreview {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.hiddenColorInput {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  width: 40px;
+  height: 40px;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.hexInput {
+  width: 65px;
+  height: 22px;
+  background-color: var(--mx-bg-panel, #1e2024);
+  border: 1px solid var(--mx-border, #333842);
+  border-radius: 3px;
+  color: var(--mx-text, #e2e8f0);
+  font-family: var(--mx-font-mono, monospace);
+  font-size: 11px;
+  padding: 2px 4px;
+  box-sizing: border-box;
+}
+
+.offsetInputWrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--mx-text-muted, #94a3b8);
+}
+
+.offsetInput {
+  width: 42px;
+  height: 22px;
+  background-color: var(--mx-bg-panel, #1e2024);
+  border: 1px solid var(--mx-border, #333842);
+  border-radius: 3px;
+  color: var(--mx-text, #e2e8f0);
+  font-size: 11px;
+  text-align: center;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
+.deleteStopBtn {
+  background: none;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.deleteStopBtn:hover:not(:disabled) {
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.deleteStopBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  border-color: transparent;
+  color: var(--mx-text-muted, #94a3b8);
+}
+
+/* Linear Gradient Angle controls */
+.angleSection {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--mx-border-subtle, #282c34);
+}
+
+.angleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.angleDial {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--mx-border, #333842);
+  background-color: var(--mx-bg-canvas, #121316);
+  position: relative;
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+  transition: border-color 0.15s ease;
+}
+
+.angleDial:hover,
+.angleDial:active {
+  border-color: var(--mx-accent, #3b82f6);
+  cursor: grabbing;
+}
+
+.angleDialNeedle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 11px;
+  height: 2px;
+  background-color: var(--mx-accent, #3b82f6);
+  transform-origin: 0% 50%;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.angleQuickPills {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.anglePill {
+  background-color: var(--mx-bg-canvas, #121316);
+  border: 1px solid var(--mx-border, #333842);
+  color: var(--mx-text-muted, #94a3b8);
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.anglePill:hover {
+  color: var(--mx-text, #e2e8f0);
+}
+
+.anglePill.active {
+  background-color: rgba(59, 130, 246, 0.2);
+  border-color: var(--mx-accent, #3b82f6);
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+/* Presets section */
+.presetsSection {
+  margin-top: 8px;
+}
+
+.presetsTitle {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mx-text-muted, #94a3b8);
+  margin-bottom: 6px;
+}
+
+.presetsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.presetCard {
+  background-color: var(--mx-bg-canvas, #121316);
+  border: 1px solid var(--mx-border, #333842);
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  transition: all 0.12s ease;
+}
+
+.presetCard:hover {
+  border-color: var(--mx-accent, #3b82f6);
+  transform: translateY(-1px);
+}
+
+.presetSwatch {
+  width: 100%;
+  height: 18px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.presetName {
+  font-size: 9px;
+  color: var(--mx-text-muted, #94a3b8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  width: 100%;
+}
+
+/* Solid Mode Palette */
+.solidColorSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 10px 0;
+}
+
+.solidPaletteGrid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+
+.solidSwatchBtn {
+  width: 100%;
+  height: 24px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+}
+
+.solidSwatchBtn:hover {
+  transform: scale(1.08);
+}

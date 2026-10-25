@@ -1,0 +1,163 @@
+.toolsPanel {
+  width: 52px;
+  height: 100%;
+  background-color: var(--mx-bg-panel);
+  border-right: 1px solid var(--mx-border-light);
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  flex-shrink: 0;
+  z-index: 20;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.panelHeader {
+  height: 28px;
+  background-color: var(--mx-bg-panel-dark);
+  color: var(--mx-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--mx-border-light);
+}
+
+.toolGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  align-items: center;
+}
+
+.toolBtn {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--mx-radius-md);
+  color: var(--mx-text-muted);
+  cursor: pointer;
+  padding: 0;
+  outline: none;
+  transition: all 0.12s ease;
+}
+
+.toolBtn:hover {
+  background-color: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+}
+
+.toolBtn.active {
+  background-color: var(--mx-accent);
+  color: #ffffff;
+  border-color: var(--mx-accent);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+}
+
+.iconSvg {
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.separator {
+  height: 1px;
+  margin: 6px 8px;
+  background-color: var(--mx-border-light);
+}
+
+.colorsSection {
+  padding: 8px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.sectionLabel {
+  font-size: 9px;
+  color: var(--mx-text-subtle);
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.swatchesContainer {
+  position: relative;
+  width: 36px;
+  height: 36px;
+}
+
+.strokeSwatch {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--mx-radius-xs);
+  border: 1.5px solid var(--mx-border-light);
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease;
+}
+
+.strokeSwatch:hover {
+  transform: scale(1.1);
+  border-color: var(--mx-accent);
+}
+
+.fillSwatch {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--mx-radius-xs);
+  border: 1.5px solid var(--mx-border-light);
+  cursor: pointer;
+  z-index: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease;
+}
+
+.fillSwatch:hover {
+  transform: scale(1.1);
+  border-color: var(--mx-accent);
+}
+
+.swapBtn {
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  color: var(--mx-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mx-radius-xs);
+  transition: color 0.1s ease;
+}
+
+.swapBtn:hover {
+  color: var(--mx-text-main);
+  background-color: var(--mx-bg-panel-hover);
+}
+
+.hiddenColorInput {
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}

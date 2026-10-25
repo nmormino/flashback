@@ -1,0 +1,15 @@
+{
+  "name": "flashback",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.4",
+    "typescript": "^5.7.3"
+  }
+}

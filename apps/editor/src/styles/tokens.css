@@ -1,0 +1,114 @@
+/**
+ * Modern Studio Design Tokens
+ * Clean, dark/neutral modern UI (Figma / After Effects / Rive inspired)
+ * Strictly native CSS variables. No Tailwind.
+ */
+:root {
+  /* Surfaces */
+  --mx-bg-app: #121316;
+  --mx-bg-panel: #1b1c20;
+  --mx-bg-panel-dark: #16171a;
+  --mx-bg-panel-hover: #26282e;
+  --mx-bg-header: #202227;
+  --mx-bg-header-text: #f0f1f3;
+  --mx-bg-input: #23252b;
+  --mx-bg-input-hover: #2b2e35;
+  --mx-bg-input-focus: #18191d;
+
+  /* Stage Matte & Artboard */
+  --mx-stage-matte: #0e0f12;
+  --mx-stage-border: #2a2c33;
+  --mx-stage-grid: rgba(255, 255, 255, 0.04);
+  
+  /* Timeline */
+  --mx-timeline-header: #1b1c20;
+  --mx-timeline-grid: #16171a;
+  --mx-timeline-line: #26282e;
+  --mx-timeline-keyframe: #ffffff;
+  --mx-timeline-tween-motion: #31589c;
+  --mx-timeline-tween-shape: #2b6d4f;
+  --mx-timeline-empty: #1f2025;
+  --mx-timeline-playhead: #ff334b;
+  --mx-timeline-track-active: rgba(255, 51, 75, 0.08);
+
+  /* Typography & Text */
+  --mx-text-main: #e2e4e9;
+  --mx-text-muted: #8b8f9a;
+  --mx-text-subtle: #5a5e6a;
+  --mx-text-inverse: #ffffff;
+  --mx-text-accent: #3b82f6;
+
+  /* Borders & Dividers */
+  --mx-border-light: #2c2f36;
+  --mx-border-shadow: #1e2025;
+  --mx-border-dark: #121316;
+  --mx-border-focus: #3b82f6;
+
+  /* Accents & States */
+  --mx-accent: #3b82f6;
+  --mx-accent-hover: #2563eb;
+  --mx-accent-subtle: rgba(59, 130, 246, 0.15);
+  --mx-selection: #3b82f6;
+  --mx-selection-bg: rgba(59, 130, 246, 0.2);
+  --mx-selection-text: #ffffff;
+  --mx-active-tool: #3b82f6;
+
+  /* Feedback */
+  --mx-success: #10b981;
+  --mx-warning: #f59e0b;
+  --mx-error: #ef4444;
+
+  /* Typography */
+  --mx-font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mx-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --mx-font-size-xs: 10px;
+  --mx-font-size-sm: 11px;
+  --mx-font-size-base: 12px;
+  --mx-font-size-md: 13px;
+
+  /* Radii */
+  --mx-radius-xs: 3px;
+  --mx-radius-sm: 4px;
+  --mx-radius-md: 6px;
+  --mx-radius-lg: 8px;
+
+  /* Shadows */
+  --mx-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --mx-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --mx-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body, html, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--mx-font-family);
+  font-size: var(--mx-font-size-base);
+  background-color: var(--mx-bg-app);
+  color: var(--mx-text-main);
+  letter-spacing: -0.01em;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b2e35;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b3f49;
+}

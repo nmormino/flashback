@@ -1,0 +1,298 @@
+.propertiesContainer {
+  display: flex;
+  flex: 1;
+  padding: 10px 16px;
+  background-color: var(--mx-bg-panel);
+  gap: 20px;
+  overflow-x: auto;
+  align-items: flex-start;
+  font-size: var(--mx-font-size-base);
+}
+
+.propSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 150px;
+  background-color: var(--mx-bg-panel-dark);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-md);
+  padding: 8px 12px;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mx-text-muted);
+  border-bottom: 1px solid var(--mx-border-light);
+  padding-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fieldRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fieldLabel {
+  width: 55px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mx-text-muted);
+  flex-shrink: 0;
+}
+
+.textInput {
+  width: 70px;
+  height: 24px;
+  background-color: var(--mx-bg-input);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-sm);
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--mx-font-mono);
+  color: var(--mx-text-main);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.textInput:focus {
+  border-color: var(--mx-accent);
+}
+
+.colorInputWrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.colorInput {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+.swatchesRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.swatchBtn {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--mx-radius-sm);
+  border: 1.5px solid var(--mx-border-light);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+
+.swatchBtn:hover {
+  transform: scale(1.15);
+  border-color: var(--mx-accent);
+}
+
+.swatchBtn.active {
+  border-color: var(--mx-accent);
+  box-shadow: 0 0 0 2px var(--mx-accent-subtle);
+}
+
+.swatchTransparent {
+  background-color: #1e2025;
+  background-image:
+    linear-gradient(45deg, #2a2d35 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2d35 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2d35 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2d35 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0px;
+}
+
+.presetPills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.presetPill {
+  background-color: var(--mx-bg-input);
+  border: 1px solid var(--mx-border-light);
+  color: var(--mx-text-muted);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--mx-radius-sm);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.presetPill:hover {
+  color: var(--mx-text-main);
+  border-color: var(--mx-accent);
+}
+
+.presetPill.active {
+  background-color: var(--mx-accent-subtle);
+  border-color: var(--mx-accent);
+  color: var(--mx-accent);
+  font-weight: 600;
+}
+
+.typeBadge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--mx-accent);
+  background-color: var(--mx-accent-subtle);
+  padding: 2px 6px;
+  border-radius: var(--mx-radius-sm);
+  text-transform: uppercase;
+}
+
+.helperNote {
+  font-size: 10px;
+  color: var(--mx-text-subtle);
+  line-height: 1.3;
+  margin-top: 2px;
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rangeSlider {
+  flex: 1;
+  height: 4px;
+  background: var(--mx-border-light);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--mx-accent);
+}
+
+.selectInput {
+  height: 24px;
+  background-color: var(--mx-bg-input);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-sm);
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--mx-text-main);
+  outline: none;
+  cursor: pointer;
+}
+
+.selectInput:focus {
+  border-color: var(--mx-accent);
+}
+
+.addFontSmallBtn {
+  background: transparent;
+  border: 1px solid var(--mx-accent);
+  color: var(--mx-accent);
+  border-radius: var(--mx-radius-xs);
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.addFontSmallBtn:hover {
+  background: var(--mx-accent);
+  color: #ffffff;
+}
+
+.alignBtnGroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background-color: var(--mx-bg-input);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-xs);
+  padding: 1px;
+}
+
+.alignBtn {
+  width: 22px;
+  height: 20px;
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  color: var(--mx-text-muted);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.alignBtn:hover:not(.active) {
+  background-color: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+}
+
+.alignBtn.active {
+  background-color: var(--mx-accent);
+  color: #ffffff;
+}
+
+.editMasterBtn {
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: var(--mx-accent, #3b82f6);
+  border-radius: var(--mx-radius-xs, 3px);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.editMasterBtn:hover {
+  background: var(--mx-accent, #3b82f6);
+  color: #ffffff;
+}
+
+.editScriptBtn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+  border-radius: var(--mx-radius-xs, 4px);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.editScriptBtn:hover {
+  background: var(--mx-accent, #3b82f6);
+  color: #ffffff;
+  border-color: var(--mx-accent, #3b82f6);
+}

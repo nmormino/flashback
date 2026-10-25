@@ -1,0 +1,151 @@
+.workspace {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--mx-bg-app);
+  color: var(--mx-text-main);
+  font-family: var(--mx-font-family);
+}
+
+/* Main middle workspace: Tools spans full height on the left, Stage & Bottom Tray in the center, Library on the right */
+.mainLayout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+  width: 100%;
+}
+
+.stageAndBottomArea {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.stageWrapper {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}
+
+/* Center area takes max screen area: Tools on left, Stage in middle, Library on right */
+.centerArea {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}
+
+/* Bottom Multi-Tab Inspector: Timeline, Properties, Scripts */
+.bottomInspector {
+  background-color: var(--mx-bg-panel);
+  border-top: 1px solid var(--mx-border-light);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+  z-index: 30;
+}
+
+.bottomInspector.collapsed {
+  height: 32px !important;
+}
+
+/* Height resizer drag handle at the top edge of bottom pane */
+.resizer {
+  height: 5px;
+  width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: ns-resize;
+  z-index: 50;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.resizer:hover,
+.resizer.active {
+  background-color: var(--mx-accent);
+}
+
+.inspectorTabBar {
+  height: 32px;
+  min-height: 32px;
+  background-color: var(--mx-bg-panel-dark);
+  border-bottom: 1px solid var(--mx-border-light);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 6px;
+  user-select: none;
+}
+
+.tabBtn {
+  height: 24px;
+  padding: 0 12px;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--mx-radius-sm);
+  color: var(--mx-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  outline: none;
+  transition: all 0.12s ease;
+}
+
+.tabBtn:hover:not(.active) {
+  background-color: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+}
+
+.tabBtn.active {
+  background-color: var(--mx-bg-panel);
+  border-color: var(--mx-border-light);
+  color: var(--mx-accent);
+  font-weight: 600;
+}
+
+.collapseToggleBtn {
+  margin-left: auto;
+  height: 22px;
+  padding: 0 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--mx-radius-xs);
+  color: var(--mx-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  transition: all 0.12s ease;
+}
+
+.collapseToggleBtn:hover {
+  background-color: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+}
+
+.tabContent {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+}

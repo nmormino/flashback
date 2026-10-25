@@ -1,0 +1,87 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: transparent;
+}
+
+.contextMenu {
+  position: fixed;
+  min-width: 190px;
+  max-width: 280px;
+  background-color: var(--mx-bg-panel);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-md);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), 0 2px 8px rgba(0, 0, 0, 0.4);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  user-select: none;
+  z-index: 1000;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: contextFadeIn 0.08s ease-out;
+}
+
+@keyframes contextFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: var(--mx-radius-xs);
+  background: transparent;
+  border: none;
+  color: var(--mx-text-main);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  outline: none;
+  transition: all 0.08s ease;
+  width: 100%;
+}
+
+.menuItem:hover:not(:disabled) {
+  background-color: var(--mx-accent);
+  color: #ffffff;
+}
+
+.menuItem.danger:hover:not(:disabled) {
+  background-color: #ef4444;
+  color: #ffffff;
+}
+
+.menuItem:disabled {
+  color: var(--mx-text-subtle);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.shortcut {
+  font-size: 11px;
+  font-family: var(--mx-font-mono);
+  color: var(--mx-text-subtle);
+  margin-left: 16px;
+}
+
+.menuItem:hover:not(:disabled) .shortcut {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.separator {
+  height: 1px;
+  background-color: var(--mx-border-light);
+  margin: 4px 2px;
+}

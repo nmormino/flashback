@@ -1,0 +1,130 @@
+.modalOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modalWindow {
+  background-color: var(--mx-bg-panel);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-lg);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+.titleBar {
+  height: 32px;
+  background-color: var(--mx-bg-panel-dark);
+  color: var(--mx-text-main);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--mx-border-light);
+}
+
+.titleText {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.closeButton {
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--mx-text-muted);
+  border-radius: var(--mx-radius-xs);
+  transition: all 0.1s ease;
+}
+
+.closeButton:hover {
+  background-color: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+}
+
+.playerMatte {
+  background-color: #0e0f12;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.playerViewport {
+  background-color: #ffffff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.controlsBar {
+  height: 36px;
+  background-color: var(--mx-bg-panel-dark);
+  border-top: 1px solid var(--mx-border-light);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.controlBtn {
+  height: 24px;
+  padding: 0 10px;
+  background-color: var(--mx-bg-input);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-sm);
+  color: var(--mx-text-main);
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+
+.controlBtn:hover {
+  background-color: var(--mx-bg-input-hover);
+  border-color: var(--mx-accent);
+}
+
+.statusText {
+  margin-left: auto;
+  font-family: var(--mx-font-mono);
+  font-size: 11px;
+  color: var(--mx-text-muted);
+}
+
+.errorBanner {
+  padding: 8px 12px;
+  background-color: rgba(239, 68, 68, 0.15);
+  border-bottom: 1px solid var(--mx-error);
+  color: var(--mx-error);
+  font-size: 12px;
+}
