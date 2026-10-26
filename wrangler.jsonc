@@ -1,0 +1,6 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "flashback",
+  "pages_build_output_dir": "apps/editor/dist",
+  "compatibility_date": "2024-10-01"
+}

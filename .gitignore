@@ -30,3 +30,6 @@ Thumbs.db
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+
+# Internal AI context & roadmap
+PROJECT_STATE_AND_ROADMAP.md
