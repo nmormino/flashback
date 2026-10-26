@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Component, Layers, Plus, Trash2 } from 'lucide-react';
 import { useEditorStore, editorActions, type EditorSymbol } from '../../state/editorStore';
 import styles from './Library.module.css';
 
@@ -23,9 +24,7 @@ export const Library: React.FC = () => {
   };
 
   const getKindIcon = (kind: string) => {
-    if (kind === 'button') return '🔘';
-    if (kind === 'graphic') return '📐';
-    return '🎬';
+    return <Component size={13} />;
   };
 
   return (
@@ -76,6 +75,7 @@ export const Library: React.FC = () => {
                 : 'Convert selected element to Component (F8)'
             }
           >
+            <Plus size={12} />
             New Component (F8)
           </button>
           <button
@@ -85,6 +85,7 @@ export const Library: React.FC = () => {
             disabled={!selectedSymbolId}
             title="Place component instance on current keyframe"
           >
+            <Layers size={12} />
             Insert to Stage
           </button>
         </div>
@@ -97,6 +98,7 @@ export const Library: React.FC = () => {
             disabled={!selectedSymbolId}
             title="Delete selected component"
           >
+            <Trash2 size={12} />
             Delete Component
           </button>
         </div>

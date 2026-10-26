@@ -1,4 +1,20 @@
 import React, { useState } from 'react';
+import {
+  ChevronRight,
+  ChevronDown,
+  ArrowUp,
+  ArrowDown,
+  Plus,
+  Trash2,
+  Layers as LayersIcon,
+  Eye,
+  EyeOff,
+  Lock,
+  Unlock,
+  Square,
+  Type,
+  Component,
+} from 'lucide-react';
 import type { Filter, ShapeElement, TextElement, SymbolInstance } from '@flashback/runtime';
 import {
   useEditorStore,
@@ -413,7 +429,7 @@ export const Layers: React.FC = () => {
     }
     if (el.type === 'instance') {
       const sym = doc.library.symbols[(el as SymbolInstance).symbolId];
-      return sym ? `❖ [${sym.name}]` : '❖ [Component Instance]';
+      return sym ? sym.name : 'Component Instance';
     }
     if (el.type === 'shape') {
       return 'Vector Shape';
@@ -421,16 +437,16 @@ export const Layers: React.FC = () => {
     return el.type;
   };
 
-  const getElementIcon = (el: EditorElement): string => {
+  const getElementIcon = (el: EditorElement): React.ReactNode => {
     switch (el.type) {
       case 'shape':
-        return '📐';
+        return <Square size={12} />;
       case 'text':
-        return '🔤';
+        return <Type size={12} />;
       case 'instance':
-        return '❖';
+        return <Component size={12} />;
       default:
-        return '🔹';
+        return <Square size={12} />;
     }
   };
 
@@ -448,7 +464,7 @@ export const Layers: React.FC = () => {
               title="Bring Layer Forward (Up)"
               disabled={!selectedLayer || activeTl.layers.indexOf(selectedLayer) === 0}
             >
-              ▲
+              <ArrowUp size={12} />
             </button>
             <button
               type="button"
@@ -460,7 +476,7 @@ export const Layers: React.FC = () => {
                 activeTl.layers.indexOf(selectedLayer) === activeTl.layers.length - 1
               }
             >
-              ▼
+              <ArrowDown size={12} />
             </button>
             <button
               type="button"
@@ -468,7 +484,7 @@ export const Layers: React.FC = () => {
               onClick={() => editorActions.addLayer()}
               title="Add New Layer"
             >
-              +
+              <Plus size={12} />
             </button>
             <button
               type="button"
@@ -477,7 +493,7 @@ export const Layers: React.FC = () => {
               title="Delete Selected Layer"
               disabled={activeTl.layers.length <= 1}
             >
-              ✕
+              <Trash2 size={12} />
             </button>
           </div>
         </div>
@@ -516,10 +532,10 @@ export const Layers: React.FC = () => {
                     }}
                     title={isExpanded ? 'Collapse' : 'Expand'}
                   >
-                    ▸
+                    {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                   </button>
 
-                  <span className={styles.layerIcon}>📑</span>
+                  <span className={styles.layerIcon}><LayersIcon size={13} /></span>
 
                   {editingLayerId === layer.id ? (
                     <input
@@ -563,7 +579,7 @@ export const Layers: React.FC = () => {
                       }}
                       title={layer.visible ? 'Hide Layer' : 'Show Layer'}
                     >
-                      {layer.visible ? '👁' : '—'}
+                      {layer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
                     </button>
                     <button
                       type="button"
@@ -574,7 +590,7 @@ export const Layers: React.FC = () => {
                       }}
                       title={layer.locked ? 'Unlock Layer' : 'Lock Layer'}
                     >
-                      {layer.locked ? '🔒' : '○'}
+                      {layer.locked ? <Lock size={12} /> : <Unlock size={12} />}
                     </button>
                   </div>
                 </div>

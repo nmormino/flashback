@@ -133,7 +133,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
+  white-space: nowrap;
+  padding: 0 6px;
   transition: all 0.12s ease;
 }
 

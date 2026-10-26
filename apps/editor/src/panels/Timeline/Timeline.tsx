@@ -1,5 +1,28 @@
 import React, { useRef, useState, useEffect } from 'react';
 import {
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  Repeat,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Layers,
+  Sparkles,
+  Eye,
+  EyeOff,
+  Lock,
+  Unlock,
+  Type,
+  Square,
+  Component,
+  Plus,
+} from 'lucide-react';
+import {
   useEditorStore,
   editorActions,
   getActiveTimeline,
@@ -36,11 +59,11 @@ export type SceneItem =
       depth: number;
     };
 
-function getElementIcon(el: EditorElement): string {
-  if (el.type === 'shape') return '⬡';
-  if (el.type === 'text') return 'T';
-  if (el.type === 'instance') return '❖';
-  return '⬡';
+function getElementIcon(el: EditorElement): React.ReactNode {
+  if (el.type === 'shape') return <Square size={12} />;
+  if (el.type === 'text') return <Type size={12} />;
+  if (el.type === 'instance') return <Component size={12} />;
+  return <Square size={12} />;
 }
 
 function getElementLabel(el: EditorElement, librarySymbols: Record<string, any>): string {
@@ -463,20 +486,20 @@ export const Timeline: React.FC = () => {
                       }}
                       title={isCollapsed ? 'Expand' : 'Collapse'}
                     >
-                      {isCollapsed ? '▸' : '▾'}
+                      {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                     </div>
                   ) : (
                     <div style={{ width: 16 }} />
                   )}
 
-                  {/* Track Icon: 📁 for Folder/Group, ⚡ for Layer */}
+                  {/* Track Icon: Folder for Group, Layers for Layer Track */}
                   {isFolder ? (
                     <span className={styles.folderIcon} title="Folder Group">
-                      📁
+                      {isCollapsed ? <Folder size={13} /> : <FolderOpen size={13} />}
                     </span>
                   ) : (
                     <span className={styles.layerIcon} title="Layer Track">
-                      ⚡
+                      <Layers size={13} />
                     </span>
                   )}
 
@@ -528,7 +551,7 @@ export const Timeline: React.FC = () => {
                         editorActions.toggleLayerVisibility(layer.id);
                       }}
                     >
-                      {layer.visible ? '👁' : '—'}
+                      {layer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
                     </button>
 
                     <button
@@ -540,7 +563,7 @@ export const Timeline: React.FC = () => {
                         editorActions.toggleLayerLock(layer.id);
                       }}
                     >
-                      {layer.locked ? '🔒' : '○'}
+                      {layer.locked ? <Lock size={12} /> : <Unlock size={12} />}
                     </button>
                   </div>
                 </div>
@@ -641,7 +664,7 @@ export const Timeline: React.FC = () => {
                       editorActions.toggleElementVisibility(element.id);
                     }}
                   >
-                    {isVisible ? '👁' : '—'}
+                    {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
                   </button>
 
                   <button
@@ -653,7 +676,7 @@ export const Timeline: React.FC = () => {
                       editorActions.toggleElementLock(element.id);
                     }}
                   >
-                    {isLocked ? '🔒' : '○'}
+                    {isLocked ? <Lock size={12} /> : <Unlock size={12} />}
                   </button>
                 </div>
               </div>
@@ -905,7 +928,7 @@ export const Timeline: React.FC = () => {
             onClick={() => editorActions.rewind()}
             title="Rewind (Home)"
           >
-            |◄
+            <SkipBack size={12} />
           </button>
           <button
             type="button"
@@ -913,7 +936,7 @@ export const Timeline: React.FC = () => {
             onClick={() => editorActions.stepBackward()}
             title="Step Back (<)"
           >
-            ◄
+            <ChevronLeft size={13} />
           </button>
           <button
             type="button"
@@ -921,7 +944,7 @@ export const Timeline: React.FC = () => {
             onClick={() => editorActions.togglePlay()}
             title="Play / Pause (Space / Enter)"
           >
-            {isPlaying ? '⏸' : '►'}
+            {isPlaying ? <Pause size={12} /> : <Play size={12} fill="currentColor" />}
           </button>
           <button
             type="button"
@@ -929,7 +952,7 @@ export const Timeline: React.FC = () => {
             onClick={() => editorActions.stepForward()}
             title="Step Forward (>)"
           >
-            ►|
+            <SkipForward size={12} />
           </button>
         </div>
 
@@ -945,12 +968,12 @@ export const Timeline: React.FC = () => {
             }}
             title="Loop playback: 0 is Infinite, or any positive number (Click to toggle ∞, ▾ to set count)"
           >
-            <span className={styles.loopIcon}>🔁</span>
+            <Repeat size={12} className={styles.loopIcon} />
             <span>
               {loopMode === 'infinite'
-                ? 'Loop: ∞ (0)'
+                ? 'Loop: ∞'
                 : loopMode === 1
-                ? 'Loop: 1 (Once)'
+                ? 'Loop: 1'
                 : `Loop: ${loopMode}`}
             </span>
           </button>
@@ -961,7 +984,7 @@ export const Timeline: React.FC = () => {
             title="Set loop count: 0 for infinite, or positive number"
             aria-label="Loop Count Settings"
           >
-            ▾
+            <ChevronDown size={11} />
           </button>
 
           {isLoopMenuOpen && (
@@ -1045,7 +1068,8 @@ export const Timeline: React.FC = () => {
             onClick={() => editorActions.addFolder()}
             title="Create Folder Track (Group)"
           >
-            + Folder
+            <FolderPlus size={12} />
+            <span>Folder</span>
           </button>
           <button
             type="button"
@@ -1053,7 +1077,8 @@ export const Timeline: React.FC = () => {
             onClick={() => editorActions.addLayer()}
             title="Create Layer Track"
           >
-            + Layer
+            <Plus size={12} />
+            <span>Layer</span>
           </button>
           <button
             type="button"
@@ -1061,7 +1086,8 @@ export const Timeline: React.FC = () => {
             onClick={() => editorActions.insertKeyframe()}
             title="Insert Keyframe at current timestamp (F6)"
           >
-            + Keyframe (F6)
+            <Plus size={12} />
+            <span>Keyframe (F6)</span>
           </button>
           <button
             type="button"
@@ -1069,7 +1095,8 @@ export const Timeline: React.FC = () => {
             onClick={() => editorActions.insertBlankKeyframe()}
             title="Insert Blank Keyframe (F7)"
           >
-            + Blank (F7)
+            <Plus size={12} />
+            <span>Blank (F7)</span>
           </button>
           <button
             type="button"
@@ -1082,7 +1109,8 @@ export const Timeline: React.FC = () => {
             }}
             title="Create Fluid Motion Tween"
           >
-            Create Tween
+            <Sparkles size={12} />
+            <span>Tween</span>
           </button>
         </div>
       </div>
