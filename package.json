@@ -5,7 +5,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "deploy": "turbo run build && wrangler pages deploy apps/editor/dist --project-name flashback --branch main",
+    "deploy": "turbo run build && wrangler deploy",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"
   },
