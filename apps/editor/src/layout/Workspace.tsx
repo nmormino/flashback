@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MenuBar } from './MenuBar';
 import { Tools } from '../panels/Tools/Tools';
 import { Stage } from '../panels/Stage/Stage';
+import { ArtboardTabStrip } from '../panels/Stage/ArtboardTabStrip';
 import { Library } from '../panels/Library/Library';
 import { Timeline } from '../panels/Timeline/Timeline';
 import { Layers } from '../panels/Layers/Layers';
@@ -12,6 +13,7 @@ import { ConvertToComponentDialog } from '../dialogs/ConvertToComponentDialog';
 import { ExportModal } from '../dialogs/ExportModal';
 import { ImportModal } from '../dialogs/ImportModal';
 import { AddFontModal } from '../dialogs/AddFontModal';
+import { BezierEditorModal } from '../ui/BezierEditorModal';
 import { ContextMenu } from '../ui/ContextMenu';
 import { useEditorStore, editorActions } from '../state/editorStore';
 import styles from './Workspace.module.css';
@@ -81,6 +83,7 @@ export const Workspace: React.FC = () => {
         <div className={styles.stageAndBottomArea}>
           {/* Stage Artboard */}
           <div className={styles.stageWrapper}>
+            <ArtboardTabStrip />
             <Stage />
           </div>
 
@@ -169,6 +172,7 @@ export const Workspace: React.FC = () => {
       <ConvertToComponentDialog />
       <ExportModal />
       <ImportModal />
+      <BezierEditorModal />
     </div>
   );
 };

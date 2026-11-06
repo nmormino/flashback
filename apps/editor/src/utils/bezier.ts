@@ -2,6 +2,13 @@
  * Illustrator-grade Bézier path manipulation and conversion utilities.
  */
 
+import * as flubberModule from 'flubber';
+
+const flubberInterpolate: typeof flubberModule.interpolate =
+  (flubberModule as any).interpolate ?? (flubberModule as any).default?.interpolate;
+
+export const morphCache = new Map<string, (t: number) => string>();
+
 export interface Vector2D {
   x: number;
   y: number;
@@ -238,11 +245,14 @@ export function updatePathAnchor(
 }
 
 /**
- * Linearly interpolate between two SVG paths if anchor counts match.
+ * Linearly interpolate between two SVG paths if anchor counts match,
+ * or use flubber for morphing shapes with differing vertex counts or complex topologies.
  */
 export function interpolatePathD(d1: string, d2: string, t: number): string {
-  if (t <= 0) return d1;
+  if (d1 === d2 || t <= 0) return d1;
   if (t >= 1) return d2;
+
+  // 1. Fast path: matching anchor counts (fast linear bezier anchor interpolation)
   try {
     const p1 = parseSvgPath(d1);
     const p2 = parseSvgPath(d2);
@@ -269,6 +279,28 @@ export function interpolatePathD(d1: string, d2: string, t: number): string {
       });
       return formatSvgPath(interpAnchors, p1.closed || p2.closed);
     }
-  } catch {}
+  } catch {
+    // If fast bezier parsing fails, fall through to flubber morphing
+  }
+
+  // 2. Differing vertex counts or complex shapes: flubber.interpolate with cache
+  const cacheKey = `${d1}__FLUBBER__${d2}`;
+  try {
+    let interpolator = morphCache.get(cacheKey);
+    if (!interpolator) {
+      if (typeof flubberInterpolate === 'function') {
+        interpolator = flubberInterpolate(d1, d2, { maxSegmentLength: 4 });
+        if (morphCache.size > 2000) morphCache.clear();
+        morphCache.set(cacheKey, interpolator);
+      }
+    }
+    if (interpolator) {
+      const result = interpolator(t);
+      if (result) return result;
+    }
+  } catch {
+    // Degenerate segment or shape fallback
+  }
+
   return t < 0.5 ? d1 : d2;
 }

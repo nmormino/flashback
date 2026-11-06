@@ -12,8 +12,19 @@ import type {
   Filter,
   FontAsset,
   Fill,
+  ShapeElement,
   TextElement,
   TextSpan,
+  BitmapElement,
+  VideoElement,
+  BitmapAsset,
+  StageBreakpoint,
+  ReducedMotionMode,
+  I18nDef,
+  LayoutPin,
+  LayerKind,
+  Easing,
+  Artboard,
 } from '@flashback/runtime';
 import {
   serialize,
@@ -23,6 +34,13 @@ import {
   type ScriptSource,
 } from '@flashback/serializer';
 import { createDefaultDocument } from './defaultDoc';
+import { generatePolygonStarPath, getShapeBounds } from '../utils/shapeGenerators';
+
+export function createEmptyDoc(name = 'Untitled'): EditorDocument {
+  const doc = createDefaultDocument();
+  doc.meta.name = name;
+  return doc;
+}
 
 export type EditorTool = 'select' | 'subselect' | 'rect' | 'oval' | 'polygon' | 'pen' | 'text' | 'hand';
 
@@ -31,6 +49,7 @@ export type EditorKeyframe = EditorLayer['keyframes'][number];
 export type EditorElement = EditorKeyframe['elements'][number];
 export type EditorSymbol = EditorDocument['library']['symbols'][string];
 export type EditorTimeline = EditorDocument['root'];
+export type EditorArtboard = NonNullable<EditorDocument['artboards']>[number];
 
 export interface ContextMenuItem {
   label?: string;
@@ -74,9 +93,21 @@ export interface EditorState {
   convertToComponentModalOpen: boolean;
   activeInspectorTab: 'timeline' | 'properties' | 'scripts';
   addFontModalOpen: boolean;
+  bezierModalOpen: boolean;
+  activeBezierTarget: {
+    layerId: string;
+    kfId: string;
+    initialEasing?: Easing;
+  } | null;
   clipboard: EditorElement[];
+  keyframeClipboard: EditorKeyframe | null;
   contextMenu: ContextMenuState | null;
   isolationStack: Array<{ symbolId: string; name: string }>;
+  previewLocale?: string;
+  activeBreakpointId?: string | null;
+  scriptTriggerFocus: 'auto' | 'keyframe' | 'element';
+  liveKeyframeScriptsEnabled: boolean;
+  starConfig: { points: number; pointRatio: number };
 }
 
 const MAX_HISTORY = 50;
@@ -135,43 +166,98 @@ function deepCloneDoc(doc: EditorDocument): EditorDocument {
   return fastClone(doc);
 }
 
+export function adjustElementForPin(
+  el: EditorElement | DisplayElement,
+  prevW: number,
+  prevH: number,
+  newW: number,
+  newH: number
+): void {
+  const pin = el.transform?.pin;
+  if (!pin || pin === 'none') return;
+  const dx = newW - prevW;
+  const dy = newH - prevH;
+
+  switch (pin) {
+    case 'center':
+      el.transform.x = Math.round(el.transform.x + dx / 2);
+      el.transform.y = Math.round(el.transform.y + dy / 2);
+      break;
+    case 'top-right':
+      el.transform.x = Math.round(el.transform.x + dx);
+      break;
+    case 'bottom-left':
+      el.transform.y = Math.round(el.transform.y + dy);
+      break;
+    case 'bottom-right':
+      el.transform.x = Math.round(el.transform.x + dx);
+      el.transform.y = Math.round(el.transform.y + dy);
+      break;
+    case 'stretch':
+      if (prevW > 0 && prevH > 0) {
+        const sx = newW / prevW;
+        const sy = newH / prevH;
+        el.transform.scaleX = (el.transform.scaleX ?? 1) * sx;
+        el.transform.scaleY = (el.transform.scaleY ?? 1) * sy;
+        el.transform.x = Math.round(el.transform.x * sx);
+        el.transform.y = Math.round(el.transform.y * sy);
+      }
+      break;
+    case 'top-left':
+      break;
+  }
+}
+
 let tickerTimer: ReturnType<typeof setInterval> | null = null;
 let rafTimer: any = null;
 let lastRafTime = 0;
 let lastCustomLoopCount = 1;
+const executedKfScriptsMap = new Map<string, number>();
+
+export function createInitialState(initialDoc: EditorDocument = createDefaultDocument()): EditorState {
+  return {
+    doc: initialDoc,
+    selectedLayerId: initialDoc.root.layers[0]?.id ?? null,
+    selectedFrameIndex: 0,
+    selectedTime: 0,
+    selectedElementIds: [],
+    currentFrame: 0,
+    currentTime: 0,
+    isPlaying: false,
+    activeTool: 'select',
+    fillColor: '#0066cc',
+    activeFill: { type: 'solid', color: '#0066cc' },
+    strokeColor: '#000000',
+    strokeWidth: 1,
+    editingTextElId: null,
+    textSelection: null,
+    loopMode: 'infinite',
+    undoStack: [],
+    redoStack: [],
+    testMovieOpen: false,
+    exportModalOpen: false,
+    importModalOpen: false,
+    convertToSymbolModalOpen: false,
+    convertToComponentModalOpen: false,
+    activeInspectorTab: 'timeline',
+    addFontModalOpen: false,
+    bezierModalOpen: false,
+    activeBezierTarget: null,
+    clipboard: [],
+    keyframeClipboard: null,
+    contextMenu: null,
+    isolationStack: [],
+    previewLocale: 'en',
+    activeBreakpointId: null,
+    scriptTriggerFocus: 'auto',
+    liveKeyframeScriptsEnabled: true,
+    starConfig: { points: 5, pointRatio: 0.5 },
+  };
+}
 
 const initialDoc = createDefaultDocument();
 
-let state: EditorState = {
-  doc: initialDoc,
-  selectedLayerId: initialDoc.root.layers[0]?.id ?? null,
-  selectedFrameIndex: 0,
-  selectedTime: 0,
-  selectedElementIds: [],
-  currentFrame: 0,
-  currentTime: 0,
-  isPlaying: false,
-  activeTool: 'select',
-  fillColor: '#0066cc',
-  activeFill: { type: 'solid', color: '#0066cc' },
-  strokeColor: '#000000',
-  strokeWidth: 1,
-  editingTextElId: null,
-  textSelection: null,
-  loopMode: 'infinite',
-  undoStack: [],
-  redoStack: [],
-  testMovieOpen: false,
-  exportModalOpen: false,
-  importModalOpen: false,
-  convertToSymbolModalOpen: false,
-  convertToComponentModalOpen: false,
-  activeInspectorTab: 'timeline',
-  addFontModalOpen: false,
-  clipboard: [],
-  contextMenu: null,
-  isolationStack: [],
-};
+let state: EditorState = createInitialState(initialDoc);
 
 const listeners = new Set<() => void>();
 
@@ -201,6 +287,7 @@ export function useEditorStore<T = EditorState>(
     () => selector(state)
   );
 }
+useEditorStore.getState = getEditorState;
 
 /** Record an undo snapshot before mutating document */
 function pushHistorySnapshot(): void {
@@ -216,6 +303,60 @@ function pushHistorySnapshot(): void {
   };
 }
 
+export function getActiveArtboard(doc: EditorDocument): {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  background?: Fill;
+  root: EditorTimeline;
+  breakpoints?: StageBreakpoint[];
+} {
+  if (doc.artboards && doc.artboards.length > 0) {
+    const activeId = doc.activeArtboardId || doc.artboards[0].id;
+    const found = doc.artboards.find((a) => a.id === activeId);
+    if (found) return found;
+    return doc.artboards[0];
+  }
+  return {
+    id: doc.activeArtboardId || 'artboard-1',
+    name: 'Artboard 1',
+    width: doc.stage.width || 550,
+    height: doc.stage.height || 400,
+    background: doc.stage.background,
+    breakpoints: doc.stage.breakpoints,
+    root: doc.root,
+  };
+}
+
+export function ensureMaterializedArtboards(doc: EditorDocument): EditorArtboard[] {
+  if (!doc.artboards || doc.artboards.length === 0) {
+    const defaultAb: EditorArtboard = {
+      id: doc.activeArtboardId || 'artboard-1',
+      name: 'Artboard 1',
+      width: doc.stage.width || 550,
+      height: doc.stage.height || 400,
+      background: doc.stage.background,
+      breakpoints: doc.stage.breakpoints,
+      root: doc.root,
+    };
+    doc.artboards = [defaultAb];
+    doc.activeArtboardId = defaultAb.id;
+  }
+  return doc.artboards;
+}
+
+export function syncActiveArtboardToStage(doc: EditorDocument): void {
+  if (doc.artboards && doc.artboards.length > 0) {
+    const active = doc.artboards.find((a) => a.id === doc.activeArtboardId) || doc.artboards[0];
+    doc.root = active.root;
+    doc.stage.width = active.width;
+    doc.stage.height = active.height;
+    if (active.background) doc.stage.background = active.background;
+    if (active.breakpoints) doc.stage.breakpoints = active.breakpoints;
+  }
+}
+
 export function getActiveTimeline(
   doc: EditorDocument,
   isolationStack?: Array<{ symbolId: string; name: string }>
@@ -225,6 +366,12 @@ export function getActiveTimeline(
     const top = stack[stack.length - 1];
     const sym = doc.library.symbols[top.symbolId];
     if (sym?.timeline) return sym.timeline;
+  }
+  if (doc.artboards && doc.artboards.length > 0) {
+    const activeId = doc.activeArtboardId || doc.artboards[0].id;
+    const found = doc.artboards.find((a) => a.id === activeId);
+    if (found?.root) return found.root;
+    return doc.artboards[0].root;
   }
   return doc.root;
 }
@@ -250,19 +397,63 @@ export function getKeyframeDurationTime(kf: EditorKeyframe, fps = 24): number {
 }
 
 export function findKeyframeAtTime(layer: EditorLayer, time: number, fps = 24): EditorKeyframe | undefined {
-  const match = layer.keyframes.find((kf) => {
-    const kfTime = getKeyframeTime(kf, fps);
-    const kfDur = getKeyframeDurationTime(kf, fps);
-    return time >= kfTime && time < kfTime + kfDur;
-  });
-  if (match) return match;
-  // If at or past the last keyframe
+  if (!layer.keyframes || layer.keyframes.length === 0) return undefined;
   const sorted = [...layer.keyframes].sort((a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps));
+
+  for (let i = 0; i < sorted.length; i++) {
+    const kf = sorted[i];
+    const nextKf = sorted[i + 1];
+    const kfTime = getKeyframeTime(kf, fps);
+    const nextKfTime = nextKf ? getKeyframeTime(nextKf, fps) : undefined;
+    const kfDur = getKeyframeDurationTime(kf, fps);
+    const endTime = nextKfTime !== undefined ? nextKfTime : kfTime + kfDur;
+
+    if (time >= kfTime - 1e-4 && time < endTime - 1e-4) {
+      return kf;
+    }
+  }
+
+  // If at or past the last keyframe, hold last keyframe
   const last = sorted[sorted.length - 1];
-  if (last && time >= getKeyframeTime(last, fps)) {
+  if (last && time >= getKeyframeTime(last, fps) - 1e-4) {
     return last;
   }
   return undefined;
+}
+
+export function normalizeLayerKeyframes(layer: EditorLayer, fps = 24): void {
+  if (!layer.keyframes || layer.keyframes.length === 0) return;
+
+  layer.keyframes.sort((a, b) => {
+    const tA = getKeyframeTime(a, fps);
+    const tB = getKeyframeTime(b, fps);
+    if (Math.abs(tA - tB) > 1e-4) return tA - tB;
+    return (a.index ?? 0) - (b.index ?? 0);
+  });
+
+  for (let i = 0; i < layer.keyframes.length - 1; i++) {
+    const cur = layer.keyframes[i];
+    const next = layer.keyframes[i + 1];
+    const curTime = getKeyframeTime(cur, fps);
+    const nextTime = getKeyframeTime(next, fps);
+    cur.time = curTime;
+    cur.index = Math.round(curTime * fps);
+    cur.duration = Math.max(1, (next.index ?? Math.round(nextTime * fps)) - cur.index);
+    cur.durationTime = Math.max(0.04, nextTime - curTime);
+  }
+
+  const lastKf = layer.keyframes[layer.keyframes.length - 1];
+  if (lastKf) {
+    const lastTime = getKeyframeTime(lastKf, fps);
+    lastKf.time = lastTime;
+    lastKf.index = Math.round(lastTime * fps);
+    if (!lastKf.duration || lastKf.duration < 1) {
+      lastKf.duration = fps;
+    }
+    if (!lastKf.durationTime || lastKf.durationTime <= 0) {
+      lastKf.durationTime = lastKf.duration / fps;
+    }
+  }
 }
 
 interface CachedDuration {
@@ -304,14 +495,17 @@ export function computeTotalTimelineDuration(tl: EditorTimeline, fps = 24): numb
   let maxTime = (tl.frameCount || 24) / Math.max(1, fps);
   for (const layer of currentLayers) {
     if (!layer.keyframes) continue;
-    for (const kf of layer.keyframes) {
+    for (let i = 0; i < layer.keyframes.length; i++) {
+      const kf = layer.keyframes[i];
+      const isLast = i === layer.keyframes.length - 1;
       const kfTime = getKeyframeTime(kf, fps);
-      const kfDur = getKeyframeDurationTime(kf, fps);
+      const kfDur = isLast ? 0 : getKeyframeDurationTime(kf, fps);
       const end = kfTime + kfDur;
       if (end > maxTime) maxTime = end;
+      if (isLast && kfTime > maxTime) maxTime = kfTime;
     }
   }
-  const result = Math.max(2.0, maxTime);
+  const result = maxTime;
 
   const newEntry: CachedDuration = {
     duration: result,
@@ -343,12 +537,178 @@ export function formatTimeInSeconds(seconds: number): string {
 }
 
 export function findKeyframeAt(layer: EditorLayer, frameIndex: number): EditorKeyframe | undefined {
-  return layer.keyframes.find((kf) => frameIndex >= kf.index && frameIndex < kf.index + kf.duration);
+  if (!layer.keyframes || layer.keyframes.length === 0) return undefined;
+  const sorted = [...layer.keyframes].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+
+  for (let i = 0; i < sorted.length; i++) {
+    const kf = sorted[i];
+    const nextKf = sorted[i + 1];
+    const end = nextKf ? nextKf.index : kf.index + (kf.duration || 1);
+    if (frameIndex >= kf.index && frameIndex < end) {
+      return kf;
+    }
+  }
+  const last = sorted[sorted.length - 1];
+  if (last && frameIndex >= last.index) {
+    return last;
+  }
+  return undefined;
+}
+
+export function getElementDefaultName(el: EditorElement, symbols?: Record<string, any>): string {
+  if (el.instanceName) return el.instanceName;
+  if (el.type === 'shape') {
+    if (el.id.startsWith('rect_')) return 'Rectangle';
+    if (el.id.startsWith('oval_')) return 'Oval';
+    if (el.id.startsWith('poly_')) return 'Polygon';
+    return 'Shape';
+  }
+  if (el.type === 'text') {
+    const txt = (el as any).text;
+    if (txt) {
+      return txt.length > 12 ? `"${txt.slice(0, 12)}..."` : `"${txt}"`;
+    }
+    return 'Text';
+  }
+  if (el.type === 'instance') {
+    const sym = symbols?.[(el as any).symbolId];
+    return sym?.name ? `❖ ${sym.name}` : '❖ Component';
+  }
+  if (el.type === 'bitmap') {
+    return (el as any).name || 'Bitmap';
+  }
+  if (el.type === 'video') {
+    return 'Video';
+  }
+  return (el as any).type || 'Element';
+}
+
+export function ensureElementHasDedicatedTrack(
+  tl: EditorTimeline,
+  elementId: string,
+  fps = 24
+): EditorLayer | undefined {
+  let containingLayer: EditorLayer | undefined;
+  for (const layer of tl.layers) {
+    for (const kf of layer.keyframes) {
+      if (kf.elements.some((e) => e.id === elementId)) {
+        containingLayer = layer;
+        break;
+      }
+    }
+    if (containingLayer) break;
+  }
+
+  if (!containingLayer) return undefined;
+
+  // Case 1: The element is directly in a folder layer
+  if (containingLayer.kind === 'folder') {
+    const targetEl = containingLayer.keyframes.flatMap((k) => k.elements).find((e) => e.id === elementId);
+    if (!targetEl) return containingLayer;
+
+    const newLayer: EditorLayer = {
+      id: `layer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: getElementDefaultName(targetEl),
+      kind: 'normal',
+      visible: true,
+      locked: false,
+      parentLayerId: containingLayer.id,
+      keyframes: containingLayer.keyframes.map((kf) => {
+        const elInKf = kf.elements.find((e) => e.id === elementId);
+        return {
+          id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          index: kf.index,
+          time: kf.time,
+          duration: kf.duration,
+          durationTime: kf.durationTime,
+          elements: elInKf ? [fastClone(elInKf)] : [],
+          tween: kf.tween ? fastClone(kf.tween) : undefined,
+        };
+      }),
+    };
+    (newLayer as any).parentId = containingLayer.id;
+
+    for (const kf of containingLayer.keyframes) {
+      kf.elements = kf.elements.filter((e) => e.id !== elementId);
+    }
+
+    const parentIdx = tl.layers.indexOf(containingLayer);
+    tl.layers.splice(parentIdx + 1, 0, newLayer);
+    return newLayer;
+  }
+
+  // Case 2: Normal or mask layer with multiple elements
+  const allElements = Array.from(
+    new Map(containingLayer.keyframes.flatMap((k) => k.elements).map((e) => [e.id, e])).values()
+  );
+
+  if (allElements.length <= 1) {
+    if (allElements[0] && (containingLayer.name.startsWith('Layer ') || containingLayer.name === 'Layer 1')) {
+      containingLayer.name = getElementDefaultName(allElements[0]);
+    }
+    return containingLayer;
+  }
+
+  const layerIdx = tl.layers.indexOf(containingLayer);
+  const otherElements = allElements.filter((e) => e.id !== elementId);
+
+  for (let i = 0; i < otherElements.length; i++) {
+    const otherEl = otherElements[i];
+    const newLayer: EditorLayer = {
+      id: `layer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}_${i}`,
+      name: getElementDefaultName(otherEl),
+      kind: containingLayer.kind,
+      visible: containingLayer.visible,
+      locked: containingLayer.locked,
+      parentLayerId: containingLayer.parentLayerId,
+      keyframes: containingLayer.keyframes.map((kf) => {
+        const elInKf = kf.elements.find((e) => e.id === otherEl.id);
+        return {
+          id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}_${i}`,
+          index: kf.index,
+          time: kf.time,
+          duration: kf.duration,
+          durationTime: kf.durationTime,
+          elements: elInKf ? [fastClone(elInKf)] : [],
+          tween: kf.tween ? fastClone(kf.tween) : undefined,
+        };
+      }),
+    };
+    (newLayer as any).parentId = containingLayer.parentLayerId;
+    tl.layers.splice(layerIdx + 1 + i, 0, newLayer);
+  }
+
+  for (const kf of containingLayer.keyframes) {
+    kf.elements = kf.elements.filter((e) => e.id === elementId);
+  }
+  const targetEl = allElements.find((e) => e.id === elementId);
+  if (targetEl && (containingLayer.name.startsWith('Layer ') || containingLayer.name === 'Layer 1')) {
+    containingLayer.name = getElementDefaultName(targetEl);
+  }
+
+  return containingLayer;
 }
 
 export const editorActions = {
+  commitHistorySnapshot(): void {
+    pushHistorySnapshot();
+  },
+
   setActiveTool(tool: EditorTool): void {
     state = { ...state, activeTool: tool };
+    notify();
+  },
+
+
+
+  setStarConfig(config: Partial<{ points: number; pointRatio: number }>): void {
+    state = {
+      ...state,
+      starConfig: {
+        points: config.points !== undefined ? Math.max(3, Math.min(64, Math.round(config.points))) : state.starConfig.points,
+        pointRatio: config.pointRatio !== undefined ? Math.max(0.05, Math.min(3.0, config.pointRatio)) : state.starConfig.pointRatio,
+      },
+    };
     notify();
   },
 
@@ -448,6 +808,24 @@ export const editorActions = {
 
   setAddFontModalOpen(open: boolean): void {
     state = { ...state, addFontModalOpen: open };
+    notify();
+  },
+
+  openBezierEditor(layerId: string, kfId: string, initialEasing?: Easing): void {
+    state = {
+      ...state,
+      bezierModalOpen: true,
+      activeBezierTarget: { layerId, kfId, initialEasing },
+    };
+    notify();
+  },
+
+  closeBezierEditor(): void {
+    state = {
+      ...state,
+      bezierModalOpen: false,
+      activeBezierTarget: null,
+    };
     notify();
   },
 
@@ -563,8 +941,171 @@ export const editorActions = {
     }
   },
 
-  selectLayer(layerId: string): void {
-    state = { ...state, selectedLayerId: layerId };
+
+
+
+  setScriptTriggerFocus(focus: 'auto' | 'keyframe' | 'element'): void {
+    state = { ...state, scriptTriggerFocus: focus };
+    notify();
+  },
+
+  setLiveKeyframeScriptsEnabled(enabled: boolean): void {
+    state = { ...state, liveKeyframeScriptsEnabled: enabled };
+    notify();
+  },
+
+  openKeyframeScript(layerId: string, frameIndexOrTime: number, isTime?: boolean): void {
+    const tl = getActiveTimeline(state.doc, state.isolationStack);
+    const layer = tl.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    const fps = state.doc.stage.fps || 24;
+    let kf: EditorKeyframe | undefined;
+    if (isTime) {
+      kf =
+        findKeyframeAtTime(layer, frameIndexOrTime, fps) ??
+        layer.keyframes.find((k) => Math.abs(getKeyframeTime(k, fps) - frameIndexOrTime) < 0.05);
+    } else {
+      kf =
+        findKeyframeAt(layer, frameIndexOrTime) ??
+        layer.keyframes.find((k) => k.index === frameIndexOrTime);
+    }
+
+    const kfTime = kf ? getKeyframeTime(kf, fps) : isTime ? frameIndexOrTime : frameIndexOrTime / fps;
+    const kfFrame = kf ? kf.index : isTime ? Math.round(frameIndexOrTime * fps) : frameIndexOrTime;
+
+    state = {
+      ...state,
+      selectedLayerId: layerId,
+      selectedElementIds: [],
+      currentFrame: kfFrame,
+      currentTime: kfTime,
+      selectedFrameIndex: kfFrame,
+      selectedTime: kfTime,
+      scriptTriggerFocus: 'keyframe',
+      activeInspectorTab: 'scripts',
+    };
+    notify();
+  },
+
+  executeKeyframeScriptsInRange(prevTime: number, nextTime: number, includeZeroStart?: boolean): void {
+    if (!state.liveKeyframeScriptsEnabled) return;
+
+    const tl = getActiveTimeline(state.doc, state.isolationStack);
+    const fps = state.doc.stage.fps || 24;
+
+    for (const layer of tl.layers) {
+      for (const kf of layer.keyframes) {
+        const fnObj = kf.actions as { __fn?: string } | undefined;
+        const code = fnObj?.__fn;
+        if (!code || typeof code !== 'string' || !code.trim()) continue;
+
+        const kfTime = getKeyframeTime(kf, fps);
+        let triggered = false;
+
+        if (includeZeroStart && prevTime === 0 && Math.abs(kfTime) < 0.001) {
+          triggered = true;
+        } else if (nextTime > prevTime && kfTime > prevTime + 0.0001 && kfTime <= nextTime + 0.0001) {
+          triggered = true;
+        } else if (nextTime < prevTime && Math.abs(kfTime) <= nextTime + 0.0001) {
+          triggered = true;
+        }
+
+        if (triggered) {
+          const scriptKey = `${kf.id}_${kfTime.toFixed(4)}`;
+          const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          if (executedKfScriptsMap.has(scriptKey) && now - executedKfScriptsMap.get(scriptKey)! < 50) {
+            continue;
+          }
+          executedKfScriptsMap.set(scriptKey, now);
+
+          try {
+            const ctx: any = {
+              stop: () => editorActions.setPlaying(false),
+              play: () => editorActions.setPlaying(true),
+              gotoAndStop: (f: number) => {
+                editorActions.setPlaying(false);
+                editorActions.setCurrentFrame(Math.max(0, Number(f) - 1));
+              },
+              gotoAndPlay: (f: number) => {
+                editorActions.setCurrentFrame(Math.max(0, Number(f) - 1));
+                editorActions.setPlaying(true);
+              },
+            };
+
+            const gotoArtboard = (idOrName: string) => {
+              const ab = state.doc.artboards?.find((a) => a.id === idOrName || a.name === idOrName);
+              if (ab) editorActions.switchArtboard(ab.id);
+            };
+
+            const safeAlert = (msg?: any) => {
+              if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+                window.alert(String(msg ?? ''));
+              } else if (typeof console !== 'undefined' && console.log) {
+                console.log('[Keyframe Script Alert]', msg);
+              }
+            };
+
+            const safeConsole =
+              typeof console !== 'undefined'
+                ? console
+                : {
+                    log: () => {},
+                    warn: () => {},
+                    error: () => {},
+                  };
+
+            let cleanCode = code.trim();
+            const fnMatch = cleanCode.match(
+              /^function\s*(?:[a-zA-Z_$][\w$]*)?\s*\(([^)]*)\)\s*\{([\s\S]*)\}$/
+            );
+            if (fnMatch) {
+              cleanCode = fnMatch[2];
+            }
+
+            const runner = new Function(
+              'gotoArtboard',
+              'alert',
+              'console',
+              'stop',
+              'play',
+              'gotoAndStop',
+              'gotoAndPlay',
+              cleanCode
+            );
+            runner.call(
+              ctx,
+              gotoArtboard,
+              safeAlert,
+              safeConsole,
+              ctx.stop,
+              ctx.play,
+              ctx.gotoAndStop,
+              ctx.gotoAndPlay
+            );
+          } catch (err) {
+            console.warn('[Keyframe Script Error]', err);
+          }
+        }
+      }
+    }
+  },
+
+  selectLayer(layerId: string, preserveElementSelection = false): void {
+    const activeTl = getActiveTimeline(state.doc, state.isolationStack);
+    const targetLayer = activeTl.layers.find((l) => l.id === layerId);
+    const hasElementInLayer = targetLayer
+      ? targetLayer.keyframes.some((kf) =>
+          kf.elements.some((el) => state.selectedElementIds.includes(el.id))
+        )
+      : false;
+
+    const shouldClear = !preserveElementSelection && !hasElementInLayer;
+    state = {
+      ...state,
+      selectedLayerId: layerId,
+      selectedElementIds: shouldClear ? [] : state.selectedElementIds,
+    };
     notify();
   },
 
@@ -599,20 +1140,52 @@ export const editorActions = {
   },
 
   selectElement(elementId: string, multiSelect = false): void {
+    const activeTl = getActiveTimeline(state.doc, state.isolationStack);
+    const owningLayer = activeTl.layers.find((l) =>
+      l.keyframes.some((kf) => kf.elements.some((el) => el.id === elementId))
+    );
+    const nextLayerId = owningLayer ? owningLayer.id : state.selectedLayerId;
+
     if (multiSelect) {
       const exists = state.selectedElementIds.includes(elementId);
       const next = exists
         ? state.selectedElementIds.filter((id) => id !== elementId)
         : [...state.selectedElementIds, elementId];
-      state = { ...state, selectedElementIds: next };
+      state = {
+        ...state,
+        selectedElementIds: next,
+        selectedLayerId: nextLayerId,
+        scriptTriggerFocus: 'auto',
+      };
     } else {
-      state = { ...state, selectedElementIds: [elementId] };
+      state = {
+        ...state,
+        selectedElementIds: [elementId],
+        selectedLayerId: nextLayerId,
+        scriptTriggerFocus: 'auto',
+      };
     }
     notify();
   },
 
   selectElements(elementIds: string[]): void {
-    state = { ...state, selectedElementIds: elementIds };
+    const activeTl = getActiveTimeline(state.doc, state.isolationStack);
+    let nextLayerId = state.selectedLayerId;
+    const firstId = elementIds[0];
+    if (firstId) {
+      const owningLayer = activeTl.layers.find((l) =>
+        l.keyframes.some((kf) => kf.elements.some((el) => el.id === firstId))
+      );
+      if (owningLayer) {
+        nextLayerId = owningLayer.id;
+      }
+    }
+    state = {
+      ...state,
+      selectedElementIds: elementIds,
+      selectedLayerId: nextLayerId,
+      scriptTriggerFocus: 'auto',
+    };
     notify();
   },
 
@@ -639,11 +1212,13 @@ export const editorActions = {
     notify();
   },
 
+
+
   setPlayheadTime(timeInSeconds: number): void {
     const activeTl = getActiveTimeline(state.doc, state.isolationStack);
     const fps = state.doc.stage.fps || 24;
     const totalDuration = computeTotalTimelineDuration(activeTl, fps);
-    const clamped = Math.max(0, Math.min(timeInSeconds, totalDuration));
+    const clamped = Math.max(0, timeInSeconds);
     const frame = Math.round(clamped * fps);
     state = {
       ...state,
@@ -653,6 +1228,23 @@ export const editorActions = {
       selectedFrameIndex: frame,
     };
     notify();
+  },
+
+  setCurrentFrame(frameIndex: number): void {
+    const fps = state.doc.stage.fps || 24;
+    editorActions.setPlayheadTime(frameIndex / fps);
+  },
+
+  setCurrentTime(timeInSeconds: number): void {
+    editorActions.setPlayheadTime(timeInSeconds);
+  },
+
+  setPlaying(playing: boolean): void {
+    if (playing) {
+      editorActions.play();
+    } else {
+      editorActions.stop();
+    }
   },
 
   play(): void {
@@ -672,6 +1264,7 @@ export const editorActions = {
 
     lastRafTime = performance.now();
     let loopCycle = 0;
+    let isFirstTick = true;
 
     const tick = (now: number) => {
       if (!state.isPlaying) return;
@@ -681,6 +1274,7 @@ export const editorActions = {
       const activeTl = getActiveTimeline(state.doc, state.isolationStack);
       const fps = state.doc.stage.fps || 24;
       const totalDuration = computeTotalTimelineDuration(activeTl, fps);
+      const prevTime = state.currentTime;
       let nextTime = state.currentTime + dt;
 
       if (nextTime >= totalDuration) {
@@ -704,6 +1298,9 @@ export const editorActions = {
       };
       notify();
 
+      editorActions.executeKeyframeScriptsInRange(prevTime, nextTime, isFirstTick);
+      isFirstTick = false;
+
       if (typeof requestAnimationFrame !== 'undefined') {
         rafTimer = requestAnimationFrame(tick);
       } else {
@@ -719,6 +1316,7 @@ export const editorActions = {
   },
 
   stop(): void {
+    executedKfScriptsMap.clear();
     if (rafTimer !== null) {
       if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(rafTimer);
       else clearTimeout(rafTimer);
@@ -764,6 +1362,8 @@ export const editorActions = {
     if (prevTime < 0) prevTime = Math.max(0, totalDuration - stepSec);
     editorActions.setPlayheadTime(prevTime);
   },
+
+
 
   undo(): void {
     if (state.undoStack.length === 0) return;
@@ -811,8 +1411,8 @@ export const editorActions = {
     notify();
   },
 
-  exportToJS(): string {
-    return serialize(state.doc, { defineAnimation: false });
+  exportToJS(format: 'esm' | 'json' = 'esm'): string {
+    return serialize(state.doc, { defineAnimation: false, format });
   },
 
   loadFromJS(code: string): { success: boolean; error?: string } {
@@ -848,13 +1448,20 @@ export const editorActions = {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
-    const targetLayerId = layerId ?? state.selectedLayerId ?? tl.layers[0]?.id;
     const fps = doc.stage.fps || 24;
     const targetTime = typeof frameIndexOrTime === 'number'
       ? (frameIndexOrTime > 30 ? frameIndexOrTime / fps : frameIndexOrTime)
       : state.currentTime;
     const targetFrame = Math.round(targetTime * fps);
-    const layer = tl.layers.find((l) => l.id === targetLayerId);
+
+    let layer: EditorLayer | undefined;
+    if (state.selectedElementIds.length > 0) {
+      layer = ensureElementHasDedicatedTrack(tl, state.selectedElementIds[0], fps);
+    }
+    if (!layer) {
+      const targetLayerId = layerId ?? state.selectedLayerId ?? tl.layers[0]?.id;
+      layer = tl.layers.find((l) => l.id === targetLayerId);
+    }
     if (!layer) return;
 
     // Check if an element is specifically selected
@@ -941,36 +1548,130 @@ export const editorActions = {
       }
     }
 
+    normalizeLayerKeyframes(layer, fps);
+
     tl.frameCount = Math.max(tl.frameCount, targetFrame + 1);
+    invalidateTimelineDurationCache(tl);
     state = { ...state, doc };
     notify();
   },
 
-  insertBlankKeyframe(layerId?: string, frameIndex?: number): void {
+  groupLayerIntoFolder(layerId: string): void {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
+    const layer = tl.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    const nextNum = tl.layers.filter((l) => l.kind === 'folder').length + 1;
+    const newFolder: EditorLayer = {
+      id: `folder_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: `Folder ${nextNum}`,
+      kind: 'folder',
+      visible: true,
+      locked: false,
+      parentLayerId: layer.parentLayerId,
+      keyframes: [
+        {
+          id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          index: 0,
+          duration: tl.frameCount || 24,
+          elements: [],
+        },
+      ],
+    };
+    (newFolder as any).parentId = layer.parentLayerId;
+
+    const layerIdx = tl.layers.findIndex((l) => l.id === layerId);
+    if (layerIdx !== -1) {
+      tl.layers.splice(layerIdx, 0, newFolder);
+    } else {
+      tl.layers.unshift(newFolder);
+    }
+
+    layer.parentLayerId = newFolder.id;
+    (layer as any).parentId = newFolder.id;
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: newFolder.id,
+    };
+    notify();
+  },
+
+  ungroupLayer(layerId: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const layer = tl.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    if (layer.kind === 'folder') {
+      const parentId = layer.parentLayerId;
+      for (const l of tl.layers) {
+        if (l.parentLayerId === layer.id || (l as any).parentId === layer.id) {
+          l.parentLayerId = parentId;
+          (l as any).parentId = parentId;
+        }
+      }
+      tl.layers = tl.layers.filter((l) => l.id !== layer.id);
+    } else if (layer.parentLayerId || (layer as any).parentId) {
+      delete layer.parentLayerId;
+      delete (layer as any).parentId;
+    }
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: tl.layers[0]?.id ?? null,
+    };
+    notify();
+  },
+
+  moveLayerToFolder(layerId: string, targetFolderId?: string): void {
+    editorActions.setLayerParent(layerId, targetFolderId);
+  },
+
+  insertBlankKeyframe(layerId?: string, frameIndexOrTime?: number): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
     const targetLayerId = layerId ?? state.selectedLayerId ?? tl.layers[0]?.id;
-    const targetFrame = frameIndex ?? state.currentFrame;
     const layer = tl.layers.find((l) => l.id === targetLayerId);
     if (!layer) return;
 
-    layer.keyframes.sort((a, b) => a.index - b.index);
-    const existingKf = findKeyframeAt(layer, targetFrame);
+    const isTime = typeof frameIndexOrTime === 'number' && frameIndexOrTime < 30 && !Number.isInteger(frameIndexOrTime);
+    const targetTime = typeof frameIndexOrTime === 'number'
+      ? (isTime ? frameIndexOrTime : frameIndexOrTime / fps)
+      : state.currentTime;
+    const targetFrame = Math.round(targetTime * fps);
+
+    normalizeLayerKeyframes(layer, fps);
+
+    const existingKf = findKeyframeAtTime(layer, targetTime, fps) ?? findKeyframeAt(layer, targetFrame);
 
     if (existingKf) {
-      if (existingKf.index === targetFrame) {
+      const kfTime = getKeyframeTime(existingKf, fps);
+      if (Math.abs(kfTime - targetTime) < 1e-4 || existingKf.index === targetFrame) {
         existingKf.elements = [];
         delete existingKf.tween;
       } else {
-        const splitOffset = targetFrame - existingKf.index;
-        const originalDuration = existingKf.duration;
-        existingKf.duration = splitOffset;
+        const splitOffsetFrames = targetFrame - existingKf.index;
+        const originalDurationFrames = existingKf.duration;
+        const originalDurationTime = getKeyframeDurationTime(existingKf, fps);
+        const splitOffsetTime = targetTime - kfTime;
+
+        existingKf.duration = splitOffsetFrames;
+        existingKf.durationTime = splitOffsetTime;
 
         const newKf: EditorKeyframe = {
           id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           index: targetFrame,
-          duration: originalDuration - splitOffset,
+          time: targetTime,
+          duration: Math.max(1, originalDurationFrames - splitOffsetFrames),
+          durationTime: Math.max(0.04, originalDurationTime - splitOffsetTime),
           elements: [],
         };
 
@@ -978,18 +1679,36 @@ export const editorActions = {
         layer.keyframes.splice(kfIdx + 1, 0, newKf);
       }
     } else {
+      const lastKf = layer.keyframes[layer.keyframes.length - 1];
+      if (lastKf && targetFrame > lastKf.index) {
+        const lastKfTime = getKeyframeTime(lastKf, fps);
+        lastKf.duration = targetFrame - lastKf.index;
+        lastKf.durationTime = Math.max(0.04, targetTime - lastKfTime);
+      }
+
       const newKf: EditorKeyframe = {
         id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         index: targetFrame,
-        duration: 1,
+        time: targetTime,
+        duration: fps,
+        durationTime: 1.0,
         elements: [],
       };
       layer.keyframes.push(newKf);
-      layer.keyframes.sort((a, b) => a.index - b.index);
     }
 
+    normalizeLayerKeyframes(layer, fps);
+
     tl.frameCount = Math.max(tl.frameCount, targetFrame + 1);
-    state = { ...state, doc, selectedElementIds: [] };
+    invalidateTimelineDurationCache(tl);
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: layer.id,
+      selectedFrameIndex: targetFrame,
+      selectedTime: targetTime,
+      selectedElementIds: [],
+    };
     notify();
   },
 
@@ -1127,6 +1846,380 @@ export const editorActions = {
     notify();
   },
 
+  updateTweenRotate(
+    layerId: string,
+    timeOrIndex: number | undefined,
+    rotate: { direction: 'cw' | 'ccw'; turns: number } | undefined
+  ): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const layer = tl.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    const fps = doc.stage.fps || 24;
+    const targetTime = timeOrIndex !== undefined
+      ? (timeOrIndex > 30 ? timeOrIndex / fps : timeOrIndex)
+      : state.currentTime;
+
+    const sortedKfs = [...layer.keyframes].sort((a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps));
+    let kf = findKeyframeAtTime(layer, targetTime, fps) ?? layer.keyframes.find((k) => k.index === timeOrIndex);
+    if (!kf && sortedKfs.length > 0) {
+      kf = sortedKfs[0];
+    }
+    if (!kf) return;
+
+    const kfIdx = sortedKfs.indexOf(kf);
+    let targetKf = kf;
+    if (kfIdx === sortedKfs.length - 1 && kfIdx > 0 && !targetKf.tween) {
+      targetKf = sortedKfs[kfIdx - 1];
+    }
+
+    if (!targetKf.tween) {
+      targetKf.tween = { type: 'motion', easing: { type: 'linear' } };
+    }
+
+    if (rotate) {
+      targetKf.tween.rotate = {
+        direction: rotate.direction,
+        turns: Math.max(0, rotate.turns ?? 0),
+      };
+    } else {
+      delete targetKf.tween.rotate;
+    }
+
+    state = { ...state, doc };
+    notify();
+  },
+
+  moveKeyframe(
+    layerId: string,
+    fromFrameIndexOrTime: number,
+    toTimeSec: number,
+    options?: { skipHistory?: boolean; elementId?: string }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    const targetLayer = tl.layers.find((l) => l.id === layerId);
+    if (!targetLayer) return;
+
+    const isSeconds = fromFrameIndexOrTime < 30 && !Number.isInteger(fromFrameIndexOrTime);
+    const fromTime = isSeconds ? fromFrameIndexOrTime : fromFrameIndexOrTime / fps;
+    const fromFrame = isSeconds ? Math.round(fromFrameIndexOrTime * fps) : fromFrameIndexOrTime;
+
+    const kf =
+      targetLayer.keyframes.find((k) => k.index === fromFrame) ??
+      findKeyframeAtTime(targetLayer, fromTime, fps) ??
+      targetLayer.keyframes.find((k) => Math.abs(getKeyframeTime(k, fps) - fromTime) < 0.05) ??
+      targetLayer.keyframes.find((k) => k.index === fromFrameIndexOrTime);
+
+    if (!kf) return;
+
+    const targetTimeClamped = Math.max(0, toTimeSec);
+    let targetFrame = Math.round(targetTimeClamped * fps);
+
+    const otherKfs = targetLayer.keyframes.filter((k) => k.id !== kf.id);
+
+    if (otherKfs.some((k) => k.index === targetFrame)) {
+      if (targetFrame >= (kf.index ?? 0)) {
+        while (otherKfs.some((k) => k.index === targetFrame)) {
+          targetFrame++;
+        }
+      } else {
+        while (targetFrame > 0 && otherKfs.some((k) => k.index === targetFrame)) {
+          targetFrame--;
+        }
+        if (otherKfs.some((k) => k.index === targetFrame)) {
+          targetFrame = kf.index ?? 0;
+        }
+      }
+    }
+
+    kf.index = targetFrame;
+    kf.time = targetFrame / fps;
+
+    targetLayer.keyframes.sort((a, b) => a.index - b.index);
+
+    for (let i = 0; i < targetLayer.keyframes.length - 1; i++) {
+      const cur = targetLayer.keyframes[i];
+      const next = targetLayer.keyframes[i + 1];
+      cur.duration = Math.max(1, next.index - cur.index);
+      cur.durationTime = Math.max(0.04, getKeyframeTime(next, fps) - getKeyframeTime(cur, fps));
+    }
+    const lastKf = targetLayer.keyframes[targetLayer.keyframes.length - 1];
+    if (lastKf) {
+      if (!lastKf.duration || lastKf.duration < 1) {
+        lastKf.duration = fps;
+      }
+      lastKf.durationTime = Math.max(0.04, lastKf.duration / fps);
+    }
+
+    const maxEnd = Math.max(...tl.layers.flatMap((l) => l.keyframes.map((k) => k.index)));
+    tl.frameCount = Math.max(1, maxEnd);
+    invalidateTimelineDurationCache(tl);
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: targetLayer.id,
+      selectedFrameIndex: kf.index,
+      selectedTime: kf.time,
+    };
+    notify();
+  },
+
+  deleteKeyframe(
+    layerId: string,
+    frameIndexOrTime: number,
+    options?: { skipHistory?: boolean; elementId?: string }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    const targetLayer = tl.layers.find((l) => l.id === layerId);
+    if (!targetLayer || targetLayer.keyframes.length <= 1) return;
+
+    const isSeconds = frameIndexOrTime < 30 && !Number.isInteger(frameIndexOrTime);
+    const fromTime = isSeconds ? frameIndexOrTime : frameIndexOrTime / fps;
+    const fromFrame = isSeconds ? Math.round(frameIndexOrTime * fps) : frameIndexOrTime;
+
+    const kfIdx = targetLayer.keyframes.findIndex(
+      (k) =>
+        k.index === fromFrame ||
+        Math.abs(getKeyframeTime(k, fps) - fromTime) < 0.05 ||
+        k.index === frameIndexOrTime
+    );
+
+    if (kfIdx === -1) return;
+
+    targetLayer.keyframes.splice(kfIdx, 1);
+
+    for (let i = 0; i < targetLayer.keyframes.length - 1; i++) {
+      const cur = targetLayer.keyframes[i];
+      const next = targetLayer.keyframes[i + 1];
+      cur.duration = Math.max(1, next.index - cur.index);
+      cur.durationTime = Math.max(0.04, getKeyframeTime(next, fps) - getKeyframeTime(cur, fps));
+    }
+    const lastKf = targetLayer.keyframes[targetLayer.keyframes.length - 1];
+    if (lastKf) {
+      if (!lastKf.duration || lastKf.duration < 1) {
+        lastKf.duration = fps;
+      }
+      lastKf.durationTime = Math.max(0.04, lastKf.duration / fps);
+    }
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: targetLayer.id,
+    };
+    notify();
+  },
+
+  copyKeyframe(layerId?: string, frameIndexOrTime?: number): void {
+    const tl = getActiveTimeline(state.doc, state.isolationStack);
+    const fps = state.doc.stage.fps || 24;
+    const targetLayerId = layerId ?? state.selectedLayerId ?? tl.layers[0]?.id;
+    const targetLayer = tl.layers.find((l) => l.id === targetLayerId);
+    if (!targetLayer) return;
+
+    const isSeconds = typeof frameIndexOrTime === 'number' && frameIndexOrTime < 30 && !Number.isInteger(frameIndexOrTime);
+    const fromTime = typeof frameIndexOrTime === 'number'
+      ? (isSeconds ? frameIndexOrTime : frameIndexOrTime / fps)
+      : state.currentTime;
+    const fromFrame = typeof frameIndexOrTime === 'number'
+      ? (isSeconds ? Math.round(frameIndexOrTime * fps) : frameIndexOrTime)
+      : state.currentFrame;
+
+    const kf = findKeyframeAtTime(targetLayer, fromTime, fps) ?? findKeyframeAt(targetLayer, fromFrame);
+    if (!kf) return;
+
+    state = {
+      ...state,
+      keyframeClipboard: fastClone(kf),
+    };
+    notify();
+  },
+
+  pasteKeyframe(layerId?: string, frameIndexOrTime?: number): void {
+    if (!state.keyframeClipboard) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    const targetLayerId = layerId ?? state.selectedLayerId ?? tl.layers[0]?.id;
+    const targetLayer = tl.layers.find((l) => l.id === targetLayerId);
+    if (!targetLayer) return;
+
+    const isSeconds = typeof frameIndexOrTime === 'number' && frameIndexOrTime < 30 && !Number.isInteger(frameIndexOrTime);
+    const targetTime = typeof frameIndexOrTime === 'number'
+      ? (isSeconds ? frameIndexOrTime : frameIndexOrTime / fps)
+      : state.currentTime;
+    const targetFrame = typeof frameIndexOrTime === 'number'
+      ? (isSeconds ? Math.round(frameIndexOrTime * fps) : frameIndexOrTime)
+      : state.currentFrame;
+
+    targetLayer.keyframes.sort((a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps));
+
+    const pastedKf: EditorKeyframe = fastClone(state.keyframeClipboard);
+    pastedKf.id = `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    pastedKf.index = targetFrame;
+    pastedKf.time = targetTime;
+    pastedKf.elements = pastedKf.elements.map((el) => ({
+      ...el,
+      id: `${el.type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    }));
+
+    const existingKf = findKeyframeAtTime(targetLayer, targetTime, fps) ?? findKeyframeAt(targetLayer, targetFrame);
+    if (existingKf) {
+      if (existingKf.index === targetFrame || Math.abs(getKeyframeTime(existingKf, fps) - targetTime) < 0.001) {
+        existingKf.elements = pastedKf.elements;
+        existingKf.tween = pastedKf.tween ? fastClone(pastedKf.tween) : undefined;
+      } else {
+        const splitOffsetFrames = targetFrame - existingKf.index;
+        const originalDurationFrames = existingKf.duration;
+        const originalDurationTime = getKeyframeDurationTime(existingKf, fps);
+        const splitOffsetTime = targetTime - getKeyframeTime(existingKf, fps);
+
+        existingKf.duration = splitOffsetFrames;
+        existingKf.durationTime = splitOffsetTime;
+
+        pastedKf.duration = Math.max(1, originalDurationFrames - splitOffsetFrames);
+        pastedKf.durationTime = Math.max(0.04, originalDurationTime - splitOffsetTime);
+
+        const kfIdx = targetLayer.keyframes.indexOf(existingKf);
+        targetLayer.keyframes.splice(kfIdx + 1, 0, pastedKf);
+      }
+    } else {
+      const lastKf = targetLayer.keyframes[targetLayer.keyframes.length - 1];
+      if (lastKf && targetFrame > lastKf.index + lastKf.duration - 1) {
+        lastKf.duration = targetFrame - lastKf.index;
+        lastKf.durationTime = targetTime - getKeyframeTime(lastKf, fps);
+      }
+      pastedKf.duration = pastedKf.duration || fps;
+      pastedKf.durationTime = pastedKf.durationTime || 1;
+      targetLayer.keyframes.push(pastedKf);
+      targetLayer.keyframes.sort((a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps));
+    }
+
+    tl.frameCount = Math.max(tl.frameCount, targetFrame + (pastedKf.duration || 1));
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: targetLayer.id,
+    };
+    notify();
+  },
+
+  duplicateKeyframe(layerId?: string, frameIndexOrTime?: number): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    const targetLayerId = layerId ?? state.selectedLayerId ?? tl.layers[0]?.id;
+    const targetLayer = tl.layers.find((l) => l.id === targetLayerId);
+    if (!targetLayer) return;
+
+    const isSeconds = typeof frameIndexOrTime === 'number' && frameIndexOrTime < 30 && !Number.isInteger(frameIndexOrTime);
+    const targetTime = typeof frameIndexOrTime === 'number'
+      ? (isSeconds ? frameIndexOrTime : frameIndexOrTime / fps)
+      : state.currentTime;
+    const targetFrame = typeof frameIndexOrTime === 'number'
+      ? (isSeconds ? Math.round(frameIndexOrTime * fps) : frameIndexOrTime)
+      : state.currentFrame;
+
+    targetLayer.keyframes.sort((a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps));
+    const kf = findKeyframeAtTime(targetLayer, targetTime, fps) ?? findKeyframeAt(targetLayer, targetFrame);
+    if (!kf) return;
+
+    const duplicateKf: EditorKeyframe = {
+      ...fastClone(kf),
+      id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      elements: kf.elements.map((el) => ({
+        ...el,
+        id: `${el.type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      })),
+    };
+
+    if (kf.duration > 1) {
+      const splitFrame = (targetFrame > kf.index) ? targetFrame : kf.index + 1;
+      const splitTime = splitFrame / fps;
+      const originalDuration = kf.duration;
+      const originalDurTime = getKeyframeDurationTime(kf, fps);
+
+      kf.duration = splitFrame - kf.index;
+      kf.durationTime = splitTime - getKeyframeTime(kf, fps);
+
+      duplicateKf.index = splitFrame;
+      duplicateKf.time = splitTime;
+      duplicateKf.duration = Math.max(1, originalDuration - kf.duration);
+      duplicateKf.durationTime = Math.max(0.04, originalDurTime - kf.durationTime);
+
+      const kfIdx = targetLayer.keyframes.indexOf(kf);
+      targetLayer.keyframes.splice(kfIdx + 1, 0, duplicateKf);
+    } else {
+      duplicateKf.index = kf.index + 1;
+      duplicateKf.time = (kf.index + 1) / fps;
+      duplicateKf.duration = 1;
+      duplicateKf.durationTime = 1 / fps;
+
+      const kfIdx = targetLayer.keyframes.indexOf(kf);
+      targetLayer.keyframes.splice(kfIdx + 1, 0, duplicateKf);
+    }
+
+    tl.frameCount = Math.max(tl.frameCount, duplicateKf.index + duplicateKf.duration);
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: targetLayer.id,
+    };
+    notify();
+  },
+
+  convertToBlankKeyframe(layerId?: string, frameIndexOrTime?: number): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    const targetLayerId = layerId ?? state.selectedLayerId ?? tl.layers[0]?.id;
+    const targetLayer = tl.layers.find((l) => l.id === targetLayerId);
+    if (!targetLayer) return;
+
+    const isSeconds = typeof frameIndexOrTime === 'number' && frameIndexOrTime < 30 && !Number.isInteger(frameIndexOrTime);
+    const targetTime = typeof frameIndexOrTime === 'number'
+      ? (isSeconds ? frameIndexOrTime : frameIndexOrTime / fps)
+      : state.currentTime;
+    const targetFrame = typeof frameIndexOrTime === 'number'
+      ? (isSeconds ? Math.round(frameIndexOrTime * fps) : frameIndexOrTime)
+      : state.currentFrame;
+
+    const kf = findKeyframeAtTime(targetLayer, targetTime, fps) ?? findKeyframeAt(targetLayer, targetFrame);
+    if (!kf) return;
+
+    kf.elements = [];
+    delete kf.tween;
+    delete (kf as any).transform;
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: targetLayer.id,
+    };
+    notify();
+  },
+
   /* ========================================================================= *
    * Element Mutations
    * ========================================================================= */
@@ -1135,18 +2228,206 @@ export const editorActions = {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
-    const targetLayerId = layerId ?? state.selectedLayerId ?? tl.layers[0]?.id;
     const fps = doc.stage.fps || 24;
     const targetTime = typeof frameIndexOrTime === 'number'
       ? (frameIndexOrTime > 30 ? frameIndexOrTime / fps : frameIndexOrTime)
       : state.currentTime;
+    const targetFrame = Math.round(targetTime * fps);
+
+    const durationFrames = Math.max(fps, (tl.frameCount || 24) - targetFrame);
+    const durationTime = durationFrames / fps;
+
+    // Determine target/active layer
+    const activeLayer = (layerId ? tl.layers.find((l) => l.id === layerId) : undefined)
+      ?? (state.selectedLayerId ? tl.layers.find((l) => l.id === state.selectedLayerId) : undefined)
+      ?? tl.layers[0];
+
+    if (!activeLayer) {
+      const newLayer: EditorLayer = {
+        id: `layer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: getElementDefaultName(element, doc.library?.symbols),
+        kind: 'normal',
+        visible: true,
+        locked: false,
+        keyframes: [
+          {
+            id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            index: targetFrame,
+            time: targetTime,
+            duration: durationFrames,
+            durationTime: durationTime,
+            elements: [element],
+          },
+        ],
+      };
+      tl.layers.push(newLayer);
+      tl.frameCount = Math.max(tl.frameCount, targetFrame + durationFrames);
+      state = {
+        ...state,
+        doc,
+        selectedLayerId: newLayer.id,
+        selectedElementIds: [element.id],
+      };
+      notify();
+      return;
+    }
+
+    if (activeLayer.kind === 'folder') {
+      const newLayer: EditorLayer = {
+        id: `layer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: getElementDefaultName(element, doc.library?.symbols),
+        kind: 'normal',
+        visible: true,
+        locked: false,
+        parentLayerId: activeLayer.id,
+        keyframes: [
+          {
+            id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            index: targetFrame,
+            time: targetTime,
+            duration: durationFrames,
+            durationTime: durationTime,
+            elements: [element],
+          },
+        ],
+      };
+      (newLayer as any).parentId = activeLayer.id;
+      const folderIdx = tl.layers.indexOf(activeLayer);
+      tl.layers.splice(folderIdx + 1, 0, newLayer);
+      tl.frameCount = Math.max(tl.frameCount, targetFrame + durationFrames);
+      state = {
+        ...state,
+        doc,
+        selectedLayerId: newLayer.id,
+        selectedElementIds: [element.id],
+      };
+      notify();
+      return;
+    }
+
+    let targetKf = findKeyframeAtTime(activeLayer, targetTime, fps) ?? findKeyframeAt(activeLayer, targetFrame);
+    const isCurrentKfBlank = Boolean(targetKf && targetKf.elements.length === 0);
+    const isLayerEntirelyEmpty = activeLayer.keyframes.every((k) => k.elements.length === 0);
+
+    if (isCurrentKfBlank || isLayerEntirelyEmpty) {
+      if (isLayerEntirelyEmpty) {
+        activeLayer.name = getElementDefaultName(element, doc.library?.symbols);
+      }
+
+      if (!targetKf) {
+        targetKf = {
+          id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          index: targetFrame,
+          time: targetTime,
+          duration: durationFrames,
+          durationTime: durationTime,
+          elements: [],
+        };
+        activeLayer.keyframes.push(targetKf);
+        activeLayer.keyframes.sort((a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps));
+      } else {
+        if (targetKf.time === undefined) targetKf.time = targetTime;
+        if (targetKf.durationTime === undefined) targetKf.durationTime = targetKf.duration ? targetKf.duration / fps : durationTime;
+      }
+
+      if (isCurrentKfBlank && !isLayerEntirelyEmpty) {
+        const targetKfTime = getKeyframeTime(targetKf, fps);
+        const prevKf = [...activeLayer.keyframes]
+          .filter(
+            (k) =>
+              k !== targetKf &&
+              (getKeyframeTime(k, fps) < targetKfTime - 1e-4 ||
+                (k.index !== undefined && targetKf!.index !== undefined && k.index < targetKf!.index))
+          )
+          .sort((a, b) => getKeyframeTime(b, fps) - getKeyframeTime(a, fps))[0];
+        if (prevKf && prevKf.elements.length > 0) {
+          const prevElement = prevKf.elements[0];
+          if (prevElement && prevElement.id) {
+            element.id = prevElement.id;
+          }
+        }
+      }
+
+      targetKf.elements.push(element);
+      tl.frameCount = Math.max(tl.frameCount, (targetKf.index ?? targetFrame) + (targetKf.duration ?? 1), targetFrame + 1);
+      state = {
+        ...state,
+        doc,
+        selectedLayerId: activeLayer.id,
+        selectedElementIds: [element.id],
+      };
+      notify();
+      return;
+    }
+
+    // Active layer already has elements on this keyframe (and is not empty): create a dedicated new layer for this element
+    const parentFolderId = activeLayer.parentLayerId || (activeLayer as any).parentId;
+    const newLayer: EditorLayer = {
+      id: `layer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: getElementDefaultName(element, doc.library?.symbols),
+      kind: 'normal',
+      visible: true,
+      locked: false,
+      parentLayerId: parentFolderId,
+      keyframes: [
+        {
+          id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          index: targetFrame,
+          time: targetTime,
+          duration: durationFrames,
+          durationTime: durationTime,
+          elements: [element],
+        },
+      ],
+    };
+    if (parentFolderId) {
+      (newLayer as any).parentId = parentFolderId;
+    }
+    const activeIdx = tl.layers.indexOf(activeLayer);
+    const insertIdx = activeIdx >= 0 ? activeIdx : 0;
+    tl.layers.splice(insertIdx, 0, newLayer);
+    tl.frameCount = Math.max(tl.frameCount, targetFrame + durationFrames);
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: newLayer.id,
+      selectedElementIds: [element.id],
+    };
+    notify();
+  },
+
+  addBitmapElement(src: string, name?: string, width?: number, height?: number): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (!doc.library) {
+      doc.library = { symbols: {}, audio: {}, fonts: {}, bitmaps: {} };
+    }
+    if (!doc.library.bitmaps) {
+      doc.library.bitmaps = {};
+    }
+    const bitmapId = `bmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const w = width || 240;
+    const h = height || 180;
+    const assetName = name || `Bitmap ${Object.keys(doc.library.bitmaps).length + 1}`;
+    doc.library.bitmaps[bitmapId] = {
+      id: bitmapId,
+      name: assetName,
+      src,
+      width: w,
+      height: h,
+      smoothing: true,
+    };
+
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const targetLayerId = state.selectedLayerId ?? tl.layers[0]?.id;
+    const fps = doc.stage.fps || 24;
+    const targetTime = state.currentTime;
     const targetFrame = Math.round(targetTime * fps);
     const layer = tl.layers.find((l) => l.id === targetLayerId) ?? tl.layers[0];
     if (!layer) return;
 
     let kf = findKeyframeAtTime(layer, targetTime, fps) ?? findKeyframeAt(layer, targetFrame);
     if (!kf) {
-      // Create a keyframe at targetFrame / targetTime
       const newKf: EditorKeyframe = {
         id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         index: targetFrame,
@@ -1161,31 +2442,193 @@ export const editorActions = {
       kf = newKf;
     }
 
-    kf.elements.push(element);
+    const bitmapEl: BitmapElement = {
+      id: `el_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'bitmap',
+      bitmapId,
+      src,
+      width: w,
+      height: h,
+      alpha: 1,
+      visible: true,
+      transform: {
+        x: Math.round(((doc.stage.width || 550) - w) / 2),
+        y: Math.round(((doc.stage.height || 400) - h) / 2),
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        originX: 0,
+        originY: 0,
+      },
+    };
+
+    kf.elements.push(bitmapEl as EditorElement);
     state = {
       ...state,
       doc,
       selectedLayerId: layer.id,
-      selectedElementIds: [element.id],
+      selectedElementIds: [bitmapEl.id],
     };
     notify();
   },
 
-  updateElementTransform(id: string, transform: Partial<Transform>): void {
+  addVideoElement(src: string, width?: number, height?: number): void {
     pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const targetLayerId = state.selectedLayerId ?? tl.layers[0]?.id;
+    const fps = doc.stage.fps || 24;
+    const targetTime = state.currentTime;
+    const targetFrame = Math.round(targetTime * fps);
+    const layer = tl.layers.find((l) => l.id === targetLayerId) ?? tl.layers[0];
+    if (!layer) return;
+
+    let kf = findKeyframeAtTime(layer, targetTime, fps) ?? findKeyframeAt(layer, targetFrame);
+    if (!kf) {
+      const newKf: EditorKeyframe = {
+        id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        index: targetFrame,
+        time: targetTime,
+        duration: fps,
+        durationTime: 1.0,
+        elements: [],
+      };
+      layer.keyframes.push(newKf);
+      layer.keyframes.sort((a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps));
+      tl.frameCount = Math.max(tl.frameCount, targetFrame + 1);
+      kf = newKf;
+    }
+
+    const w = width || 320;
+    const h = height || 180;
+    const videoEl: VideoElement = {
+      id: `el_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'video',
+      src,
+      width: w,
+      height: h,
+      autoplay: true,
+      loop: true,
+      muted: true,
+      controls: true,
+      alpha: 1,
+      visible: true,
+      transform: {
+        x: Math.round(((doc.stage.width || 550) - w) / 2),
+        y: Math.round(((doc.stage.height || 400) - h) / 2),
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        originX: 0,
+        originY: 0,
+      },
+    };
+
+    kf.elements.push(videoEl as EditorElement);
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: layer.id,
+      selectedElementIds: [videoEl.id],
+    };
+    notify();
+  },
+
+  updateElementTransform(
+    id: string,
+    transform: Partial<Transform>,
+    options?: { skipHistory?: boolean }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
     let updated = false;
 
+    const fps = doc.stage.fps || 24;
     for (const layer of tl.layers) {
-      const kf = findKeyframeAtTime(layer, state.currentTime) ?? findKeyframeAt(layer, state.currentFrame);
+      const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
       if (!kf) continue;
-      const el = kf.elements.find((e) => e.id === id);
-      if (el) {
-        el.transform = {
-          ...el.transform,
-          ...transform,
-        };
+      const elIndex = kf.elements.findIndex((e) => e.id === id);
+      if (elIndex >= 0) {
+        let targetKf = kf;
+        if (state.isPlaying) {
+          const kfTime = getKeyframeTime(kf, fps);
+          const targetTime = state.currentTime;
+          const targetFrame = Math.round(targetTime * fps);
+          if (targetTime > kfTime + 0.001 && targetFrame > kf.index) {
+            const splitOffsetFrames = targetFrame - kf.index;
+            const originalDurationFrames = kf.duration;
+            const originalDurationTime = getKeyframeDurationTime(kf, fps);
+            const splitOffsetTime = targetTime - kfTime;
+
+            kf.duration = splitOffsetFrames;
+            kf.durationTime = splitOffsetTime;
+
+            const newKf: EditorKeyframe = {
+              id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              index: targetFrame,
+              time: targetTime,
+              duration: Math.max(1, originalDurationFrames - splitOffsetFrames),
+              durationTime: Math.max(0.04, originalDurationTime - splitOffsetTime),
+              elements: fastClone(kf.elements),
+              tween: kf.tween ? fastClone(kf.tween) : undefined,
+            };
+
+            const kfIdx = layer.keyframes.indexOf(kf);
+            layer.keyframes.splice(kfIdx + 1, 0, newKf);
+            targetKf = newKf;
+          }
+        }
+        const el = targetKf.elements.find((e) => e.id === id);
+        if (el) {
+          el.transform = {
+            ...el.transform,
+            ...transform,
+          };
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  updateElementProps(
+    id: string,
+    props: Partial<EditorElement> & Record<string, any>,
+    options?: { skipHistory?: boolean }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === id);
+      if (elIndex >= 0) {
+        const targetEl = kf.elements[elIndex];
+        if (targetEl.type === 'bitmap' && (targetEl as any).bitmapId && props.src && doc.library?.bitmaps?.[(targetEl as any).bitmapId]) {
+          doc.library.bitmaps[(targetEl as any).bitmapId].src = props.src;
+        }
+        kf.elements[elIndex] = {
+          ...targetEl,
+          ...props,
+        } as any;
         updated = true;
         break;
       }
@@ -1197,23 +2640,258 @@ export const editorActions = {
     }
   },
 
-  updateElementProps(id: string, props: Partial<EditorElement>): void {
-    pushHistorySnapshot();
+  updateStarShape(
+    elementId: string,
+    config: { points?: number; pointRatio?: number },
+    options?: { skipHistory?: boolean; force?: boolean }
+  ): void {
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
     let updated = false;
 
     for (const layer of tl.layers) {
-      const kf = findKeyframeAtTime(layer, state.currentTime) ?? findKeyframeAt(layer, state.currentFrame);
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
       if (!kf) continue;
-      const elIndex = kf.elements.findIndex((e) => e.id === id);
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
       if (elIndex >= 0) {
-        kf.elements[elIndex] = {
-          ...kf.elements[elIndex],
-          ...props,
-        } as DisplayElement;
-        updated = true;
-        break;
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          if (!options?.force && (shape as any).isCustomizedPath) {
+            return;
+          }
+          if (!options?.skipHistory) {
+            pushHistorySnapshot();
+          }
+          const prevConfig = (shape as any).starConfig || {};
+          const bounds = getShapeBounds(shape);
+          const outerRadius =
+            prevConfig.outerRadius ??
+            Math.max(8, Math.max(bounds.width, bounds.height) / 2);
+          const cx = prevConfig.cx ?? (shape.transform.originX || outerRadius);
+          const cy = prevConfig.cy ?? (shape.transform.originY || outerRadius);
+          const startAngle = prevConfig.startAngle ?? -Math.PI / 2;
+
+          const points =
+            config.points !== undefined
+              ? Math.max(3, Math.min(64, Math.round(config.points)))
+              : (prevConfig.points ?? 5);
+          const pointRatio =
+            config.pointRatio !== undefined
+              ? Math.max(0.05, Math.min(3.0, config.pointRatio))
+              : (prevConfig.pointRatio ?? 0.5);
+
+          const newD = generatePolygonStarPath(
+            cx,
+            cy,
+            outerRadius,
+            points,
+            pointRatio,
+            startAngle
+          );
+
+          const updatedStarConfig = {
+            ...prevConfig,
+            points,
+            pointRatio,
+            outerRadius,
+            startAngle,
+            cx,
+            cy,
+          };
+
+          const newPaths = [...shape.paths];
+          if (newPaths.length > 0) {
+            newPaths[0] = { ...newPaths[0], d: newD };
+          } else {
+            newPaths.push({
+              d: newD,
+              fill: { type: 'solid', color: state.fillColor },
+            });
+          }
+
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            starConfig: updatedStarConfig,
+          } as any;
+
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  resetStarShapeToParametric(
+    elementId: string,
+    options?: { skipHistory?: boolean }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const prevConfig = (shape as any).starConfig || {};
+          const bounds = getShapeBounds(shape);
+          const outerRadius =
+            prevConfig.outerRadius ??
+            Math.max(8, Math.max(bounds.width, bounds.height) / 2);
+          const cx = prevConfig.cx ?? (shape.transform.originX || outerRadius);
+          const cy = prevConfig.cy ?? (shape.transform.originY || outerRadius);
+          const startAngle = prevConfig.startAngle ?? -Math.PI / 2;
+          const points = prevConfig.points ?? 5;
+          const pointRatio = prevConfig.pointRatio ?? 0.5;
+
+          const newD = generatePolygonStarPath(
+            cx,
+            cy,
+            outerRadius,
+            points,
+            pointRatio,
+            startAngle
+          );
+
+          const updatedStarConfig = {
+            ...prevConfig,
+            points,
+            pointRatio,
+            outerRadius,
+            startAngle,
+            cx,
+            cy,
+          };
+
+          const newPaths = [...shape.paths];
+          if (newPaths.length > 0) {
+            newPaths[0] = { ...newPaths[0], d: newD };
+          } else {
+            newPaths.push({
+              d: newD,
+              fill: { type: 'solid', color: state.fillColor },
+            });
+          }
+
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            starConfig: updatedStarConfig,
+            isCustomizedPath: false,
+          } as any;
+
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  morphShapeTo(elementId: string, targetType: 'circle' | 'rectangle' | 'star'): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const bounds = getShapeBounds(shape);
+          const starCfg = (shape as any).starConfig;
+          let bw = Math.max(8, bounds.width);
+          let bh = Math.max(8, bounds.height);
+          let bx = bounds.x;
+          let by = bounds.y;
+
+          if (starCfg?.outerRadius) {
+            const r = starCfg.outerRadius;
+            const cx = starCfg.cx ?? (shape.transform.originX || r);
+            const cy = starCfg.cy ?? (shape.transform.originY || r);
+            bx = cx - r;
+            by = cy - r;
+            bw = r * 2;
+            bh = r * 2;
+          }
+
+          let newD = '';
+          let newStarConfig: any = undefined;
+
+          if (targetType === 'circle') {
+            const rX = bw / 2;
+            const rY = bh / 2;
+            newD = `M ${bx} ${by + rY} a ${rX} ${rY} 0 1 0 ${bw} 0 a ${rX} ${rY} 0 1 0 ${-bw} 0 Z`;
+          } else if (targetType === 'rectangle') {
+            newD = `M ${bx} ${by} L ${bx + bw} ${by} L ${bx + bw} ${by + bh} L ${bx} ${by + bh} Z`;
+          } else if (targetType === 'star') {
+            const outerRadius = Math.max(bw, bh) / 2;
+            const cx = bx + bw / 2;
+            const cy = by + bh / 2;
+            newD = generatePolygonStarPath(cx, cy, outerRadius, 5, 0.5, -Math.PI / 2);
+            newStarConfig = {
+              points: 5,
+              pointRatio: 0.5,
+              outerRadius,
+              startAngle: -Math.PI / 2,
+              cx,
+              cy,
+            };
+          }
+
+          const primaryPath = shape.paths[0] || {
+            fill: { type: 'solid', color: state.fillColor },
+          };
+          const newPaths = [{ ...primaryPath, d: newD }];
+
+          const morphedShape: ShapeElement = {
+            ...shape,
+            paths: newPaths,
+          };
+
+          if (newStarConfig) {
+            (morphedShape as any).starConfig = newStarConfig;
+          } else {
+            delete (morphedShape as any).starConfig;
+          }
+          (morphedShape as any).shapeType = targetType;
+          (morphedShape as any).isCustomizedPath = false;
+
+          kf.elements[elIndex] = morphedShape;
+          updated = true;
+          break;
+        }
       }
     }
 
@@ -1384,6 +3062,23 @@ export const editorActions = {
       ...state,
       doc,
       selectedElementIds: [],
+    };
+    notify();
+  },
+
+  deleteElement(id: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    for (const layer of tl.layers) {
+      for (const kf of layer.keyframes) {
+        kf.elements = kf.elements.filter((e) => e.id !== id);
+      }
+    }
+    state = {
+      ...state,
+      doc,
+      selectedElementIds: state.selectedElementIds.filter((elId) => elId !== id),
     };
     notify();
   },
@@ -1601,6 +3296,7 @@ export const editorActions = {
     }
 
     if (targetEls.length === 0) return;
+    targetEls.sort((a, b) => state.selectedElementIds.indexOf(a.id) - state.selectedElementIds.indexOf(b.id));
 
     const groupNum = tl.layers.filter((l) => l.kind === 'folder').length + 1;
     const groupName = `Group ${groupNum}`;
@@ -1898,6 +3594,75 @@ export const editorActions = {
     notify();
   },
 
+  changeElementId(
+    oldId: string,
+    newId: string,
+    options?: { skipHistory?: boolean; scope?: 'active' | 'all' }
+  ): void {
+    if (!oldId || !newId || oldId === newId) return;
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    if (options?.scope === 'all') {
+      for (const layer of tl.layers) {
+        let matched = false;
+        for (const kf of layer.keyframes) {
+          for (const el of kf.elements) {
+            if (el.id === oldId) {
+              el.id = newId;
+              matched = true;
+              updated = true;
+            }
+          }
+        }
+        if (matched) break;
+      }
+    } else {
+      // 1. Update in active keyframe at current time/frame
+      for (const layer of tl.layers) {
+        const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
+        if (kf) {
+          const el = kf.elements.find((e) => e.id === oldId);
+          if (el) {
+            el.id = newId;
+            updated = true;
+            break;
+          }
+        }
+      }
+
+      // 2. If not found in active keyframe, fallback to any keyframe
+      if (!updated) {
+        for (const layer of tl.layers) {
+          for (const kf of layer.keyframes) {
+            const el = kf.elements.find((e) => e.id === oldId);
+            if (el) {
+              el.id = newId;
+              updated = true;
+              break;
+            }
+          }
+          if (updated) break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = {
+        ...state,
+        doc,
+        selectedElementIds: state.selectedElementIds.map((id) => (id === oldId ? newId : id)),
+        editingTextElId: state.editingTextElId === oldId ? newId : state.editingTextElId,
+      };
+      notify();
+    }
+  },
+
   enterIsolation(symbolId: string, name?: string): void {
     const sym = state.doc.library.symbols[symbolId];
     if (!sym) return;
@@ -2026,8 +3791,10 @@ export const editorActions = {
     notify();
   },
 
-  updateElementScript(id: string, eventName: string, code: string): void {
-    pushHistorySnapshot();
+  updateElementScript(id: string, eventName: string, code: string, skipHistory = false): void {
+    if (!skipHistory) {
+      pushHistorySnapshot();
+    }
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
     let updated = false;
@@ -2036,16 +3803,41 @@ export const editorActions = {
       const kf = findKeyframeAt(layer, state.currentFrame);
       if (!kf) continue;
       const el = kf.elements.find((e) => e.id === id);
-      if (el && el.type === 'instance') {
-        const instance = el as SymbolInstance;
-        if (!instance.events) {
-          instance.events = {};
+      if (el) {
+        if (!el.instanceName) {
+          el.instanceName = el.id;
+        }
+        if (!el.events) {
+          (el as any).events = {};
         }
         if (!code.trim()) {
-          delete (instance.events as Record<string, unknown>)[eventName];
+          delete (el.events as Record<string, unknown>)[eventName];
+          if (el.events && Object.keys(el.events).length === 0) {
+            delete el.events;
+          }
         } else {
-          (instance.events as Record<string, ScriptSource>)[eventName] = { __fn: code };
+          (el.events as Record<string, ScriptSource>)[eventName] = { __fn: code };
         }
+
+        // Also sync to doc.scripts for top-level binding lookup
+        if (!(doc as any).scripts) {
+          (doc as any).scripts = {};
+        }
+        const targetId = el.instanceName || el.id;
+        if (!code.trim()) {
+          if ((doc as any).scripts[targetId]) {
+            delete (doc as any).scripts[targetId][eventName];
+            if (Object.keys((doc as any).scripts[targetId]).length === 0) {
+              delete (doc as any).scripts[targetId];
+            }
+          }
+        } else {
+          if (!(doc as any).scripts[targetId]) {
+            (doc as any).scripts[targetId] = {};
+          }
+          (doc as any).scripts[targetId][eventName] = { __fn: code };
+        }
+
         updated = true;
         break;
       }
@@ -2057,8 +3849,10 @@ export const editorActions = {
     }
   },
 
-  updateKeyframeScript(layerId: string, frameIndex: number, code: string): void {
-    pushHistorySnapshot();
+  updateKeyframeScript(layerId: string, frameIndex: number, code: string, skipHistory = false): void {
+    if (!skipHistory) {
+      pushHistorySnapshot();
+    }
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
     const layer = tl.layers.find((l) => l.id === layerId);
@@ -2085,6 +3879,17 @@ export const editorActions = {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
+
+    let effectiveParentId = parentFolderId;
+    if (!effectiveParentId && state.selectedLayerId) {
+      const sel = tl.layers.find((l) => l.id === state.selectedLayerId);
+      if (sel?.kind === 'folder') {
+        effectiveParentId = sel.id;
+      } else if (sel && (sel.parentLayerId || (sel as any)?.parentId)) {
+        effectiveParentId = sel.parentLayerId || (sel as any)?.parentId;
+      }
+    }
+
     const nextNum = tl.layers.length + 1;
     const newLayer: EditorLayer = {
       id: `layer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2092,7 +3897,7 @@ export const editorActions = {
       kind: 'normal',
       visible: true,
       locked: false,
-      parentLayerId: parentFolderId,
+      parentLayerId: effectiveParentId,
       keyframes: [
         {
           id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2102,10 +3907,11 @@ export const editorActions = {
         },
       ],
     };
+    (newLayer as any).parentId = effectiveParentId;
 
-    // If parentFolderId is specified, place it right after the parent folder or top of folder
-    if (parentFolderId) {
-      const parentIdx = tl.layers.findIndex((l) => l.id === parentFolderId);
+    // If effectiveParentId is specified, place it right after the parent folder or top of folder
+    if (effectiveParentId) {
+      const parentIdx = tl.layers.findIndex((l) => l.id === effectiveParentId);
       if (parentIdx !== -1) {
         tl.layers.splice(parentIdx + 1, 0, newLayer);
       } else {
@@ -2128,6 +3934,19 @@ export const editorActions = {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
+
+    let effectiveParentId = parentFolderId;
+    if (!effectiveParentId && state.selectedLayerId) {
+      const sel = tl.layers.find((l) => l.id === state.selectedLayerId);
+      if (sel) {
+        if (sel.kind === 'folder') {
+          effectiveParentId = sel.id;
+        } else if (sel.parentLayerId || (sel as any)?.parentId) {
+          effectiveParentId = sel.parentLayerId || (sel as any)?.parentId;
+        }
+      }
+    }
+
     const nextNum = tl.layers.filter((l) => l.kind === 'folder').length + 1;
     const newFolder: EditorLayer = {
       id: `folder_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2135,7 +3954,7 @@ export const editorActions = {
       kind: 'folder',
       visible: true,
       locked: false,
-      parentLayerId: parentFolderId,
+      parentLayerId: effectiveParentId,
       keyframes: [
         {
           id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2145,9 +3964,10 @@ export const editorActions = {
         },
       ],
     };
+    (newFolder as any).parentId = effectiveParentId;
 
-    if (parentFolderId) {
-      const parentIdx = tl.layers.findIndex((l) => l.id === parentFolderId);
+    if (effectiveParentId) {
+      const parentIdx = tl.layers.findIndex((l) => l.id === effectiveParentId);
       if (parentIdx !== -1) {
         tl.layers.splice(parentIdx + 1, 0, newFolder);
       } else {
@@ -2165,6 +3985,10 @@ export const editorActions = {
     notify();
   },
 
+  addGroup(name?: string, parentFolderId?: string): void {
+    editorActions.addFolder(name, parentFolderId);
+  },
+
   setLayerParent(layerId: string, parentFolderId?: string): void {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
@@ -2172,10 +3996,144 @@ export const editorActions = {
     const layer = tl.layers.find((l) => l.id === layerId);
     if (!layer) return;
     if (parentFolderId) {
-      layer.parentLayerId = parentFolderId;
+      // Prevent cycle: parentFolderId cannot be layerId or a descendant of layerId
+      let currId: string | undefined = parentFolderId;
+      let isCycle = false;
+      const visited = new Set<string>();
+      while (currId) {
+        if (currId === layerId || visited.has(currId)) {
+          isCycle = true;
+          break;
+        }
+        visited.add(currId);
+        const pLayer = tl.layers.find((l) => l.id === currId);
+        currId = pLayer?.parentLayerId || (pLayer as any)?.parentId;
+      }
+      if (!isCycle) {
+        layer.parentLayerId = parentFolderId;
+        (layer as any).parentId = parentFolderId;
+      }
     } else {
       delete layer.parentLayerId;
+      delete (layer as any).parentId;
     }
+    state = { ...state, doc };
+    notify();
+  },
+
+  updateFolderTransform(
+    folderId: string,
+    transform: Partial<Transform>,
+    options?: { skipHistory?: boolean }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    const folder = tl.layers.find((l) => l.id === folderId);
+    if (!folder) return;
+
+    if (!folder.keyframes || folder.keyframes.length === 0) {
+      folder.keyframes = [
+        {
+          id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          index: 0,
+          duration: tl.frameCount || 24,
+          elements: [],
+        },
+      ];
+    }
+
+    folder.keyframes.sort((a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps));
+    let kf = findKeyframeAtTime(folder, state.currentTime, fps) ?? findKeyframeAt(folder, state.currentFrame);
+    if (!kf) {
+      kf = folder.keyframes[0];
+    }
+
+    const kfTime = getKeyframeTime(kf, fps);
+    if (state.currentFrame > kf.index && state.currentTime > kfTime + 0.001) {
+      const targetFrame = state.currentFrame;
+      const targetTime = state.currentTime;
+      const kfIdx = folder.keyframes.indexOf(kf);
+      const nextKf = folder.keyframes[kfIdx + 1];
+
+      let folderT = kf.transform ?? folder.transform ?? {
+        x: 0,
+        y: 0,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        originX: 0,
+        originY: 0,
+      };
+
+      if (kf.tween && nextKf) {
+        const nextKfTime = getKeyframeTime(nextKf, fps);
+        if (nextKfTime > kfTime) {
+          const prog = Math.max(0, Math.min(1, (targetTime - kfTime) / (nextKfTime - kfTime)));
+          const nextT = nextKf.transform ?? folderT;
+          let deltaRot = ((nextT.rotation ?? 0) - (folderT.rotation ?? 0)) % 360;
+          if (deltaRot > 180) deltaRot -= 360;
+          if (deltaRot < -180) deltaRot += 360;
+          folderT = {
+            ...folderT,
+            x: folderT.x + (nextT.x - folderT.x) * prog,
+            y: folderT.y + (nextT.y - folderT.y) * prog,
+            scaleX: (folderT.scaleX ?? 1) + ((nextT.scaleX ?? 1) - (folderT.scaleX ?? 1)) * prog,
+            scaleY: (folderT.scaleY ?? 1) + ((nextT.scaleY ?? 1) - (folderT.scaleY ?? 1)) * prog,
+            rotation: (folderT.rotation ?? 0) + deltaRot * prog,
+            skewX: (folderT.skewX ?? 0) + ((nextT.skewX ?? 0) - (folderT.skewX ?? 0)) * prog,
+            skewY: (folderT.skewY ?? 0) + ((nextT.skewY ?? 0) - (folderT.skewY ?? 0)) * prog,
+          };
+        }
+      }
+
+      const splitOffsetFrames = targetFrame - kf.index;
+      const splitOffsetTime = targetTime - kfTime;
+      const origDurFrames = kf.duration;
+      const origDurTime = getKeyframeDurationTime(kf, fps);
+
+      kf.duration = Math.max(1, splitOffsetFrames);
+      kf.durationTime = Math.max(0.04, splitOffsetTime);
+      if (!kf.tween) {
+        kf.tween = { type: 'motion', easing: { type: 'linear' } };
+      }
+
+      const newKf: EditorKeyframe = {
+        id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        index: targetFrame,
+        time: targetTime,
+        duration: Math.max(1, origDurFrames - splitOffsetFrames),
+        durationTime: Math.max(0.04, origDurTime - splitOffsetTime),
+        elements: [],
+        transform: folderT,
+        tween: nextKf && kf.tween ? fastClone(kf.tween) : undefined,
+      };
+      folder.keyframes.splice(kfIdx + 1, 0, newKf);
+      tl.frameCount = Math.max(tl.frameCount, targetFrame + newKf.duration);
+      invalidateTimelineDurationCache(tl);
+      kf = newKf;
+    }
+
+    const currentT = kf.transform ?? folder.transform ?? {
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: 0,
+      skewX: 0,
+      skewY: 0,
+      originX: 0,
+      originY: 0,
+    };
+    const updatedT = { ...currentT, ...transform };
+    kf.transform = updatedT;
+    folder.transform = updatedT;
+
     state = { ...state, doc };
     notify();
   },
@@ -2188,7 +4146,7 @@ export const editorActions = {
     if (!folder) return;
     const kf = findKeyframeAt(folder, frameIndex);
     if (!kf) return;
-    const currentT = kf.transform ?? {
+    const currentT = kf.transform ?? folder.transform ?? {
       x: 0,
       y: 0,
       scaleX: 1,
@@ -2199,7 +4157,35 @@ export const editorActions = {
       originX: 0,
       originY: 0,
     };
-    kf.transform = { ...currentT, ...partial };
+    const updatedT = { ...currentT, ...partial };
+    kf.transform = updatedT;
+    folder.transform = updatedT;
+    state = { ...state, doc };
+    notify();
+  },
+
+  setKeyframeEasing(layerId: string, kfIdOrTime: string | number, easing: Easing): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    const layer = tl.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    let kf: EditorKeyframe | undefined;
+    if (typeof kfIdOrTime === 'string') {
+      kf = layer.keyframes.find((k) => k.id === kfIdOrTime);
+    } else {
+      kf = findKeyframeAtTime(layer, kfIdOrTime, fps) ?? findKeyframeAt(layer, kfIdOrTime);
+    }
+    if (!kf) return;
+
+    if (!kf.tween) {
+      kf.tween = { type: 'motion', easing };
+    } else {
+      kf.tween.easing = easing;
+    }
+
     state = { ...state, doc };
     notify();
   },
@@ -2210,7 +4196,14 @@ export const editorActions = {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
+    const deletedLayer = tl.layers.find((l) => l.id === layerId);
     tl.layers = tl.layers.filter((l) => l.id !== layerId);
+    for (const l of tl.layers) {
+      if (l.parentLayerId === layerId || (l as any).parentId === layerId) {
+        l.parentLayerId = deletedLayer?.parentLayerId;
+        (l as any).parentId = deletedLayer?.parentLayerId;
+      }
+    }
 
     const nextSelected = tl.layers[0]?.id ?? null;
     state = {
@@ -2218,6 +4211,31 @@ export const editorActions = {
       doc,
       selectedLayerId: nextSelected,
     };
+    notify();
+  },
+
+  duplicateLayer(layerId: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const idx = tl.layers.findIndex((l) => l.id === layerId);
+    if (idx === -1) return;
+    const src = tl.layers[idx];
+    const clone = fastClone(src);
+    clone.id = `layer_${Math.random().toString(36).slice(2, 8)}`;
+    clone.name = `${src.name} Copy`;
+    if (clone.keyframes) {
+      for (const kf of clone.keyframes) {
+        kf.id = `kf_${Math.random().toString(36).slice(2, 8)}`;
+        if (kf.elements) {
+          for (const el of kf.elements) {
+            el.id = `el_${Math.random().toString(36).slice(2, 8)}`;
+          }
+        }
+      }
+    }
+    tl.layers.splice(idx + 1, 0, clone);
+    state = { ...state, doc, selectedLayerId: clone.id };
     notify();
   },
 
@@ -2266,6 +4284,72 @@ export const editorActions = {
     const layer = tl.layers.find((l) => l.id === layerId);
     if (!layer) return;
     layer.locked = !layer.locked;
+    state = { ...state, doc };
+    notify();
+  },
+
+  toggleLayerMask(layerId: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const idx = tl.layers.findIndex((l) => l.id === layerId);
+    if (idx === -1) return;
+
+    const layer = tl.layers[idx];
+    const isMask = layer.kind === 'mask';
+
+    if (isMask) {
+      layer.kind = 'normal';
+      for (const l of tl.layers) {
+        if (l.maskLayerId === layer.id) {
+          delete l.maskLayerId;
+        }
+      }
+    } else {
+      layer.kind = 'mask';
+      // Automatically link the layer directly below it (Flash order: layers[idx+1] is below)
+      if (idx + 1 < tl.layers.length) {
+        tl.layers[idx + 1].maskLayerId = layer.id;
+      }
+    }
+
+    state = { ...state, doc };
+    notify();
+  },
+
+  setLayerMaskId(layerId: string, maskLayerId?: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const layer = tl.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    if (maskLayerId && maskLayerId !== layer.id) {
+      layer.maskLayerId = maskLayerId;
+    } else {
+      delete layer.maskLayerId;
+    }
+
+    state = { ...state, doc };
+    notify();
+  },
+
+  setLayerKind(layerId: string, kind: LayerKind): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const layer = tl.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+
+    layer.kind = kind;
+    if (kind !== 'mask') {
+      for (const l of tl.layers) {
+        if (l.maskLayerId === layer.id) {
+          delete l.maskLayerId;
+        }
+      }
+    }
+
     state = { ...state, doc };
     notify();
   },
@@ -2367,6 +4451,9 @@ export const editorActions = {
       type: 'instance',
       symbolId,
       instanceName: sym.name.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_'),
+      playMode: 'loop',
+      autoplay: true,
+      loop: true,
       transform: {
         x,
         y,
@@ -2385,6 +4472,19 @@ export const editorActions = {
     editorActions.addElement(instance);
   },
 
+  insertComponent(symbolId?: string, x = 100, y = 100): void {
+    if (symbolId) {
+      editorActions.addSymbolToStage(symbolId, x, y);
+      return;
+    }
+    const symbols = Object.values(state.doc.library.symbols);
+    if (symbols.length > 0) {
+      editorActions.addSymbolToStage(symbols[0].id, x, y);
+    } else {
+      editorActions.setConvertToComponentModalOpen(true);
+    }
+  },
+
   updateStageProps(props: Partial<StageDef>): void {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
@@ -2392,6 +4492,138 @@ export const editorActions = {
       ...doc.stage,
       ...props,
     };
+    if (doc.artboards && doc.artboards.length > 0) {
+      const active = doc.artboards.find((a) => a.id === doc.activeArtboardId) || doc.artboards[0];
+      if (props.width !== undefined) active.width = props.width;
+      if (props.height !== undefined) active.height = props.height;
+      if (props.background !== undefined) active.background = props.background;
+      if (props.breakpoints !== undefined) active.breakpoints = props.breakpoints;
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  applyBreakpoint(breakpoint: StageBreakpoint): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const prevW = doc.stage.width || 550;
+    const prevH = doc.stage.height || 400;
+    const newW = breakpoint.width;
+    const newH = breakpoint.height;
+
+    doc.stage.width = newW;
+    doc.stage.height = newH;
+
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    for (const layer of tl.layers) {
+      for (const kf of layer.keyframes) {
+        for (const el of kf.elements) {
+          adjustElementForPin(el, prevW, prevH, newW, newH);
+        }
+      }
+    }
+
+    state = {
+      ...state,
+      doc,
+      activeBreakpointId: breakpoint.id,
+    };
+    notify();
+  },
+
+  addBreakpoint(bp: Omit<StageBreakpoint, 'id'> & { id?: string }): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (!doc.stage.breakpoints) {
+      doc.stage.breakpoints = [];
+    }
+    const newBp: StageBreakpoint = {
+      id: bp.id || `bp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: bp.name,
+      maxWidth: bp.maxWidth,
+      width: bp.width,
+      height: bp.height,
+    };
+    doc.stage.breakpoints.push(newBp);
+    doc.stage.breakpoints.sort((a, b) => b.maxWidth - a.maxWidth);
+    state = { ...state, doc };
+    notify();
+  },
+
+  removeBreakpoint(id: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (doc.stage.breakpoints) {
+      doc.stage.breakpoints = doc.stage.breakpoints.filter((b) => b.id !== id);
+    }
+    const activeBp = state.activeBreakpointId === id ? null : state.activeBreakpointId;
+    state = { ...state, doc, activeBreakpointId: activeBp };
+    notify();
+  },
+
+  setReducedMotion(reducedMotion?: StageDef['reducedMotion']): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (reducedMotion) {
+      doc.stage.reducedMotion = reducedMotion;
+    } else {
+      delete doc.stage.reducedMotion;
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  setPreviewLocale(locale: string): void {
+    state = { ...state, previewLocale: locale };
+    notify();
+  },
+
+  updateI18n(patch: Partial<I18nDef>): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (!doc.i18n) {
+      doc.i18n = {
+        defaultLocale: 'en',
+        locales: { en: {} },
+      };
+    }
+    doc.i18n = {
+      ...doc.i18n,
+      ...patch,
+      locales: {
+        ...doc.i18n.locales,
+        ...(patch.locales || {}),
+      },
+    };
+    state = { ...state, doc };
+    notify();
+  },
+
+  setI18nTranslation(locale: string, key: string, translation: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (!doc.i18n) {
+      doc.i18n = {
+        defaultLocale: 'en',
+        locales: { en: {} },
+      };
+    }
+    if (!doc.i18n.locales[locale]) {
+      doc.i18n.locales[locale] = {};
+    }
+    doc.i18n.locales[locale][key] = translation;
+    state = { ...state, doc };
+    notify();
+  },
+
+  removeI18nKey(key: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (doc.i18n?.locales) {
+      for (const loc of Object.keys(doc.i18n.locales)) {
+        delete doc.i18n.locales[loc][key];
+      }
+    }
     state = { ...state, doc };
     notify();
   },
@@ -2414,6 +4646,301 @@ export const editorActions = {
       doc.meta.modifiedAt = now;
     }
     state = { ...state, doc };
+    notify();
+  },
+
+  /* ========================================================================= *
+   * Artboards & Tab Navigation
+   * ========================================================================= */
+
+  setActiveArtboard(artboardId: string): void {
+    const doc = deepCloneDoc(state.doc);
+    ensureMaterializedArtboards(doc);
+    const target = doc.artboards!.find((a) => a.id === artboardId);
+    if (!target) return;
+    doc.activeArtboardId = target.id;
+    syncActiveArtboardToStage(doc);
+    state = {
+      ...state,
+      doc,
+      selectedElementIds: [],
+      editingTextElId: null,
+      currentFrame: 0,
+      currentTime: 0,
+      selectedLayerId: target.root.layers[0]?.id || null,
+      selectedFrameIndex: 0,
+      selectedTime: 0,
+    };
+    notify();
+  },
+
+  switchArtboard(artboardId: string): void {
+    editorActions.setActiveArtboard(artboardId);
+  },
+
+  addArtboard(name?: string, width?: number, height?: number): string {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const artboards = ensureMaterializedArtboards(doc);
+    const newIdx = artboards.length + 1;
+    const newId = `artboard-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const newName = name?.trim() || `Artboard ${newIdx}`;
+    const abWidth = width || doc.stage.width || 550;
+    const abHeight = height || doc.stage.height || 400;
+
+    const newRoot: TimelineDef = {
+      frameCount: 24,
+      layers: [
+        {
+          id: `layer_${Math.random().toString(36).slice(2, 8)}`,
+          name: 'Layer 1',
+          kind: 'normal',
+          visible: true,
+          locked: false,
+          keyframes: [
+            {
+              id: `kf_${Math.random().toString(36).slice(2, 8)}`,
+              index: 0,
+              duration: 24,
+              time: 0,
+              durationTime: 1.0,
+              elements: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const newArtboard: EditorArtboard = {
+      id: newId,
+      name: newName,
+      width: abWidth,
+      height: abHeight,
+      background: doc.stage.background,
+      root: newRoot as any,
+    };
+
+    artboards.push(newArtboard);
+    doc.activeArtboardId = newId;
+    syncActiveArtboardToStage(doc);
+
+    state = {
+      ...state,
+      doc,
+      selectedElementIds: [],
+      editingTextElId: null,
+      currentFrame: 0,
+      currentTime: 0,
+      selectedLayerId: newRoot.layers[0]?.id || null,
+      selectedFrameIndex: 0,
+      selectedTime: 0,
+    };
+    notify();
+    return newId;
+  },
+
+  duplicateArtboard(artboardId: string): string {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const artboards = ensureMaterializedArtboards(doc);
+    const idx = artboards.findIndex((a) => a.id === artboardId);
+    if (idx === -1) return '';
+    const src = artboards[idx];
+    const clone = deepCloneDoc(src as any) as unknown as EditorArtboard;
+
+    const newId = `artboard-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    clone.id = newId;
+    clone.name = `${src.name} Copy`;
+
+    if (clone.root?.layers) {
+      for (const layer of clone.root.layers) {
+        layer.id = `layer_${Math.random().toString(36).slice(2, 8)}`;
+        if (layer.keyframes) {
+          for (const kf of layer.keyframes) {
+            kf.id = `kf_${Math.random().toString(36).slice(2, 8)}`;
+            if (kf.elements) {
+              for (const el of kf.elements) {
+                el.id = `el_${Math.random().toString(36).slice(2, 8)}`;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    artboards.splice(idx + 1, 0, clone);
+    doc.activeArtboardId = newId;
+    syncActiveArtboardToStage(doc);
+
+    state = {
+      ...state,
+      doc,
+      selectedElementIds: [],
+      editingTextElId: null,
+      currentFrame: 0,
+      currentTime: 0,
+      selectedLayerId: clone.root.layers[0]?.id || null,
+      selectedFrameIndex: 0,
+      selectedTime: 0,
+    };
+    notify();
+    return newId;
+  },
+
+  renameArtboard(artboardId: string, newName: string): void {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const artboards = ensureMaterializedArtboards(doc);
+    const target = artboards.find((a) => a.id === artboardId);
+    if (!target) return;
+    target.name = trimmed;
+    state = { ...state, doc };
+    notify();
+  },
+
+  deleteArtboard(artboardId: string): void {
+    const doc = deepCloneDoc(state.doc);
+    const artboards = ensureMaterializedArtboards(doc);
+    if (artboards.length <= 1) return;
+
+    pushHistorySnapshot();
+    const idx = artboards.findIndex((a) => a.id === artboardId);
+    if (idx === -1) return;
+
+    artboards.splice(idx, 1);
+    if (doc.activeArtboardId === artboardId) {
+      const nextIdx = Math.max(0, idx - 1);
+      doc.activeArtboardId = artboards[nextIdx].id;
+    }
+    syncActiveArtboardToStage(doc);
+
+    const activeAb = getActiveArtboard(doc);
+    state = {
+      ...state,
+      doc,
+      selectedElementIds: [],
+      editingTextElId: null,
+      currentFrame: 0,
+      currentTime: 0,
+      selectedLayerId: activeAb.root.layers[0]?.id || null,
+    };
+    notify();
+  },
+
+  reorderArtboards(startIndex: number, endIndex: number): void {
+    if (startIndex === endIndex) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const artboards = ensureMaterializedArtboards(doc);
+    if (
+      startIndex < 0 ||
+      startIndex >= artboards.length ||
+      endIndex < 0 ||
+      endIndex >= artboards.length
+    ) {
+      return;
+    }
+    const [removed] = artboards.splice(startIndex, 1);
+    artboards.splice(endIndex, 0, removed);
+    state = { ...state, doc };
+    notify();
+  },
+
+  moveElementToArtboard(elementId: string, targetArtboardId: string): void {
+    if (!elementId || !targetArtboardId) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const artboards = ensureMaterializedArtboards(doc);
+    const activeAb = getActiveArtboard(doc);
+    if (activeAb.id === targetArtboardId) return;
+
+    const targetAb = artboards.find((a) => a.id === targetArtboardId);
+    if (!targetAb) return;
+
+    // 1. Locate and remove element from current active artboard
+    let foundEl: EditorElement | null = null;
+    for (const layer of activeAb.root.layers) {
+      for (const kf of layer.keyframes) {
+        const elIdx = kf.elements.findIndex((e) => e.id === elementId);
+        if (elIdx !== -1) {
+          [foundEl] = kf.elements.splice(elIdx, 1);
+          break;
+        }
+      }
+      if (foundEl) break;
+    }
+
+    if (!foundEl) return;
+
+    // 2. Add element to target artboard first layer, first keyframe
+    let targetLayer = targetAb.root.layers[0];
+    if (!targetLayer) {
+      targetLayer = {
+        id: `layer_${Math.random().toString(36).slice(2, 8)}`,
+        name: 'Layer 1',
+        kind: 'normal',
+        visible: true,
+        locked: false,
+        keyframes: [
+          {
+            id: `kf_${Math.random().toString(36).slice(2, 8)}`,
+            index: 0,
+            duration: 24,
+            time: 0,
+            durationTime: 1.0,
+            elements: [],
+          },
+        ],
+      };
+      targetAb.root.layers.push(targetLayer);
+    }
+
+    let targetKf = targetLayer.keyframes[0];
+    if (!targetKf) {
+      targetKf = {
+        id: `kf_${Math.random().toString(36).slice(2, 8)}`,
+        index: 0,
+        duration: 24,
+        time: 0,
+        durationTime: 1.0,
+        elements: [],
+      };
+      targetLayer.keyframes.push(targetKf);
+    }
+
+    targetKf.elements.push(foundEl as any);
+    state = {
+      ...state,
+      doc,
+      selectedElementIds: state.selectedElementIds.filter((id) => id !== elementId),
+    };
+    notify();
+  },
+
+  moveLayerToArtboard(layerId: string, targetArtboardId: string): void {
+    if (!layerId || !targetArtboardId) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const artboards = ensureMaterializedArtboards(doc);
+    const activeAb = getActiveArtboard(doc);
+    if (activeAb.id === targetArtboardId) return;
+
+    const targetAb = artboards.find((a) => a.id === targetArtboardId);
+    if (!targetAb) return;
+
+    const layerIdx = activeAb.root.layers.findIndex((l) => l.id === layerId);
+    if (layerIdx === -1) return;
+
+    const [layer] = activeAb.root.layers.splice(layerIdx, 1);
+    targetAb.root.layers.push(layer as any);
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: activeAb.root.layers[0]?.id || null,
+    };
     notify();
   },
 };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getShapeBounds, getElementBounds } from '../src/panels/Stage/Stage';
+import { getShapeBounds, getElementBounds, scaleSvgPathD } from '../src/panels/Stage/Stage';
 import { editorActions, getEditorState, type EditorElement } from '../src/state/editorStore';
 import type { ShapeElement, TextElement } from '@flashback/runtime';
 
@@ -186,5 +186,26 @@ describe('Stage & Editor Modern Features', () => {
     const kf = getEditorState().doc.root.layers[0].keyframes[0];
     const updated = kf.elements.find((e) => e.id === 'rot_shape_1')!;
     expect(updated.transform.rotation).toBe(45);
+  });
+
+  it('resizes vector rectangle and oval SVG path geometry directly via scaleSvgPathD without CSS scale stretching', () => {
+    const rectD = 'M 0 0 L 120 0 L 120 80 L 0 80 Z';
+    const resizedRectD = scaleSvgPathD(rectD, { x: 0, y: 0, width: 120, height: 80 }, 240, 160);
+    expect(resizedRectD).toBe('M 0 0 L 240 0 L 240 160 L 0 160 Z');
+
+    const resizedRectBounds = getShapeBounds({
+      id: 'rect_resized',
+      type: 'shape',
+      transform: { x: 50, y: 50, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 },
+      paths: [{ d: resizedRectD }],
+      alpha: 1,
+      visible: true,
+    });
+    expect(resizedRectBounds.width).toBe(240);
+    expect(resizedRectBounds.height).toBe(160);
+
+    const ovalD = 'M 0 30 a 40 30 0 1 0 80 0 a 40 30 0 1 0 -80 0 Z';
+    const resizedOvalD = scaleSvgPathD(ovalD, { x: 0, y: 0, width: 80, height: 60 }, 160, 100);
+    expect(resizedOvalD).toBe('M 0 50 a 80 50 0 1 0 160 0 a 80 50 0 1 0 -160 0 Z');
   });
 });

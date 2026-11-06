@@ -83,4 +83,52 @@ describe('bitmap renderer', () => {
     expect(img).toBeDefined();
     expect(img.getAttribute('src')).toBeNull();
   });
+
+  it('supports direct src, width, and height specified directly on BitmapElement', () => {
+    const el: BitmapElement = {
+      id: 'b4',
+      type: 'bitmap',
+      bitmapId: 'b4_id',
+      src: 'https://example.com/direct.jpg',
+      width: 400,
+      height: 300,
+    };
+    const img = renderBitmap(document, el);
+
+    expect(img.src).toBe('https://example.com/direct.jpg');
+    expect(img.width).toBe(400);
+    expect(img.height).toBe(300);
+  });
+
+  it('allows direct BitmapElement src and dimensions to override library asset', () => {
+    const lib: Library = {
+      symbols: {},
+      bitmaps: {
+        bmp1: {
+          id: 'bmp1',
+          name: 'hero',
+          src: 'https://example.com/original.png',
+          width: 100,
+          height: 100,
+          smoothing: true,
+        },
+      },
+      sounds: {},
+      fonts: {},
+    };
+
+    const el: BitmapElement = {
+      id: 'b5',
+      type: 'bitmap',
+      bitmapId: 'bmp1',
+      src: 'https://example.com/override.png',
+      width: 500,
+      height: 250,
+    };
+    const img = renderBitmap(document, el, lib);
+
+    expect(img.src).toBe('https://example.com/override.png');
+    expect(img.width).toBe(500);
+    expect(img.height).toBe(250);
+  });
 });

@@ -1,0 +1,58 @@
+.numberField {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mx-text-muted, #8b949e);
+  cursor: ew-resize;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+  transition: color 0.12s ease;
+}
+
+.label:hover {
+  color: var(--mx-text-main, #e6edf3);
+}
+
+.inputWrapper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.input {
+  height: 24px;
+  background-color: var(--mx-bg-input, #0d1117);
+  border: 1px solid var(--mx-border-light, #30363d);
+  border-radius: var(--mx-radius-sm, 3px);
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--mx-font-mono, monospace);
+  color: var(--mx-text-main, #e6edf3);
+  outline: none;
+  transition: border-color 0.15s ease;
+  width: 55px;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  border-color: var(--mx-accent, #3b82f6);
+}
+
+.input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.unit {
+  font-size: 10px;
+  color: var(--mx-text-muted, #8b949e);
+  font-family: var(--mx-font-mono, monospace);
+  user-select: none;
+  -webkit-user-select: none;
+}

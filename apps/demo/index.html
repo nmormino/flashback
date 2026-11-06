@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flashback — Frog in a Blender & Runtime Showcase</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- TOP NAVIGATION BAR -->
+      <header class="demo-header">
+        <div class="brand">
+          <div class="logo-badge">
+            <span class="logo-dot"></span>
+            <span class="brand-title">FLASHBACK</span>
+            <span class="version-tag">2000</span>
+          </div>
+          <span class="brand-subtitle">Flash Parity Vector Animation & Runtime Engine</span>
+        </div>
+
+        <div class="header-actions">
+          <!-- Animation Showcase Mode Switcher -->
+          <div class="nav-tabs" role="tablist">
+            <button id="tabFrogBlender" class="tab-btn active" role="tab" aria-selected="true">
+              <span class="tab-icon">🐸</span>
+              <span>Frog in a Blender</span>
+            </button>
+            <button id="tabMediaShowcase" class="tab-btn" role="tab" aria-selected="false">
+              <span class="tab-icon">🎬</span>
+              <span>Media, Masks & Video</span>
+            </button>
+          </div>
+
+          <!-- i18n Language Switcher -->
+          <div class="i18n-control">
+            <label for="localeSelect" class="visually-hidden">Language</label>
+            <span class="control-icon">🌐</span>
+            <select id="localeSelect" aria-label="Select Language">
+              <option value="en" selected>🇺🇸 English</option>
+              <option value="es">🇪🇸 Español</option>
+              <option value="fr">🇫🇷 Français</option>
+              <option value="ja">🇯🇵 日本語</option>
+            </select>
+          </div>
+        </div>
+      </header>
+
+      <!-- SECONDARY TOOLBAR: Scale Modes, Responsive Presets & Reduced Motion -->
+      <nav class="toolbar">
+        <!-- Scale Mode Dropdown -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Scale Mode:</span>
+          <select id="scaleModeSelect" class="select-sm">
+            <option value="showAll" selected>showAll (Aspect Fit)</option>
+            <option value="noBorder">noBorder (Cover Fill)</option>
+            <option value="exactFit">exactFit (Stretch 100%)</option>
+            <option value="noScale">noScale (1:1 Native)</option>
+          </select>
+        </div>
+
+        <div class="toolbar-divider"></div>
+
+        <!-- Viewport Size Preset Pills -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Viewport:</span>
+          <div class="pill-group" id="viewportPresetGroup">
+            <button class="pill-btn active" data-w="700" data-h="520" title="Native Desktop stage (700x520)">
+              Desktop <span class="dim">700×520</span>
+            </button>
+            <button class="pill-btn" data-w="420" data-h="310" title="Compact Tablet size (420x310)">
+              Compact <span class="dim">420×310</span>
+            </button>
+            <button class="pill-btn" data-w="300" data-h="480" title="Mobile Portrait size (300x480)">
+              Mobile <span class="dim">300×480</span>
+            </button>
+            <button class="pill-btn" data-w="850" data-h="280" title="Wide Banner size (850x280)">
+              Wide <span class="dim">850×280</span>
+            </button>
+          </div>
+          <span id="viewportSizeReadout" class="badge-readout">700 × 520 px</span>
+        </div>
+
+        <div class="toolbar-divider"></div>
+
+        <!-- Reduced Motion Mode Selector (A11y) -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">A11y Motion:</span>
+          <div class="pill-group" id="motionModeGroup">
+            <button class="pill-btn active" data-motion="full" title="Full smooth 24 FPS vector tweens">
+              Smooth Motion
+            </button>
+            <button class="pill-btn" data-motion="stop-motion" title="Stepped 4 FPS playback for vestibular sensitivity">
+              Stop-Motion (4 FPS)
+            </button>
+            <button class="pill-btn" data-motion="fixed" title="Pause on a fixed keyframe poster">
+              Fixed Poster
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- FIXED POSTER FRAME SUB-BAR (Visible when Fixed Poster is active) -->
+      <div id="posterSubBar" class="sub-bar hidden">
+        <span class="sub-label">Select Poster Frame:</span>
+        <div class="pill-group" id="posterPresetsGroup">
+          <button class="pill-btn-sm active" data-frame="1">1: Idle Frog</button>
+          <button class="pill-btn-sm" data-frame="25">25: Jacuzzi Spin</button>
+          <button class="pill-btn-sm" data-frame="49">49: Dizzy Vortex</button>
+          <button class="pill-btn-sm" data-frame="73">73: Smoothie Splat</button>
+        </div>
+        <div class="slider-control">
+          <label for="frameSlider" class="visually-hidden">Frame Scrubber</label>
+          <input type="range" id="frameSlider" min="1" max="96" value="1" step="1" />
+          <span id="frameSliderLabel" class="slider-badge">Frame 1 / 96</span>
+        </div>
+      </div>
+
+      <!-- MAIN STAGE WORKSPACE -->
+      <main class="demo-main">
+        <div class="stage-outer-wrap">
+          <div class="preview-container resizable-box" id="previewContainer">
+            <!-- Custom corner resize indicator -->
+            <div class="resize-handle top-left"></div>
+            <div class="resize-handle top-right"></div>
+            <div class="resize-handle bottom-left"></div>
+            <div class="resize-handle bottom-right"></div>
+
+            <!-- Flashback Web Component Player -->
+            <web-anim id="player" scale-mode="showAll"></web-anim>
+          </div>
+        </div>
+
+        <!-- INTERACTIVE CONTROL DECK -->
+        <section class="control-deck-card">
+          <!-- FROG BLENDER SPEED DECK -->
+          <div id="frogDeck" class="deck-section">
+            <div class="deck-header">
+              <div class="deck-title-row">
+                <span class="deck-icon">⚡</span>
+                <h2 id="deckTitle">Blender Speed Deck & Interactive Triggers</h2>
+              </div>
+              <div class="deck-status">
+                <span class="status-indicator ready" id="blenderStatusLed"></span>
+                <span id="blenderStatusText">STATUS: IDLE • 0 RPM</span>
+              </div>
+            </div>
+
+            <div class="speed-buttons-grid">
+              <button id="btnSpeedOff" class="speed-btn btn-off active" data-speed="idle" data-frame="1">
+                <span class="speed-num">0</span>
+                <div class="speed-text-col">
+                  <span class="speed-name" id="labelBtnOff">OFF / RESET</span>
+                  <span class="speed-desc">Idle • Bobbing Frog</span>
+                </div>
+              </button>
+
+              <button id="btnSpeedLow" class="speed-btn btn-low" data-speed="low" data-frame="25">
+                <span class="speed-num">1</span>
+                <div class="speed-text-col">
+                  <span class="speed-name" id="labelBtnLow">1: LOW</span>
+                  <span class="speed-desc">Warm Jacuzzi • 450 RPM</span>
+                </div>
+              </button>
+
+              <button id="btnSpeedMed" class="speed-btn btn-med" data-speed="med" data-frame="49">
+                <span class="speed-num">2</span>
+                <div class="speed-text-col">
+                  <span class="speed-name" id="labelBtnMed">2: MED</span>
+                  <span class="speed-desc">Dizzy Vortex • 2,400 RPM</span>
+                </div>
+              </button>
+
+              <button id="btnSpeedPuree" class="speed-btn btn-puree" data-speed="puree" data-frame="73">
+                <span class="speed-num">3</span>
+                <div class="speed-text-col">
+                  <span class="speed-name" id="labelBtnPuree">3: PUREE</span>
+                  <span class="speed-desc">Frog Smoothie • 18,000 RPM</span>
+                </div>
+              </button>
+            </div>
+
+            <div class="deck-hint">
+              <span>💡 <strong>Double Interactivity:</strong> You can click the physical blender buttons directly inside the stage canvas, OR use the accessible controls above! Both stay perfectly synced.</span>
+            </div>
+          </div>
+
+          <!-- MEDIA & MASK SHOWCASE DECK -->
+          <div id="mediaDeck" class="deck-section hidden">
+            <div class="deck-header">
+              <div class="deck-title-row">
+                <span class="deck-icon">🎬</span>
+                <h2>Multimedia Engine Controls (Masks, Bitmaps & Videos)</h2>
+              </div>
+              <div class="deck-status">
+                <span class="status-indicator media-active"></span>
+                <span>MULTIMEDIA STAGE ACTIVE</span>
+              </div>
+            </div>
+
+            <div class="media-controls-grid">
+              <!-- Video Source Selector -->
+              <div class="control-box">
+                <span class="control-box-title">📺 Video Embed Source:</span>
+                <div class="pill-group" id="videoSourceGroup">
+                  <button class="pill-btn-sm active" data-source="mp4">
+                    HTML5 MP4 (Direct)
+                  </button>
+                  <button class="pill-btn-sm" data-source="youtube">
+                    YouTube Embed
+                  </button>
+                  <button class="pill-btn-sm" data-source="vimeo">
+                    Vimeo Embed
+                  </button>
+                </div>
+                <div class="url-input-row">
+                  <input type="text" id="videoUrlInput" class="text-input" placeholder="Video URL (.mp4 / youtube.com / vimeo.com)" />
+                  <button id="btnApplyVideoUrl" class="btn-action">Load Video</button>
+                </div>
+              </div>
+
+              <!-- Mask Inspection -->
+              <div class="control-box">
+                <span class="control-box-title">🔍 Vector Mask Settings:</span>
+                <div class="button-row">
+                  <button id="btnToggleMaskOutline" class="pill-btn-sm">
+                    Toggle Mask Inspection Bounds
+                  </button>
+                  <button id="btnPulseMask" class="pill-btn-sm">
+                    Spotlight Aperture Pulse
+                  </button>
+                </div>
+                <span class="control-box-hint">Vector shapes on mask layers clip all child/target layers using hardware-accelerated clipping.</span>
+              </div>
+
+              <!-- Bitmap Inspection -->
+              <div class="control-box">
+                <span class="control-box-title">🖼️ Raster Bitmap Decal:</span>
+                <div class="button-row">
+                  <button id="btnToggleSmoothing" class="pill-btn-sm">
+                    Toggle Smoothing (Bilinear / Pixelated)
+                  </button>
+                </div>
+                <span class="control-box-hint">Supports high-DPI data URIs, PNG/WebP files, smoothing interpolation, and color transformations.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- PLAYHEAD CONTROLS FOOTER -->
+          <div class="playback-bar">
+            <div class="playback-buttons">
+              <button id="btnPlay" class="play-btn" title="Play Animation">▶ Play</button>
+              <button id="btnPause" class="play-btn" title="Pause Animation">⏸ Pause</button>
+              <button id="btnPrevFrame" class="play-btn-sm" title="Step Back 1 Frame">⏮ -1F</button>
+              <button id="btnNextFrame" class="play-btn-sm" title="Step Forward 1 Frame">⏭ +1F</button>
+              <button id="btnRestart" class="play-btn-sm" title="Restart Animation">↺ Restart</button>
+            </div>
+
+            <div class="playback-meta">
+              <span id="playheadReadout" class="meta-item">Frame: <strong>1 / 96</strong></span>
+              <span id="fpsReadout" class="meta-item">FPS: <strong>24</strong></span>
+              <span class="meta-item tag">Flash MX Parity</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

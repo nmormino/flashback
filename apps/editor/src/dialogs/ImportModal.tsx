@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useEditorStore, editorActions } from '../state/editorStore';
 import styles from './Dialog.module.css';
 
@@ -38,7 +39,7 @@ export const ImportModal: React.FC = () => {
     reader.readAsText(file);
   };
 
-  return (
+  const content = (
     <div
       className={styles.modalOverlay}
       onClick={() => editorActions.setImportModalOpen(false)}
@@ -95,4 +96,6 @@ export const ImportModal: React.FC = () => {
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 };

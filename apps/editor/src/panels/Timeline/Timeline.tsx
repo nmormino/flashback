@@ -45,12 +45,23 @@ const TRACK_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#0
 
 export type SceneItem =
   | {
-      type: 'layer';
+      type: 'folder';
       layer: EditorLayer;
       depth: number;
-      isFolder: boolean;
       isCollapsed: boolean;
       hasChildren: boolean;
+    }
+  | {
+      type: 'track';
+      layer: EditorLayer;
+      element?: EditorElement;
+      depth: number;
+    }
+  | {
+      type: 'multiElementLayer';
+      layer: EditorLayer;
+      depth: number;
+      isCollapsed: boolean;
     }
   | {
       type: 'element';
@@ -97,6 +108,7 @@ export const Timeline: React.FC = () => {
   const isPlaying = useEditorStore((s) => s.isPlaying);
   const loopMode = useEditorStore((s) => s.loopMode);
   const isolationStack = useEditorStore((s) => s.isolationStack);
+  const keyframeClipboard = useEditorStore((s) => s.keyframeClipboard);
 
   const activeTl = getActiveTimeline(doc, isolationStack);
 
@@ -108,9 +120,19 @@ export const Timeline: React.FC = () => {
   const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set());
   const [filterLayerId, setFilterLayerId] = useState<string | null>(null);
   const [draggedElementId, setDraggedElementId] = useState<string | null>(null);
+  const [draggedLayerId, setDraggedLayerId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [dragOverElementId, setDragOverElementId] = useState<string | null>(null);
   const [dragOverPosition, setDragOverPosition] = useState<'before' | 'after' | null>(null);
+
+  // Keyframe Dragging state
+  const [draggingKf, setDraggingKf] = useState<{
+    layerId: string;
+    kfId: string;
+    startFrame: number;
+    currentFrame: number;
+    elementId?: string;
+  } | null>(null);
 
   // Modern Looping popover / custom count state
   const [isLoopMenuOpen, setIsLoopMenuOpen] = useState(false);
@@ -172,6 +194,22 @@ export const Timeline: React.FC = () => {
     };
   }, []);
 
+  // Live playback script execution hook
+  const prevTimeRef = useRef<number>(currentTime);
+  const isFirstTickRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      isFirstTickRef.current = true;
+      prevTimeRef.current = currentTime;
+      return;
+    }
+    const prevTime = prevTimeRef.current;
+    editorActions.executeKeyframeScriptsInRange(prevTime, currentTime, isFirstTickRef.current);
+    isFirstTickRef.current = false;
+    prevTimeRef.current = currentTime;
+  }, [isPlaying, currentTime]);
+
   const headerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -187,6 +225,60 @@ export const Timeline: React.FC = () => {
   const totalTimecode = formatTimeInSeconds(totalDurationSec);
   const totalDurationSeconds = totalDurationSec.toFixed(1);
 
+  // Keyframe Dragging Effect: converts mouse X to time, calls moveKeyframe and setCurrentTime
+  useEffect(() => {
+    if (!draggingKf) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!headerRef.current) return;
+      const rect = headerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const targetTime = Math.max(0, x / PIXELS_PER_SECOND);
+
+      editorActions.moveKeyframe(
+        draggingKf.layerId,
+        draggingKf.currentFrame,
+        targetTime,
+        { skipHistory: true, elementId: draggingKf.elementId }
+      );
+      editorActions.setCurrentTime(targetTime);
+      setDraggingKf((prev) =>
+        prev ? { ...prev, currentFrame: Math.round(targetTime * fps) } : null
+      );
+    };
+
+    const handleMouseUp = () => {
+      setDraggingKf(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [draggingKf, fps]);
+
+  const handleKeyframeMouseDown = (
+    e: React.MouseEvent,
+    layerId: string,
+    kf: EditorKeyframe,
+    elementId?: string
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    editorActions.commitHistorySnapshot();
+    setDraggingKf({
+      layerId,
+      kfId: kf.id,
+      startFrame: kf.index,
+      currentFrame: kf.index,
+      elementId,
+    });
+    const kfTime = getKeyframeTime(kf, fps);
+    editorActions.setCurrentTime(kfTime);
+  };
+
   const toggleFolder = (folderId: string) => {
     setCollapsedFolderIds((prev) => {
       const next = new Set(prev);
@@ -199,60 +291,105 @@ export const Timeline: React.FC = () => {
     });
   };
 
-  // Build unified Scene Graph: Folders, Layers, and their Child Elements
+  // Build unified Scene Graph: Folders (groups) and leaf Element Tracks
   const visibleItems: SceneItem[] = [];
   const processedLayerIds = new Set<string>();
 
-  const addLayerWithElements = (layer: EditorLayer, depth: number) => {
+  const layersByParent = new Map<string | undefined, EditorLayer[]>();
+  for (const l of activeTl.layers) {
+    const pId = l.parentLayerId || (l as any).parentId;
+    const list = layersByParent.get(pId) || [];
+    list.push(l);
+    layersByParent.set(pId, list);
+  }
+
+  const addLayerToScene = (layer: EditorLayer, depth: number) => {
+    if (processedLayerIds.has(layer.id)) return;
+    processedLayerIds.add(layer.id);
+
     const isFolder = layer.kind === 'folder';
     const isCollapsed = collapsedFolderIds.has(layer.id);
-    const childLayers = isFolder ? activeTl.layers.filter((c) => c.parentLayerId === layer.id) : [];
+    const childLayers = layersByParent.get(layer.id) || [];
 
-    // Persistent elements registry for this layer across all keyframes
-    // Elements persist across time in the scene graph so keyframes can be added at any timestamp
+    if (isFolder) {
+      const hasChildren = childLayers.length > 0;
+      visibleItems.push({
+        type: 'folder',
+        layer,
+        depth,
+        isCollapsed,
+        hasChildren,
+      });
+      if (!isCollapsed) {
+        for (const child of childLayers) {
+          addLayerToScene(child, depth + 1);
+        }
+      }
+      return;
+    }
+
+    // Leaf track (kind !== 'folder')
     const allLayerElements = Array.from(
       new Map(layer.keyframes.flatMap((k) => k.elements).map((e) => [e.id, e])).values()
     );
-    const elements = allLayerElements;
 
-    const hasChildren = childLayers.length > 0 || elements.length > 0;
-
-    visibleItems.push({
-      type: 'layer',
-      layer,
-      depth,
-      isFolder,
-      isCollapsed,
-      hasChildren,
-    });
-    processedLayerIds.add(layer.id);
-
-    if (!isCollapsed) {
-      // 1. Child layers inside this folder
-      for (const child of childLayers) {
-        addLayerWithElements(child, depth + 1);
+    if (allLayerElements.length === 0) {
+      // Empty tracks are always rendered as a track row so they never disappear
+      visibleItems.push({
+        type: 'track',
+        layer,
+        element: undefined,
+        depth,
+      });
+      if (childLayers.length > 0 && !isCollapsed) {
+        for (const child of childLayers) {
+          addLayerToScene(child, depth + 1);
+        }
       }
+      return;
+    }
 
-      // 2. Elements belonging to this layer
-      for (const el of elements) {
+    if (allLayerElements.length === 1) {
+      // Standard unified element track! Render ONE row for this element!
+      const element = allLayerElements[0];
+      visibleItems.push({
+        type: 'track',
+        layer,
+        element,
+        depth,
+      });
+      if (childLayers.length > 0 && !isCollapsed) {
+        for (const child of childLayers) {
+          addLayerToScene(child, depth + 1);
+        }
+      }
+    } else {
+      // Multiple elements in the same non-folder layer: render each element directly at `depth`
+      // without a redundant parent layer row
+      for (const el of allLayerElements) {
         visibleItems.push({
           type: 'element',
           element: el,
           layer,
-          depth: depth + 1,
+          depth,
         });
+      }
+      if (childLayers.length > 0 && !isCollapsed) {
+        for (const child of childLayers) {
+          addLayerToScene(child, depth + 1);
+        }
       }
     }
   };
 
-  const topLevelLayers = activeTl.layers.filter((l) => !l.parentLayerId);
+  const topLevelLayers = activeTl.layers.filter((l) => !l.parentLayerId && !(l as any).parentId);
   for (const l of topLevelLayers) {
-    addLayerWithElements(l, 0);
+    addLayerToScene(l, 0);
   }
 
   for (const l of activeTl.layers) {
     if (!processedLayerIds.has(l.id)) {
-      addLayerWithElements(l, 0);
+      addLayerToScene(l, 0);
     }
   }
 
@@ -320,17 +457,139 @@ export const Timeline: React.FC = () => {
     }
   };
 
-  const handleTimelineContextMenu = (
+  const getClickTimeFromEvent = (e: React.MouseEvent): number => {
+    if (headerRef.current) {
+      const rect = headerRef.current.getBoundingClientRect();
+      return Math.max(0, Math.round(((e.clientX - rect.left) / PIXELS_PER_SECOND) * 1000) / 1000);
+    }
+    return currentTime;
+  };
+
+  const handleKeyframeContextMenu = (
+    e: React.MouseEvent,
+    layerId: string,
+    kf: EditorKeyframe,
+    clickTime?: number
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const kfTime = getKeyframeTime(kf, fps);
+    const rawTime = typeof clickTime === 'number' ? clickTime : getClickTimeFromEvent(e);
+    const activeTime = Math.abs(rawTime - kfTime) < 0.02 ? kfTime : rawTime;
+    editorActions.setSelectedTime(layerId, activeTime);
+
+    const layer = activeTl.layers.find((l) => l.id === layerId);
+    const hasTween = kf.tween?.type === 'motion';
+    const hasScript = Boolean((kf.actions as any)?.__fn && String((kf.actions as any).__fn).trim().length > 0);
+    // If right-clicked directly on the existing keyframe diamond, insert at playhead or +0.5s
+    const insertTime =
+      Math.abs(activeTime - kfTime) < 0.02
+        ? currentTime > kfTime + 0.02
+          ? currentTime
+          : kfTime + 0.5
+        : activeTime;
+
+    editorActions.openContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: 'Insert Keyframe',
+          shortcut: 'F6',
+          action: () => editorActions.insertKeyframe(layerId, insertTime),
+        },
+        {
+          label: 'Insert Blank Keyframe',
+          shortcut: 'F7',
+          action: () =>
+            editorActions.insertBlankKeyframe(layerId, Math.round(insertTime * fps)),
+        },
+        { separator: true },
+        {
+          label: 'Delete Keyframe',
+          disabled: !layer || layer.keyframes.length <= 1,
+          action: () => editorActions.deleteKeyframe(layerId, kfTime),
+        },
+        {
+          label: 'Duplicate Keyframe',
+          action: () => editorActions.duplicateKeyframe(layerId, kfTime),
+        },
+        {
+          label: hasScript ? '⚡ Edit Keyframe Script...' : '⚡ Add Keyframe Script...',
+          action: () => editorActions.openKeyframeScript(layerId, kf.index),
+        },
+        ...(hasScript
+          ? [
+              {
+                label: 'Clear Keyframe Script',
+                danger: true,
+                action: () => editorActions.updateKeyframeScript(layerId, kf.index, ''),
+              },
+            ]
+          : []),
+        {
+          label: 'Copy Keyframe',
+          action: () => editorActions.copyKeyframe(layerId, kfTime),
+        },
+        {
+          label: 'Paste Keyframe',
+          disabled: !keyframeClipboard,
+          action: () => editorActions.pasteKeyframe(layerId, activeTime),
+        },
+        { separator: true },
+        {
+          label: 'Set Easing Curve…',
+          action: () => {
+            if (!kf.tween) editorActions.createMotionTween(layerId, kfTime);
+            editorActions.openBezierEditor(layerId, kf.id, kf.tween?.easing);
+          },
+        },
+        {
+          label: 'Convert to Blank Keyframe',
+          action: () => editorActions.convertToBlankKeyframe(layerId, kfTime),
+        },
+        {
+          label: hasTween ? 'Remove Tween' : 'Create Motion Tween',
+          action: () => {
+            if (hasTween) {
+              editorActions.removeTween(layerId, kfTime);
+            } else {
+              editorActions.createMotionTween(layerId, kfTime);
+            }
+          },
+        },
+        ...(hasTween
+          ? [
+              { separator: true as const },
+              {
+                label: 'Spin: CW 1 Turn',
+                action: () => editorActions.updateTweenRotate(layerId, kfTime, { direction: 'cw', turns: 1 }),
+              },
+              {
+                label: 'Spin: CCW 1 Turn',
+                action: () => editorActions.updateTweenRotate(layerId, kfTime, { direction: 'ccw', turns: 1 }),
+              },
+              {
+                label: 'Spin: None',
+                action: () => editorActions.updateTweenRotate(layerId, kfTime, undefined),
+              },
+            ]
+          : []),
+      ],
+    });
+  };
+
+  const handleEmptyTrackContextMenu = (
     e: React.MouseEvent,
     layerId?: string,
-    timeOrFrame?: number
+    clickTime?: number
   ) => {
     e.preventDefault();
     e.stopPropagation();
     const targetLayerId = layerId ?? selectedLayerId ?? activeTl.layers[0]?.id;
-    const targetTime = typeof timeOrFrame === 'number' ? timeOrFrame : currentTime;
-    if (layerId) {
-      editorActions.setSelectedTime(layerId, targetTime);
+    const targetTime = typeof clickTime === 'number' ? clickTime : getClickTimeFromEvent(e);
+    if (targetLayerId) {
+      editorActions.setSelectedTime(targetLayerId, targetTime);
     }
 
     editorActions.openContextMenu({
@@ -345,8 +604,10 @@ export const Timeline: React.FC = () => {
         {
           label: 'Insert Blank Keyframe',
           shortcut: 'F7',
-          action: () => editorActions.insertBlankKeyframe(targetLayerId, Math.round(targetTime * fps)),
+          action: () =>
+            editorActions.insertBlankKeyframe(targetLayerId, Math.round(targetTime * fps)),
         },
+        { separator: true },
         {
           label: 'Insert Frame',
           shortcut: 'F5',
@@ -357,34 +618,111 @@ export const Timeline: React.FC = () => {
           shortcut: 'Shift+F5',
           action: () => editorActions.removeFrame(targetLayerId, Math.round(targetTime * fps)),
         },
+        {
+          label: 'Paste Keyframe',
+          disabled: !keyframeClipboard,
+          action: () => editorActions.pasteKeyframe(targetLayerId, targetTime),
+        },
+      ],
+    });
+  };
+
+  const handleLayerRowContextMenu = (
+    e: React.MouseEvent,
+    layer: EditorLayer,
+    element?: EditorElement
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    editorActions.selectLayer(layer.id);
+    if (element) {
+      editorActions.selectElement(element.id, false);
+    }
+
+    const availableFolders = activeTl.layers.filter(
+      (l) => l.kind === 'folder' && l.id !== layer.id && (l.id !== (layer.parentLayerId || (layer as any).parentId))
+    );
+    const isLocked = element ? !!element.locked : !!layer.locked;
+    const isVisible = element ? (element.visible !== false) : (layer.visible !== false);
+    const isMask = layer.kind === 'mask';
+    const isFolder = layer.kind === 'folder';
+    const isInFolder = !!(layer.parentLayerId || (layer as any).parentId);
+
+    editorActions.openContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: 'Insert Keyframe',
+          shortcut: 'F6',
+          action: () => editorActions.insertKeyframe(layer.id, currentTime),
+        },
+        {
+          label: 'Insert Blank Keyframe',
+          shortcut: 'F7',
+          action: () =>
+            editorActions.insertBlankKeyframe(layer.id, Math.round(currentTime * fps)),
+        },
         { separator: true },
         {
-          label: 'Create Motion Tween',
+          label: 'Rename',
           action: () => {
-            if (targetLayerId) editorActions.createMotionTween(targetLayerId, targetTime);
+            if (element) handleStartRenameElement(element);
+            else handleStartRenameLayer(layer);
           },
         },
         {
-          label: 'Clear Tween',
+          label: 'Group into Folder',
           action: () => {
-            if (targetLayerId) editorActions.removeTween(targetLayerId, targetTime);
+            if (element) editorActions.groupSelectedElements();
+            else editorActions.groupLayerIntoFolder(layer.id);
+          },
+        },
+        {
+          label: 'Ungroup',
+          disabled: !element && !isFolder && !isInFolder,
+          action: () => {
+            if (element) editorActions.ungroupSelectedElements();
+            else editorActions.ungroupLayer(layer.id);
           },
         },
         { separator: true },
         {
-          label: 'Add Layer',
-          action: () => editorActions.addLayer(),
+          label: isLocked ? 'Unlock' : 'Lock',
+          action: () => {
+            if (element) editorActions.toggleElementLock(element.id);
+            else editorActions.toggleLayerLock(layer.id);
+          },
         },
         {
-          label: 'Add Folder (Group)',
-          action: () => editorActions.addFolder(),
+          label: isVisible ? 'Hide' : 'Show',
+          action: () => {
+            if (element) editorActions.updateElementProps(element.id, { visible: !element.visible });
+            else editorActions.toggleLayerVisibility(layer.id);
+          },
         },
         {
-          label: 'Delete Layer',
+          label: isMask ? 'Unmask' : 'Toggle Mask',
+          disabled: !!element,
+          action: () => editorActions.toggleLayerMask(layer.id),
+        },
+        {
+          label: 'Move Into Folder',
+          disabled: !!element || availableFolders.length === 0,
+          action: () => {
+            if (availableFolders.length > 0) {
+              editorActions.moveLayerToFolder(layer.id, availableFolders[0].id);
+            }
+          },
+        },
+        { separator: true },
+        {
+          label: isFolder ? 'Delete Folder' : element ? 'Delete Element' : 'Delete',
           danger: true,
-          disabled: activeTl.layers.length <= 1,
+          disabled: !element && activeTl.layers.length <= 1,
           action: () => {
-            if (targetLayerId) editorActions.deleteLayer(targetLayerId);
+            if (element) editorActions.deleteElement(element.id);
+            else editorActions.deleteLayer(layer.id);
           },
         },
       ],
@@ -409,15 +747,15 @@ export const Timeline: React.FC = () => {
                 title="Add Folder (Group)"
                 onClick={() => editorActions.addFolder()}
               >
-                📁+
+                <FolderPlus size={14} />
               </button>
               <button
                 type="button"
                 className={styles.iconBtn}
-                title="Add New Layer"
+                title="Add Track / Layer"
                 onClick={() => editorActions.addLayer()}
               >
-                +
+                <Plus size={14} />
               </button>
               <button
                 type="button"
@@ -434,8 +772,8 @@ export const Timeline: React.FC = () => {
           </div>
 
           {visibleItems.map((item, idx) => {
-            if (item.type === 'layer') {
-              const { layer, depth, isFolder, isCollapsed, hasChildren } = item;
+            if (item.type === 'folder') {
+              const { layer, depth, isCollapsed, hasChildren } = item;
               const isSelected = layer.id === selectedLayerId;
               const trackColor = TRACK_COLORS[idx % TRACK_COLORS.length];
               const filterCount = layer.filters?.length ?? 0;
@@ -443,7 +781,7 @@ export const Timeline: React.FC = () => {
 
               let rowClass = styles.layerRow;
               if (isSelected) rowClass += ` ${styles.selected}`;
-              if (isFolder) rowClass += ` ${styles.folderRow}`;
+              rowClass += ` ${styles.folderRow}`;
               if (depth > 0) rowClass += ` ${styles.childLayerRow}`;
               if (isDragOver) rowClass += ` ${styles.dragOver}`;
 
@@ -451,12 +789,20 @@ export const Timeline: React.FC = () => {
                 <div
                   key={layer.id}
                   className={rowClass}
-                  style={{ paddingLeft: `${depth * 14}px` }}
+                  style={{ paddingLeft: `${depth * 16}px` }}
                   onClick={() => editorActions.selectLayer(layer.id)}
                   onDoubleClick={() => handleStartRenameLayer(layer)}
-                  onContextMenu={(e) => handleTimelineContextMenu(e, layer.id, currentTime)}
+                  onContextMenu={(e) => handleLayerRowContextMenu(e, layer)}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', layer.id);
+                    setDraggedLayerId(layer.id);
+                  }}
                   onDragOver={(e) => {
-                    if (draggedElementId) {
+                    if (draggedLayerId && draggedLayerId !== layer.id) {
+                      e.preventDefault();
+                      setDragOverFolderId(layer.id);
+                    } else if (draggedElementId) {
                       e.preventDefault();
                       setDragOverFolderId(layer.id);
                     }
@@ -465,18 +811,18 @@ export const Timeline: React.FC = () => {
                     setDragOverFolderId(null);
                   }}
                   onDrop={(e) => {
-                    if (draggedElementId) {
-                      e.preventDefault();
+                    e.preventDefault();
+                    if (draggedLayerId && draggedLayerId !== layer.id) {
+                      editorActions.setLayerParent(draggedLayerId, layer.id);
+                      setDraggedLayerId(null);
+                    } else if (draggedElementId) {
                       editorActions.moveElementToLayer(draggedElementId, layer.id);
                       setDraggedElementId(null);
-                      setDragOverFolderId(null);
                     }
+                    setDragOverFolderId(null);
                   }}
                 >
-                  {/* Track Color Strip */}
                   <div className={styles.layerColorStrip} style={{ backgroundColor: trackColor }} />
-
-                  {/* Expand / collapse chevron (▾ / ▸) */}
                   {hasChildren ? (
                     <div
                       className={styles.folderChevron}
@@ -491,19 +837,10 @@ export const Timeline: React.FC = () => {
                   ) : (
                     <div style={{ width: 16 }} />
                   )}
+                  <span className={styles.folderIcon} title="Group / Folder">
+                    {isCollapsed ? <Folder size={13} /> : <FolderOpen size={13} />}
+                  </span>
 
-                  {/* Track Icon: Folder for Group, Layers for Layer Track */}
-                  {isFolder ? (
-                    <span className={styles.folderIcon} title="Folder Group">
-                      {isCollapsed ? <Folder size={13} /> : <FolderOpen size={13} />}
-                    </span>
-                  ) : (
-                    <span className={styles.layerIcon} title="Layer Track">
-                      <Layers size={13} />
-                    </span>
-                  )}
-
-                  {/* Track Name */}
                   {editingLayerId === layer.id ? (
                     <input
                       type="text"
@@ -524,7 +861,6 @@ export const Timeline: React.FC = () => {
                     </span>
                   )}
 
-                  {/* Track Controls: fx, Visibility, Lock */}
                   <div className={styles.layerToggles}>
                     <button
                       type="button"
@@ -545,7 +881,7 @@ export const Timeline: React.FC = () => {
                     <button
                       type="button"
                       className={`${styles.toggleBtn} ${layer.visible ? styles.active : ''}`}
-                      title={layer.visible ? 'Hide Layer' : 'Show Layer'}
+                      title={layer.visible ? 'Hide Folder' : 'Show Folder'}
                       onClick={(e) => {
                         e.stopPropagation();
                         editorActions.toggleLayerVisibility(layer.id);
@@ -557,7 +893,202 @@ export const Timeline: React.FC = () => {
                     <button
                       type="button"
                       className={`${styles.toggleBtn} ${layer.locked ? styles.active : ''}`}
-                      title={layer.locked ? 'Unlock Layer' : 'Lock Layer'}
+                      title={layer.locked ? 'Unlock Folder' : 'Lock Folder'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        editorActions.toggleLayerLock(layer.id);
+                      }}
+                    >
+                      {layer.locked ? <Lock size={12} /> : <Unlock size={12} />}
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
+            if (item.type === 'track') {
+              const { layer, element, depth } = item;
+              const isSelected =
+                layer.id === selectedLayerId || (element && selectedElementIds.includes(element.id));
+              const trackColor = TRACK_COLORS[idx % TRACK_COLORS.length];
+              const filterCount = layer.filters?.length ?? 0;
+              const label = element ? getElementLabel(element, doc.library.symbols) : layer.name;
+              const icon = element ? getElementIcon(element) : <Layers size={13} />;
+              const isVisible = element ? element.visible !== false : layer.visible;
+              const isLocked = element ? Boolean((element as any).locked) : layer.locked;
+
+              let rowClass = styles.layerRow;
+              if (isSelected) rowClass += ` ${styles.selected}`;
+              if (depth > 0) rowClass += ` ${styles.childLayerRow}`;
+
+              return (
+                <div
+                  key={layer.id}
+                  className={rowClass}
+                  style={{ paddingLeft: `${depth * 16}px` }}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', layer.id);
+                    setDraggedLayerId(layer.id);
+                    if (element) setDraggedElementId(element.id);
+                  }}
+                  onClick={(e) => {
+                    editorActions.selectLayer(layer.id);
+                    if (element) {
+                      editorActions.selectElement(element.id, e.shiftKey || e.metaKey || e.ctrlKey);
+                    }
+                  }}
+                  onDoubleClick={() => {
+                    if (element) handleStartRenameElement(element);
+                    else handleStartRenameLayer(layer);
+                  }}
+                  onContextMenu={(e) => handleLayerRowContextMenu(e, layer, element)}
+                >
+                  <div className={styles.layerColorStrip} style={{ backgroundColor: trackColor }} />
+                  <div style={{ width: 16 }} />
+                  <span className={styles.elementIcon}>{icon}</span>
+
+                  {element && editingElId === element.id ? (
+                    <input
+                      type="text"
+                      className={styles.elementName}
+                      autoFocus
+                      value={elNameDraft}
+                      onChange={(e) => setElNameDraft(e.target.value)}
+                      onBlur={() => handleSaveRenameElement(element.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveRenameElement(element.id);
+                        if (e.key === 'Escape') setEditingElId(null);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : editingLayerId === layer.id ? (
+                    <input
+                      type="text"
+                      className={styles.layerNameInput}
+                      autoFocus
+                      value={layerNameDraft}
+                      onChange={(e) => setLayerNameDraft(e.target.value)}
+                      onBlur={() => handleSaveRenameLayer(layer.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveRenameLayer(layer.id);
+                        if (e.key === 'Escape') setEditingLayerId(null);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className={styles.elementName} title={label}>
+                      {label}
+                    </span>
+                  )}
+
+                  <div className={styles.layerToggles}>
+                    <button
+                      type="button"
+                      className={`${styles.fxBtn} ${filterCount > 0 ? styles.active : ''}`}
+                      title={
+                        filterCount > 0
+                          ? `${filterCount} CSS Filter(s) applied - Click to edit`
+                          : 'Add CSS Layer Filters'
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFilterLayerId(filterLayerId === layer.id ? null : layer.id);
+                      }}
+                    >
+                      fx{filterCount > 0 ? ` ${filterCount}` : ''}
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`${styles.toggleBtn} ${isVisible ? styles.active : ''}`}
+                      title={isVisible ? 'Hide' : 'Show'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (element) editorActions.toggleElementVisibility(element.id);
+                        else editorActions.toggleLayerVisibility(layer.id);
+                      }}
+                    >
+                      {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`${styles.toggleBtn} ${isLocked ? styles.active : ''}`}
+                      title={isLocked ? 'Unlock' : 'Lock'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (element) editorActions.toggleElementLock(element.id);
+                        else editorActions.toggleLayerLock(layer.id);
+                      }}
+                    >
+                      {isLocked ? <Lock size={12} /> : <Unlock size={12} />}
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
+            if (item.type === 'multiElementLayer') {
+              const { layer, depth, isCollapsed } = item;
+              const isSelected = layer.id === selectedLayerId;
+              const trackColor = TRACK_COLORS[idx % TRACK_COLORS.length];
+              const filterCount = layer.filters?.length ?? 0;
+
+              let rowClass = styles.layerRow;
+              if (isSelected) rowClass += ` ${styles.selected}`;
+              if (depth > 0) rowClass += ` ${styles.childLayerRow}`;
+
+              return (
+                <div
+                  key={layer.id}
+                  className={rowClass}
+                  style={{ paddingLeft: `${depth * 16}px` }}
+                  onClick={() => editorActions.selectLayer(layer.id)}
+                  onDoubleClick={() => handleStartRenameLayer(layer)}
+                  onContextMenu={(e) => handleLayerRowContextMenu(e, layer)}
+                >
+                  <div className={styles.layerColorStrip} style={{ backgroundColor: trackColor }} />
+                  <div
+                    className={styles.folderChevron}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFolder(layer.id);
+                    }}
+                    title={isCollapsed ? 'Expand' : 'Collapse'}
+                  >
+                    {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                  </div>
+                  <span className={styles.layerIcon} title="Layer Track">
+                    <Layers size={13} />
+                  </span>
+                  <span className={styles.layerNameInput} title={layer.name}>
+                    {layer.name}
+                  </span>
+                  <div className={styles.layerToggles}>
+                    <button
+                      type="button"
+                      className={`${styles.fxBtn} ${filterCount > 0 ? styles.active : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFilterLayerId(filterLayerId === layer.id ? null : layer.id);
+                      }}
+                    >
+                      fx{filterCount > 0 ? ` ${filterCount}` : ''}
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.toggleBtn} ${layer.visible ? styles.active : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        editorActions.toggleLayerVisibility(layer.id);
+                      }}
+                    >
+                      {layer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.toggleBtn} ${layer.locked ? styles.active : ''}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         editorActions.toggleLayerLock(layer.id);
@@ -588,7 +1119,7 @@ export const Timeline: React.FC = () => {
                 key={element.id}
                 className={elRowClass}
                 style={{
-                  paddingLeft: `${depth * 14 + 18}px`,
+                  paddingLeft: `${depth * 16 + 18}px`,
                   borderTop: isDragTarget && dragOverPosition === 'before' ? '2px solid var(--mx-accent, #3b82f6)' : undefined,
                   borderBottom: isDragTarget && dragOverPosition === 'after' ? '2px solid var(--mx-accent, #3b82f6)' : undefined,
                 }}
@@ -629,12 +1160,10 @@ export const Timeline: React.FC = () => {
                   editorActions.selectLayer(layer.id);
                 }}
                 onDoubleClick={() => handleStartRenameElement(element)}
-                title={`Element: ${label} (Drag up/down to reorder Z-index, or drop on another layer)`}
+                title={`Element: ${label}`}
               >
-                {/* Element Icon: Shape ⬡, Text T, Group 📁, Instance 📦 */}
                 <span className={styles.elementIcon}>{icon}</span>
 
-                {/* Element Name (editable on double click) */}
                 {editingElId === element.id ? (
                   <input
                     type="text"
@@ -653,7 +1182,6 @@ export const Timeline: React.FC = () => {
                   <span className={styles.elementName}>{label}</span>
                 )}
 
-                {/* Element Controls: Visibility Eye, Lock Toggle */}
                 <div className={styles.layerToggles}>
                   <button
                     type="button"
@@ -703,7 +1231,11 @@ export const Timeline: React.FC = () => {
         )}
 
         {/* Right Column: Time Ruler & Keyframe Tracks */}
-        <div className={styles.gridScrollContainer} ref={scrollContainerRef}>
+        <div
+          className={styles.gridScrollContainer}
+          ref={scrollContainerRef}
+          onContextMenu={(e) => handleEmptyTrackContextMenu(e)}
+        >
           <div
             className={styles.gridWrapper}
             style={{ width: `${maxGridSeconds * PIXELS_PER_SECOND}px` }}
@@ -713,7 +1245,7 @@ export const Timeline: React.FC = () => {
               className={styles.frameHeaderRow}
               ref={headerRef}
               onMouseDown={handleHeaderMouseDown}
-              onContextMenu={(e) => handleTimelineContextMenu(e)}
+              onContextMenu={(e) => handleEmptyTrackContextMenu(e)}
             >
               {stepIndices.map((stepIdx) => {
                 const t = stepIdx * 0.1;
@@ -764,12 +1296,8 @@ export const Timeline: React.FC = () => {
 
             {/* Track rows corresponding 1-to-1 with visible Scene Graph items */}
             {visibleItems.map((item) => {
-              if (item.type === 'layer') {
+              if (item.type === 'folder') {
                 const { layer } = item;
-                const sortedKfs = [...layer.keyframes].sort(
-                  (a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps)
-                );
-
                 return (
                   <div
                     key={layer.id}
@@ -783,7 +1311,52 @@ export const Timeline: React.FC = () => {
                     onContextMenu={(e) => {
                       const rect = e.currentTarget.getBoundingClientRect();
                       const clickTime = Math.max(0, (e.clientX - rect.left) / PIXELS_PER_SECOND);
-                      handleTimelineContextMenu(e, layer.id, clickTime);
+                      const kf = findKeyframeAtTime(layer, clickTime, fps);
+                      if (kf) {
+                        handleKeyframeContextMenu(e, layer.id, kf, clickTime);
+                      } else {
+                        handleEmptyTrackContextMenu(e, layer.id, clickTime);
+                      }
+                    }}
+                  >
+                    {/* Clean group container span bar with NO keyframe diamonds */}
+                    <div
+                      className={styles.groupSpanBar}
+                      style={{
+                        left: 0,
+                        width: `${Math.max(12, totalDurationSec * PIXELS_PER_SECOND)}px`,
+                      }}
+                    />
+                  </div>
+                );
+              }
+
+              if (item.type === 'track') {
+                const { layer, element } = item;
+                const sortedKfs = [...layer.keyframes].sort(
+                  (a, b) => getKeyframeTime(a, fps) - getKeyframeTime(b, fps)
+                );
+
+                return (
+                  <div
+                    key={layer.id}
+                    className={styles.gridRow}
+                    style={{ width: `${timelineWidth}px` }}
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const clickTime = Math.max(0, (e.clientX - rect.left) / PIXELS_PER_SECOND);
+                      if (element) editorActions.selectElement(element.id);
+                      editorActions.setSelectedTime(layer.id, clickTime);
+                    }}
+                    onContextMenu={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const clickTime = Math.max(0, (e.clientX - rect.left) / PIXELS_PER_SECOND);
+                      const kf = findKeyframeAtTime(layer, clickTime, fps);
+                      if (kf) {
+                        handleKeyframeContextMenu(e, layer.id, kf, clickTime);
+                      } else {
+                        handleEmptyTrackContextMenu(e, layer.id, clickTime);
+                      }
                     }}
                   >
                     {/* Keyframe spans, tweens, and diamond markers */}
@@ -797,6 +1370,7 @@ export const Timeline: React.FC = () => {
                         8,
                         (isTween ? nextKfTime - kfTime : kfDur) * PIXELS_PER_SECOND
                       );
+                      const isDraggingThisKf = draggingKf?.kfId === kf.id;
 
                       return (
                         <React.Fragment key={kf.id}>
@@ -814,8 +1388,19 @@ export const Timeline: React.FC = () => {
                               borderTop: isTween ? '1px solid rgba(56, 189, 248, 0.4)' : undefined,
                               borderBottom: isTween ? '1px solid rgba(56, 189, 248, 0.4)' : undefined,
                               borderRadius: 2,
-                              pointerEvents: 'none',
+                              pointerEvents: 'auto',
+                              cursor: isTween ? 'pointer' : undefined,
                             }}
+                            onClick={(e) => {
+                              if (isTween) {
+                                e.stopPropagation();
+                                editorActions.openBezierEditor(layer.id, kf.id, kf.tween?.easing);
+                              }
+                            }}
+                            onContextMenu={(e) =>
+                              handleKeyframeContextMenu(e, layer.id, kf, getClickTimeFromEvent(e))
+                            }
+                            title={isTween ? 'Tween span (Click to edit cubic Bézier easing curve)' : undefined}
                           >
                             {isTween && (
                               <>
@@ -826,26 +1411,83 @@ export const Timeline: React.FC = () => {
                             {!isTween && <div className={styles.spanEndBar} />}
                           </div>
 
-                          {/* Diamond Keyframe Marker (◆) */}
-                          <div
-                            style={{
-                              position: 'absolute',
-                              left: `${kfTime * PIXELS_PER_SECOND - 3}px`,
-                              top: 10,
-                              cursor: 'pointer',
-                            }}
-                            title={`Keyframe at ${kfTime.toFixed(2)}s`}
-                          >
-                            {kf.elements.length > 0 || kf.transform || layer.kind === 'folder' ? (
-                              <div className={styles.diamondKeyframe} />
-                            ) : (
-                              <div className={styles.diamondBlankKeyframe} />
-                            )}
-                          </div>
+                          {/* Diamond Keyframe Marker (◆) - Draggable */}
+                          {(() => {
+                            const hasScript = Boolean((kf.actions as any)?.__fn && String((kf.actions as any).__fn).trim().length > 0);
+                            return (
+                              <div
+                                className={`${styles.trackKeyframeDiamond} ${styles.keyframeCell} ${
+                                  isDraggingThisKf ? styles.dragging : ''
+                                } ${hasScript ? styles.keyframeHasScript : ''}`}
+                                style={{
+                                  left: `${kfTime * PIXELS_PER_SECOND}px`,
+                                }}
+                                onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf, element?.id)}
+                                onContextMenu={(e) =>
+                                  handleKeyframeContextMenu(e, layer.id, kf, getClickTimeFromEvent(e))
+                                }
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  if (hasScript) {
+                                    editorActions.openKeyframeScript(layer.id, kf.index);
+                                  } else if (isTween) {
+                                    editorActions.openBezierEditor(layer.id, kf.id, kf.tween?.easing);
+                                  } else {
+                                    editorActions.openKeyframeScript(layer.id, kf.index);
+                                  }
+                                }}
+                                title={`Keyframe at ${kfTime.toFixed(2)}s${hasScript ? ' (⚡ Has Script)' : ''}${isTween ? ' (Double-click to edit easing curve)' : ' (Double-click to edit script)'}`}
+                              >
+                                {kf.elements.length > 0 || kf.transform ? (
+                                  <div className={styles.diamondKeyframe} />
+                                ) : (
+                                  <div className={styles.diamondBlankKeyframe} />
+                                )}
+                                {hasScript && (
+                                  <span
+                                    className={styles.keyframeScriptBadge}
+                                    title="Keyframe has script (Click to edit)"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      editorActions.openKeyframeScript(layer.id, kf.index);
+                                    }}
+                                  >
+                                    ⚡
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </React.Fragment>
                       );
                     })}
                   </div>
+                );
+              }
+
+              if (item.type === 'multiElementLayer') {
+                const { layer } = item;
+                return (
+                  <div
+                    key={layer.id}
+                    className={styles.gridRow}
+                    style={{ width: `${timelineWidth}px` }}
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const clickTime = Math.max(0, (e.clientX - rect.left) / PIXELS_PER_SECOND);
+                      editorActions.setSelectedTime(layer.id, clickTime);
+                    }}
+                    onContextMenu={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const clickTime = Math.max(0, (e.clientX - rect.left) / PIXELS_PER_SECOND);
+                      const kf = findKeyframeAtTime(layer, clickTime, fps);
+                      if (kf) {
+                        handleKeyframeContextMenu(e, layer.id, kf, clickTime);
+                      } else {
+                        handleEmptyTrackContextMenu(e, layer.id, clickTime);
+                      }
+                    }}
+                  />
                 );
               }
 
@@ -866,8 +1508,18 @@ export const Timeline: React.FC = () => {
                     editorActions.selectElement(element.id);
                     editorActions.setSelectedTime(layer.id, clickTime);
                   }}
+                  onContextMenu={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const clickTime = Math.max(0, (e.clientX - rect.left) / PIXELS_PER_SECOND);
+                    const kf = findKeyframeAtTime(layer, clickTime, fps);
+                    if (kf) {
+                      handleKeyframeContextMenu(e, layer.id, kf);
+                    } else {
+                      handleEmptyTrackContextMenu(e, layer.id, clickTime);
+                    }
+                  }}
                 >
-                  {/* Element diamond keyframes */}
+                  {/* Element diamond keyframes - Draggable */}
                   {matchingKfs.map((kf, kIdx) => {
                     const kfTime = getKeyframeTime(kf, fps);
                     const isTween = kf.tween?.type === 'motion';
@@ -876,6 +1528,7 @@ export const Timeline: React.FC = () => {
                       ? getKeyframeTime(nextKf, fps)
                       : kfTime + getKeyframeDurationTime(kf, fps);
                     const spanWidth = Math.max(6, (nextKfTime - kfTime) * PIXELS_PER_SECOND);
+                    const isDraggingThisKf = draggingKf?.kfId === kf.id;
 
                     return (
                       <React.Fragment key={kf.id}>
@@ -891,23 +1544,62 @@ export const Timeline: React.FC = () => {
                               borderTop: '1px solid rgba(56, 189, 248, 0.4)',
                               borderBottom: '1px solid rgba(56, 189, 248, 0.4)',
                               borderRadius: 2,
-                              pointerEvents: 'none',
+                              pointerEvents: 'auto',
+                              cursor: 'pointer',
                             }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              editorActions.openBezierEditor(layer.id, kf.id, kf.tween?.easing);
+                            }}
+                            onContextMenu={(e) =>
+                              handleKeyframeContextMenu(e, layer.id, kf, getClickTimeFromEvent(e))
+                            }
+                            title="Tween span (Click to edit cubic Bézier easing curve)"
                           >
                             <div className={styles.tweenArrow} />
                             <div className={styles.tweenArrowHead} />
                           </div>
                         )}
-                        <div
-                          style={{
-                            position: 'absolute',
-                            left: `${kfTime * PIXELS_PER_SECOND - 3}px`,
-                            top: 8,
-                          }}
-                          title={`Element Keyframe at ${kfTime.toFixed(2)}s`}
-                        >
-                          <div className={styles.diamondKeyframe} />
-                        </div>
+                        {(() => {
+                          const hasScript = Boolean((kf.actions as any)?.__fn && String((kf.actions as any).__fn).trim().length > 0);
+                          return (
+                            <div
+                              className={`${styles.trackKeyframeDiamond} ${styles.keyframeCell} ${
+                                isDraggingThisKf ? styles.dragging : ''
+                              } ${hasScript ? styles.keyframeHasScript : ''}`}
+                              style={{
+                                left: `${kfTime * PIXELS_PER_SECOND}px`,
+                              }}
+                              onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf, element.id)}
+                              onContextMenu={(e) => handleKeyframeContextMenu(e, layer.id, kf)}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                if (hasScript) {
+                                  editorActions.openKeyframeScript(layer.id, kf.index);
+                                } else if (isTween) {
+                                  editorActions.openBezierEditor(layer.id, kf.id, kf.tween?.easing);
+                                } else {
+                                  editorActions.openKeyframeScript(layer.id, kf.index);
+                                }
+                              }}
+                              title={`Element Keyframe at ${kfTime.toFixed(2)}s${hasScript ? ' (⚡ Has Script)' : ''}${isTween ? ' - Double-click to edit easing curve' : ' - Double-click to edit script'}`}
+                            >
+                              <div className={styles.diamondKeyframe} />
+                              {hasScript && (
+                                <span
+                                  className={styles.keyframeScriptBadge}
+                                  title="Keyframe has script (Click to edit)"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    editorActions.openKeyframeScript(layer.id, kf.index);
+                                  }}
+                                >
+                                  ⚡
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </React.Fragment>
                     );
                   })}
@@ -1066,19 +1758,10 @@ export const Timeline: React.FC = () => {
             type="button"
             className={styles.actionPillBtn}
             onClick={() => editorActions.addFolder()}
-            title="Create Folder Track (Group)"
+            title="Create Nestable Group / Folder"
           >
             <FolderPlus size={12} />
-            <span>Folder</span>
-          </button>
-          <button
-            type="button"
-            className={styles.actionPillBtn}
-            onClick={() => editorActions.addLayer()}
-            title="Create Layer Track"
-          >
-            <Plus size={12} />
-            <span>Layer</span>
+            <span>+ Group</span>
           </button>
           <button
             type="button"

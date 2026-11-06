@@ -58,12 +58,14 @@
   border-bottom: 1px solid var(--mx-border-light);
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 8px;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--mx-text-subtle);
+  white-space: nowrap;
 }
 
 .layerActionIcons {
@@ -71,10 +73,11 @@
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .iconBtn {
-  width: 20px;
+  width: 22px;
   height: 20px;
   display: flex;
   align-items: center;
@@ -87,6 +90,8 @@
   font-size: 13px;
   border-radius: var(--mx-radius-xs);
   transition: all 0.12s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .iconBtn:hover {
@@ -508,6 +513,35 @@
 }
 
 /* Diamond Keyframe Markers (◆) */
+.trackKeyframeDiamond,
+.keyframeCell {
+  position: absolute;
+  top: 7px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  z-index: 5;
+  user-select: none;
+  touch-action: none;
+  transition: transform 0.1s ease;
+}
+
+.trackKeyframeDiamond:hover .diamondKeyframe,
+.keyframeCell:hover .diamondKeyframe {
+  transform: rotate(45deg) scale(1.3);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 1);
+}
+
+.trackKeyframeDiamond:hover .diamondBlankKeyframe,
+.keyframeCell:hover .diamondBlankKeyframe {
+  transform: rotate(45deg) scale(1.3);
+  border-color: #ffffff;
+}
+
 .diamondKeyframe {
   width: 6.5px;
   height: 6.5px;
@@ -528,6 +562,16 @@
   border-radius: 1px;
   pointer-events: none;
   z-index: 3;
+}
+
+.groupSpanBar {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background-color: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 3px;
+  pointer-events: none;
 }
 
 .spanEndBar {
@@ -1072,3 +1116,29 @@
   font-size: 11px;
 }
 
+
+
+/* Keyframe Script Badge */
+.keyframeHasScript .diamondKeyframe {
+  background-color: #fbbf24;
+  box-shadow: 0 0 7px rgba(251, 191, 36, 0.9);
+}
+
+.keyframeScriptBadge {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  line-height: 1;
+  color: #fbbf24;
+  cursor: pointer;
+  z-index: 6;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9), 0 0 5px rgba(251, 191, 36, 0.8);
+  pointer-events: auto;
+}
+
+.keyframeScriptBadge:hover {
+  transform: translateX(-50%) scale(1.3);
+  color: #fef08a;
+}

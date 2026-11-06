@@ -56,7 +56,9 @@ export const RESERVED_API_KEYS = new Set<string>([
   'isPlaying',
 
   // Display List Traversal & Modification
+  'getInstance',
   'getChild',
+  'getChildAt',
   'getChildByPath',
   'children',
   'numChildren',
@@ -87,6 +89,25 @@ export const RESERVED_API_KEYS = new Set<string>([
   // Variables & Internals
   'vars',
   'destroy',
+  '_parent',
+  '_root',
+]);
+
+const FLASH_ALIASES = new Set<string>([
+  '_x',
+  '_y',
+  '_xscale',
+  '_yscale',
+  '_rotation',
+  '_alpha',
+  '_visible',
+  '_name',
+  '_currentframe',
+  '_totalframes',
+  '_xmouse',
+  '_ymouse',
+  '_width',
+  '_height',
   '_parent',
   '_root',
 ]);
@@ -285,7 +306,7 @@ export function createContextProxy<T extends MovieClip = MovieClip>(target: T): 
       }
 
       if (RESERVED_API_KEYS.has(prop)) return true;
-      if (prop.startsWith('_')) return true;
+      if (FLASH_ALIASES.has(prop)) return true;
       if (t.behavior?.methods && prop in t.behavior.methods) return true;
       if ((t as any).getChildRaw && (t as any).getChildRaw(prop)) return true;
       if (t.vars && prop in t.vars) return true;

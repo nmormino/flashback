@@ -429,9 +429,9 @@ export const GradientPicker: React.FC<GradientPickerProps> = ({
               top: `${popoverPos.top}px`,
               left: `${popoverPos.left}px`,
               marginTop: 0,
-              zIndex: 9999,
+              zIndex: 100000,
             }
-          : { zIndex: 9999 }
+          : { zIndex: 100000 }
       }
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}

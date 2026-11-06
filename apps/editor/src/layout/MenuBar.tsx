@@ -157,6 +157,10 @@ export const MenuBar: React.FC = () => {
           disabled: selectedElementIds.length === 0,
         },
         {
+          label: 'Insert Component',
+          action: () => editorActions.insertComponent(),
+        },
+        {
           label: 'Add Web Font...',
           action: () => editorActions.setAddFontModalOpen(true),
         },

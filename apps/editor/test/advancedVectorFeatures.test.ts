@@ -375,8 +375,8 @@ describe('Advanced Vector Editor Features', () => {
         alpha: 1,
         visible: true,
       };
-      editorActions.addElement(el1);
-      editorActions.addElement(el2);
+      const targetLayer = getEditorState().doc.root.layers[0];
+      targetLayer.keyframes[0].elements = [el1, el2];
 
       let elements = getEditorState().doc.root.layers[0].keyframes[0].elements;
       expect(elements[0].id).toBe('el_bottom');

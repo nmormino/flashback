@@ -15,5 +15,14 @@ export function renderBitmap(doc: Document, el: BitmapElement, library?: Library
     img.height = asset.height;
     if (!asset.smoothing) img.style.imageRendering = 'pixelated';
   }
+  if (el.src) {
+    img.src = el.src;
+  }
+  if (el.width !== undefined) {
+    img.width = el.width;
+  }
+  if (el.height !== undefined) {
+    img.height = el.height;
+  }
   return img;
 }
