@@ -138,6 +138,63 @@ describe('Star Shape Vector & Stage Tooling', () => {
       expect(addedStar.transform.originX).toBe(60);
       expect(addedStar.transform.originY).toBe(60);
     });
+
+    it('displays real-time preview for rectangle and oval reflecting actual shape, fill, and stroke', async () => {
+      editorActions.setActiveTool('rect');
+      editorActions.setFillColor('#ff5500');
+      editorActions.setStrokeColor('#00aa33');
+      editorActions.setStrokeWidth(3);
+
+      await act(async () => {
+        root.render(<Stage />);
+      });
+
+      const canvas = container.querySelector('[data-testid="stage-canvas"]') as HTMLElement;
+
+      await act(async () => {
+        canvas.dispatchEvent(new MouseEvent('mousedown', { clientX: 50, clientY: 50, bubbles: true }));
+      });
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('mousemove', { clientX: 150, clientY: 100, bubbles: true }));
+      });
+
+      const rectPreview = document.querySelector('[data-testid="rect-draw-preview"]');
+      expect(rectPreview).not.toBeNull();
+      const rectEl = rectPreview?.querySelector('rect');
+      expect(rectEl?.getAttribute('fill')).toBe('#ff5500');
+      expect(rectEl?.getAttribute('stroke')).toBe('#00aa33');
+      expect(rectEl?.getAttribute('stroke-width')).toBe('3');
+
+      // Finish drawing rect
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('mouseup', { clientX: 150, clientY: 100, bubbles: true }));
+      });
+      expect(document.querySelector('[data-testid="rect-draw-preview"]')).toBeNull();
+
+      // Test Oval preview
+      await act(async () => {
+        editorActions.setActiveTool('oval');
+        root.render(<Stage />);
+      });
+      await act(async () => {
+        canvas.dispatchEvent(new MouseEvent('mousedown', { clientX: 80, clientY: 80, bubbles: true }));
+      });
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('mousemove', { clientX: 160, clientY: 140, bubbles: true }));
+      });
+
+      const ovalPreview = document.querySelector('[data-testid="oval-draw-preview"]');
+      expect(ovalPreview).not.toBeNull();
+      const ellipseEl = ovalPreview?.querySelector('ellipse');
+      expect(ellipseEl?.getAttribute('fill')).toBe('#ff5500');
+      expect(ellipseEl?.getAttribute('stroke')).toBe('#00aa33');
+      expect(ellipseEl?.getAttribute('stroke-width')).toBe('3');
+
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('mouseup', { clientX: 160, clientY: 140, bubbles: true }));
+      });
+      expect(document.querySelector('[data-testid="oval-draw-preview"]')).toBeNull();
+    });
   });
 
   describe('3. Keyboard Modifiers During Star Drawing', () => {

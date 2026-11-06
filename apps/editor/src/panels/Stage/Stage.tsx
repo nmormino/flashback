@@ -1932,10 +1932,21 @@ export const Stage: React.FC = () => {
           setSubselectedAnchor(null);
         }
       } else if (dragState.type === 'draw_rect') {
-        const rx = Math.min(dragState.startX, x);
-        const ry = Math.min(dragState.startY, y);
-        const rw = Math.max(8, Math.abs(x - dragState.startX));
-        const rh = Math.max(8, Math.abs(y - dragState.startY));
+        let rx = Math.min(dragState.startX, x);
+        let ry = Math.min(dragState.startY, y);
+        let rw = Math.max(8, Math.abs(x - dragState.startX));
+        let rh = Math.max(8, Math.abs(y - dragState.startY));
+        if (e.shiftKey || dragState.shiftKey) {
+          const side = Math.max(rw, rh);
+          rw = side;
+          rh = side;
+          if (x < dragState.startX) {
+            rx = dragState.startX - side;
+          }
+          if (y < dragState.startY) {
+            ry = dragState.startY - side;
+          }
+        }
         const cx = Math.round((rw / 2) * 100) / 100;
         const cy = Math.round((rh / 2) * 100) / 100;
 
@@ -1972,10 +1983,21 @@ export const Stage: React.FC = () => {
         editorActions.addElement(newRect);
         editorActions.setActiveTool('select');
       } else if (dragState.type === 'draw_oval') {
-        const rx = Math.min(dragState.startX, x);
-        const ry = Math.min(dragState.startY, y);
-        const rw = Math.max(8, Math.abs(x - dragState.startX));
-        const rh = Math.max(8, Math.abs(y - dragState.startY));
+        let rx = Math.min(dragState.startX, x);
+        let ry = Math.min(dragState.startY, y);
+        let rw = Math.max(8, Math.abs(x - dragState.startX));
+        let rh = Math.max(8, Math.abs(y - dragState.startY));
+        if (e.shiftKey || dragState.shiftKey) {
+          const side = Math.max(rw, rh);
+          rw = side;
+          rh = side;
+          if (x < dragState.startX) {
+            rx = dragState.startX - side;
+          }
+          if (y < dragState.startY) {
+            ry = dragState.startY - side;
+          }
+        }
         const rX = rw / 2;
         const rY = rh / 2;
         const cx = Math.round(rX * 100) / 100;
@@ -2848,19 +2870,79 @@ export const Stage: React.FC = () => {
   }
 
   // Live drawing preview rectangle/oval
-  let drawPreviewStyle: React.CSSProperties | null = null;
+  let drawPreviewStyle: { left: number; top: number; width: number; height: number } | null = null;
   if (dragState && (dragState.type === 'draw_rect' || dragState.type === 'draw_oval')) {
-    const px = Math.min(dragState.startX, dragState.currentX);
-    const py = Math.min(dragState.startY, dragState.currentY);
-    const pw = Math.abs(dragState.currentX - dragState.startX);
-    const ph = Math.abs(dragState.currentY - dragState.startY);
+    let px = Math.min(dragState.startX, dragState.currentX);
+    let py = Math.min(dragState.startY, dragState.currentY);
+    let pw = Math.abs(dragState.currentX - dragState.startX);
+    let ph = Math.abs(dragState.currentY - dragState.startY);
+    if (dragState.shiftKey) {
+      const side = Math.max(pw, ph);
+      pw = side;
+      ph = side;
+      if (dragState.currentX < dragState.startX) {
+        px = dragState.startX - side;
+      }
+      if (dragState.currentY < dragState.startY) {
+        py = dragState.startY - side;
+      }
+    }
     drawPreviewStyle = {
-      left: `${px}px`,
-      top: `${py}px`,
-      width: `${pw}px`,
-      height: `${ph}px`,
+      left: px,
+      top: py,
+      width: pw,
+      height: ph,
     };
   }
+
+  const renderPreviewGradientDefs = (idPrefix: string) => {
+    if (!activeFill) return null;
+    const gradId = `${idPrefix}_grad`;
+    if (activeFill.type === 'linearGradient') {
+      const rad = (activeFill.angle * Math.PI) / 180;
+      const dx = Math.cos(rad) / 2;
+      const dy = Math.sin(rad) / 2;
+      return (
+        <linearGradient id={gradId} x1={0.5 - dx} y1={0.5 - dy} x2={0.5 + dx} y2={0.5 + dy}>
+          {activeFill.stops.map((st, si) => (
+            <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+          ))}
+        </linearGradient>
+      );
+    }
+    if (activeFill.type === 'radialGradient') {
+      return (
+        <radialGradient
+          id={gradId}
+          cx={activeFill.cx}
+          cy={activeFill.cy}
+          r={activeFill.r}
+          fx={activeFill.focalX}
+          fy={activeFill.focalY}
+        >
+          {activeFill.stops.map((st, si) => (
+            <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+          ))}
+        </radialGradient>
+      );
+    }
+    return null;
+  };
+
+  const getPreviewFillPaint = (idPrefix: string): string => {
+    if (activeFill) {
+      if (activeFill.type === 'solid') {
+        return activeFill.color;
+      }
+      if (activeFill.type === 'linearGradient' || activeFill.type === 'radialGradient') {
+        return `url(#${idPrefix}_grad)`;
+      }
+    }
+    return fillColor || '#ffffff';
+  };
+
+  const previewStrokePaint = (strokeWidth ?? 1) > 0 ? (strokeColor || '#000000') : 'none';
+  const previewStrokeWidth = strokeWidth ?? 1;
 
   // Marquee selection preview
   let marqueeStyle: React.CSSProperties | null = null;
@@ -3874,11 +3956,63 @@ export const Stage: React.FC = () => {
 
           {/* Live Drawing Previews */}
           {dragState?.type === 'draw_rect' && drawPreviewStyle && (
-            <div className={styles.drawPreview} style={drawPreviewStyle} />
+            <svg
+              className={styles.shapePreviewOverlay}
+              style={{
+                position: 'absolute',
+                left: `${drawPreviewStyle.left}px`,
+                top: `${drawPreviewStyle.top}px`,
+                width: `${drawPreviewStyle.width}px`,
+                height: `${drawPreviewStyle.height}px`,
+                overflow: 'visible',
+                pointerEvents: 'none',
+              }}
+              data-testid="rect-draw-preview"
+            >
+              <defs>{renderPreviewGradientDefs('rect_preview')}</defs>
+              <rect
+                x={0}
+                y={0}
+                width={drawPreviewStyle.width}
+                height={drawPreviewStyle.height}
+                fill={getPreviewFillPaint('rect_preview')}
+                stroke={previewStrokePaint}
+                strokeWidth={previewStrokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           )}
+
           {dragState?.type === 'draw_oval' && drawPreviewStyle && (
-            <div className={styles.drawPreviewOval} style={drawPreviewStyle} />
+            <svg
+              className={styles.shapePreviewOverlay}
+              style={{
+                position: 'absolute',
+                left: `${drawPreviewStyle.left}px`,
+                top: `${drawPreviewStyle.top}px`,
+                width: `${drawPreviewStyle.width}px`,
+                height: `${drawPreviewStyle.height}px`,
+                overflow: 'visible',
+                pointerEvents: 'none',
+              }}
+              data-testid="oval-draw-preview"
+            >
+              <defs>{renderPreviewGradientDefs('oval_preview')}</defs>
+              <ellipse
+                cx={drawPreviewStyle.width / 2}
+                cy={drawPreviewStyle.height / 2}
+                rx={drawPreviewStyle.width / 2}
+                ry={drawPreviewStyle.height / 2}
+                fill={getPreviewFillPaint('oval_preview')}
+                stroke={previewStrokePaint}
+                strokeWidth={previewStrokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           )}
+
           {dragState?.type === 'draw_polygon' && (() => {
             const dx = dragState.currentX - dragState.startX;
             const dy = dragState.currentY - dragState.startY;
@@ -3906,30 +4040,14 @@ export const Stage: React.FC = () => {
                 className={styles.starPreviewOverlay}
                 data-testid="star-draw-preview-svg"
               >
+                <defs>{renderPreviewGradientDefs('poly_preview')}</defs>
                 <path
                   d={pathD}
-                  fill={activeFill ? fillToCSS(activeFill) : fillColor}
-                  fillOpacity={0.35}
-                  stroke={strokeColor || '#3b82f6'}
-                  strokeWidth={Math.max(1.5, strokeWidth || 1.5)}
-                  strokeDasharray="4 3"
-                />
-                <circle
-                  cx={dragState.startX}
-                  cy={dragState.startY}
-                  r={3.5}
-                  fill="#3b82f6"
-                  stroke="#ffffff"
-                  strokeWidth={1}
-                />
-                <line
-                  x1={dragState.startX}
-                  y1={dragState.startY}
-                  x2={dragState.startX + radius * Math.cos(angle)}
-                  y2={dragState.startY + radius * Math.sin(angle)}
-                  stroke="rgba(59, 130, 246, 0.6)"
-                  strokeWidth={1}
-                  strokeDasharray="2 2"
+                  fill={getPreviewFillPaint('poly_preview')}
+                  stroke={previewStrokePaint}
+                  strokeWidth={previewStrokeWidth}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
               </svg>
             );

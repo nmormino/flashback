@@ -5,12 +5,14 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "deploy": "turbo run build && wrangler deploy",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
     "puppeteer": "^25.16.0",
     "turbo": "^2.4.4",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "wrangler": "^4.158.0"
   }
 }

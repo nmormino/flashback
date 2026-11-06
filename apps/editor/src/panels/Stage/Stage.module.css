@@ -358,21 +358,22 @@
   overflow: visible;
 }
 
-/* Drawing drag preview */
+/* Drawing shape drag previews */
+.shapePreviewOverlay {
+  position: absolute;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 105;
+}
+
 .drawPreview {
   position: absolute;
   pointer-events: none;
-  border: 1.5px dashed var(--mx-accent);
-  background-color: rgba(59, 130, 246, 0.15);
-  border-radius: 2px;
 }
 
 .drawPreviewOval {
   position: absolute;
   pointer-events: none;
-  border: 1.5px dashed var(--mx-accent);
-  border-radius: 50%;
-  background-color: rgba(59, 130, 246, 0.15);
 }
 
 /* Star Live Drawing Preview */
