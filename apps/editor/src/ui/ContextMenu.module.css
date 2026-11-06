@@ -1,7 +1,7 @@
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 999;
+  z-index: 100000;
   background: transparent;
 }
 
@@ -18,7 +18,7 @@
   flex-direction: column;
   gap: 2px;
   user-select: none;
-  z-index: 1000;
+  z-index: 100001;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   animation: contextFadeIn 0.08s ease-out;
@@ -53,12 +53,16 @@
   width: 100%;
 }
 
-.menuItem:hover:not(:disabled) {
+.menuItem:hover:not(:disabled),
+.menuItem:focus-visible:not(:disabled),
+.menuItem.focused:not(:disabled) {
   background-color: var(--mx-accent);
   color: #ffffff;
 }
 
-.menuItem.danger:hover:not(:disabled) {
+.menuItem.danger:hover:not(:disabled),
+.menuItem.danger:focus-visible:not(:disabled),
+.menuItem.danger.focused:not(:disabled) {
   background-color: #ef4444;
   color: #ffffff;
 }

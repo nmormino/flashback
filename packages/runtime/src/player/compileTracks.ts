@@ -16,6 +16,8 @@ import {
   cleanNumber,
 } from './easing';
 import { createPathSampler, type PathSampler } from './pathSampling';
+import { Matrix2D } from '../math/Matrix2D';
+import { getParentLayerMatrix } from './Timeline';
 
 export interface SampledTrackState {
   transform: string;
@@ -72,11 +74,8 @@ export function normalizeRotation(
   rotate?: { direction: 'cw' | 'ccw'; turns: number }
 ): { startRot: number; endRot: number } {
   if (!rotate) {
-    // Default Flash MX: shortest angular path between start and end rotation
-    let diff = (rawEndRot - startRot) % 360;
-    if (diff > 180) diff -= 360;
-    else if (diff < -180) diff += 360;
-    return { startRot, endRot: startRot + diff };
+    // Plain linear interpolation of the absolute rotation value (After Effects/Blender semantics)
+    return { startRot, endRot: rawEndRot };
   }
 
   const turns = Math.max(0, rotate.turns ?? 0);
@@ -395,20 +394,62 @@ function compileElementTweenChain(
         const oy = startT.originY + easedProgress * (endT.originY - startT.originY);
         const opacity = startAlpha + easedProgress * (endAlpha - startAlpha);
 
+        let sampX = sample.x;
+        let sampY = sample.y;
+        let sampRot = rot;
+        let sampSx = sx;
+        let sampSy = sy;
+        let sampSkx = skx;
+        let sampSky = sky;
+
+        if (timeline && layerId) {
+          const parentM = getParentLayerMatrix(layerId, timeline, frameNum);
+          if (!parentM.isIdentity()) {
+            const elM = Matrix2D.fromTransform({
+              x: sampX,
+              y: sampY,
+              scaleX: sampSx,
+              scaleY: sampSy,
+              rotation: sampRot,
+              skewX: sampSkx,
+              skewY: sampSky,
+              originX: ox,
+              originY: oy,
+            });
+            const compM = parentM.multiply(elM);
+            const dec = compM.decompose();
+            sampX = dec.x;
+            sampY = dec.y;
+            sampSx = dec.scaleX;
+            sampSy = dec.scaleY;
+            sampRot = dec.rotation;
+            sampSkx = dec.skewX;
+            sampSky = dec.skewY;
+          }
+        }
+
         const offset = frameNum / totalTimelineFrames;
-        const transformCSS = formatTransformCSS({ x, y, scaleX: sx, scaleY: sy, rotation: rot, skewX: skx, skewY: sky });
+        const transformCSS = formatTransformCSS({
+          x: sampX,
+          y: sampY,
+          scaleX: sampSx,
+          scaleY: sampSy,
+          rotation: sampRot,
+          skewX: sampSkx,
+          skewY: sampSky,
+        });
         const originCSS = `${cleanNumber(ox)}px ${cleanNumber(oy)}px`;
 
         const kfData: InternalKeyframeData = {
           frame: frameNum,
           offset,
-          x,
-          y,
-          scaleX: sx,
-          scaleY: sy,
-          rotation: rot,
-          skewX: skx,
-          skewY: sky,
+          x: sampX,
+          y: sampY,
+          scaleX: sampSx,
+          scaleY: sampSy,
+          rotation: sampRot,
+          skewX: sampSkx,
+          skewY: sampSky,
           originX: ox,
           originY: oy,
           opacity,
@@ -430,22 +471,39 @@ function compileElementTweenChain(
       }
     } else {
       // --- Standard 2-Endpoint Motion Tween ---
+      let effectiveStartT = startT;
+      if (timeline && layerId) {
+        const parentM = getParentLayerMatrix(layerId, timeline, startKf.index);
+        if (!parentM.isIdentity()) {
+          const elM = Matrix2D.fromTransform(startT);
+          const compM = parentM.multiply(elM);
+          const dec = compM.decompose();
+          dec.originX = startT.originX;
+          dec.originY = startT.originY;
+          effectiveStartT = dec;
+        }
+      }
+
+      const resolvedStartOx = effectiveStartT.originX ?? endT.originX ?? 0;
+      const resolvedStartOy = effectiveStartT.originY ?? endT.originY ?? 0;
+      effectiveStartT = { ...effectiveStartT, originX: resolvedStartOx, originY: resolvedStartOy };
+
       const offset = startKf.index / totalTimelineFrames;
-      const transformCSS = formatTransformCSS(startT);
-      const originCSS = `${cleanNumber(startT.originX)}px ${cleanNumber(startT.originY)}px`;
+      const transformCSS = formatTransformCSS(effectiveStartT);
+      const originCSS = `${cleanNumber(effectiveStartT.originX)}px ${cleanNumber(effectiveStartT.originY)}px`;
 
       const kfData: InternalKeyframeData = {
         frame: startKf.index,
         offset,
-        x: startT.x,
-        y: startT.y,
-        scaleX: startT.scaleX,
-        scaleY: startT.scaleY,
-        rotation: startT.rotation,
-        skewX: startT.skewX,
-        skewY: startT.skewY,
-        originX: startT.originX,
-        originY: startT.originY,
+        x: effectiveStartT.x,
+        y: effectiveStartT.y,
+        scaleX: effectiveStartT.scaleX,
+        scaleY: effectiveStartT.scaleY,
+        rotation: effectiveStartT.rotation,
+        skewX: effectiveStartT.skewX,
+        skewY: effectiveStartT.skewY,
+        originX: effectiveStartT.originX,
+        originY: effectiveStartT.originY,
         opacity: startAlpha,
         filters: alignedStartFilters,
         filterCSS: filterStartCSS,
@@ -471,6 +529,12 @@ function compileElementTweenChain(
       let finalX = endT.x;
       let finalY = endT.y;
       let finalRot = currentAccumulatedRot;
+      let finalSx = endT.scaleX;
+      let finalSy = endT.scaleY;
+      let finalSkx = endT.skewX;
+      let finalSky = endT.skewY;
+      let finalOx = endT.originX ?? startT.originX ?? 0;
+      let finalOy = endT.originY ?? startT.originY ?? 0;
 
       if (guideSampler && guideSampler.totalLength > 0) {
         const finalSample = guideSampler.sample(1);
@@ -482,30 +546,56 @@ function compileElementTweenChain(
         }
       }
 
+      if (timeline && layerId) {
+        const endParentM = getParentLayerMatrix(layerId, timeline, endKf.index);
+        if (!endParentM.isIdentity()) {
+          const elM = Matrix2D.fromTransform({
+            x: finalX,
+            y: finalY,
+            scaleX: finalSx,
+            scaleY: finalSy,
+            rotation: finalRot,
+            skewX: finalSkx,
+            skewY: finalSky,
+            originX: finalOx,
+            originY: finalOy,
+          });
+          const compM = endParentM.multiply(elM);
+          const dec = compM.decompose();
+          finalX = dec.x;
+          finalY = dec.y;
+          finalSx = dec.scaleX;
+          finalSy = dec.scaleY;
+          finalRot = dec.rotation;
+          finalSkx = dec.skewX;
+          finalSky = dec.skewY;
+        }
+      }
+
       const endOffset = endKf.index / totalTimelineFrames;
       const endTransformCSS = formatTransformCSS({
         x: finalX,
         y: finalY,
-        scaleX: endT.scaleX,
-        scaleY: endT.scaleY,
+        scaleX: finalSx,
+        scaleY: finalSy,
         rotation: finalRot,
-        skewX: endT.skewX,
-        skewY: endT.skewY,
+        skewX: finalSkx,
+        skewY: finalSky,
       });
-      const endOriginCSS = `${cleanNumber(endT.originX)}px ${cleanNumber(endT.originY)}px`;
+      const endOriginCSS = `${cleanNumber(finalOx)}px ${cleanNumber(finalOy)}px`;
 
       const finalKfData: InternalKeyframeData = {
         frame: endKf.index,
         offset: endOffset,
         x: finalX,
         y: finalY,
-        scaleX: endT.scaleX,
-        scaleY: endT.scaleY,
+        scaleX: finalSx,
+        scaleY: finalSy,
         rotation: finalRot,
-        skewX: endT.skewX,
-        skewY: endT.skewY,
-        originX: endT.originX,
-        originY: endT.originY,
+        skewX: finalSkx,
+        skewY: finalSky,
+        originX: finalOx,
+        originY: finalOy,
         opacity: endAlpha,
         filters: alignedEndFilters,
         filterCSS: filterEndCSS,

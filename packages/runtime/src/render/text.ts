@@ -10,6 +10,7 @@ export interface TextVariableBinding {
 export interface TextRenderOptions {
   library?: Library;
   binding?: TextVariableBinding;
+  localeText?: string;
   onChange?: (value: string) => void;
   onFocus?: () => void;
   onBlur?: () => void;
@@ -149,7 +150,7 @@ export function renderText(doc: Document, el: TextElement, opts: TextRenderOptio
     textPath.setAttribute('href', `#${pathId}`);
     const offset = el.pathConfig.startOffset !== undefined ? `${el.pathConfig.startOffset}%` : '0%';
     textPath.setAttribute('startOffset', offset);
-    textPath.textContent = el.text;
+    textPath.textContent = opts.localeText !== undefined ? opts.localeText : el.text;
     textSvg.appendChild(textPath);
     svg.appendChild(textSvg);
     return svg;
@@ -199,7 +200,9 @@ export function renderText(doc: Document, el: TextElement, opts: TextRenderOptio
   if (el.letterSpacing !== undefined) s.letterSpacing = `${el.letterSpacing}px`;
 
   const initial =
-    el.variable && opts.binding && opts.binding.get(el.variable) !== undefined
+    opts.localeText !== undefined
+      ? opts.localeText
+      : el.variable && opts.binding && opts.binding.get(el.variable) !== undefined
       ? String(opts.binding.get(el.variable))
       : el.text;
   setTextContent(node, el, initial, opts.library);

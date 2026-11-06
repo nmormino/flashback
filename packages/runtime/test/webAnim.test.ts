@@ -360,4 +360,77 @@ describe('WebAnim Custom Element (<web-anim>)', () => {
       expect(errorHandler).toHaveBeenCalled();
     });
   });
+
+  describe('scale-mode, reduced-motion, poster-frame, and locale attributes and properties', () => {
+    it('observes the expected attributes', () => {
+      expect(WebAnim.observedAttributes).toEqual([
+        'src',
+        'scale-mode',
+        'reduced-motion',
+        'poster-frame',
+        'locale',
+      ]);
+    });
+
+    it('manages scaleMode property and attribute reflection', () => {
+      const el = document.createElement('web-anim') as WebAnim;
+      container.appendChild(el);
+      el.animation = interactiveBallDoc;
+
+      expect(el.scaleMode).toBe('showAll');
+      el.scaleMode = 'noBorder';
+      expect(el.getAttribute('scale-mode')).toBe('noBorder');
+      expect(el.stageViewport?.getAttribute('data-scale-mode')).toBe('noBorder');
+
+      el.setAttribute('scale-mode', 'exactFit');
+      expect(el.scaleMode).toBe('exactFit');
+      expect(el.stageViewport?.getAttribute('data-scale-mode')).toBe('exactFit');
+    });
+
+    it('manages reducedMotion and posterFrame properties and attributes', () => {
+      const el = document.createElement('web-anim') as WebAnim;
+      container.appendChild(el);
+      el.animation = interactiveBallDoc;
+
+      expect(el.reducedMotion).toBe('auto');
+      expect(el.posterFrame).toBe(1);
+
+      el.reducedMotion = 'fixed';
+      expect(el.getAttribute('reduced-motion')).toBe('fixed');
+
+      el.posterFrame = 3;
+      expect(el.getAttribute('poster-frame')).toBe('3');
+
+      expect(el.currentFrame).toBe(3);
+      expect(el.isPlaying).toBe(false);
+    });
+
+    it('manages locale property and translates rendered text', () => {
+      const i18nDoc: AnimDocument = {
+        ...interactiveBallDoc,
+        i18n: {
+          defaultLocale: 'en',
+          locales: {
+            en: { title: 'Hello' },
+            de: { title: 'Hallo' },
+          },
+        },
+      };
+
+      const el = document.createElement('web-anim') as WebAnim;
+      container.appendChild(el);
+      el.animation = i18nDoc;
+
+      expect(el.locale).toBe('en');
+      expect(el.root.vars.__locale).toBe('en');
+
+      el.locale = 'de';
+      expect(el.getAttribute('locale')).toBe('de');
+      expect(el.root.vars.__locale).toBe('de');
+
+      el.setAttribute('locale', 'en');
+      expect(el.locale).toBe('en');
+      expect(el.root.vars.__locale).toBe('en');
+    });
+  });
 });

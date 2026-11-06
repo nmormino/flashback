@@ -40,6 +40,65 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
     throw new ValidationError(`Invalid stage scaleMode: "${stage.scaleMode}"`, 'stage.scaleMode');
   }
 
+  if (stage.reducedMotion !== undefined) {
+    if (typeof stage.reducedMotion !== 'object' || stage.reducedMotion === null) {
+      throw new ValidationError('Stage reducedMotion must be an object', 'stage.reducedMotion');
+    }
+    const validModes = ['auto', 'full', 'stop-motion', 'fixed'];
+    if (!validModes.includes(stage.reducedMotion.mode)) {
+      throw new ValidationError(
+        `Invalid reducedMotion mode: "${stage.reducedMotion.mode}"`,
+        'stage.reducedMotion.mode',
+      );
+    }
+    if (
+      stage.reducedMotion.posterFrame !== undefined &&
+      (typeof stage.reducedMotion.posterFrame !== 'number' || stage.reducedMotion.posterFrame < 1)
+    ) {
+      throw new ValidationError(
+        'reducedMotion posterFrame must be a positive integer',
+        'stage.reducedMotion.posterFrame',
+      );
+    }
+    if (
+      stage.reducedMotion.stopMotionFps !== undefined &&
+      (typeof stage.reducedMotion.stopMotionFps !== 'number' || stage.reducedMotion.stopMotionFps <= 0)
+    ) {
+      throw new ValidationError(
+        'reducedMotion stopMotionFps must be a positive number',
+        'stage.reducedMotion.stopMotionFps',
+      );
+    }
+  }
+
+  if (stage.breakpoints !== undefined) {
+    if (!Array.isArray(stage.breakpoints)) {
+      throw new ValidationError('Stage breakpoints must be an array', 'stage.breakpoints');
+    }
+    for (let i = 0; i < stage.breakpoints.length; i++) {
+      const bp = stage.breakpoints[i];
+      const bpPath = `stage.breakpoints[${i}]`;
+      if (!bp || typeof bp !== 'object') {
+        throw new ValidationError('Invalid breakpoint definition', bpPath);
+      }
+      if (typeof bp.id !== 'string' || !bp.id) {
+        throw new ValidationError('Breakpoint id is required', `${bpPath}.id`);
+      }
+      if (typeof bp.name !== 'string' || !bp.name) {
+        throw new ValidationError('Breakpoint name is required', `${bpPath}.name`);
+      }
+      if (typeof bp.maxWidth !== 'number' || bp.maxWidth <= 0) {
+        throw new ValidationError('Breakpoint maxWidth must be a positive number', `${bpPath}.maxWidth`);
+      }
+      if (typeof bp.width !== 'number' || bp.width <= 0) {
+        throw new ValidationError('Breakpoint width must be a positive number', `${bpPath}.width`);
+      }
+      if (typeof bp.height !== 'number' || bp.height <= 0) {
+        throw new ValidationError('Breakpoint height must be a positive number', `${bpPath}.height`);
+      }
+    }
+  }
+
   // 3. Meta
   if (!doc.meta || typeof doc.meta !== 'object') {
     throw new ValidationError('Document missing meta definition', 'meta');
@@ -50,6 +109,10 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
     throw new ValidationError('Document missing library definition', 'library');
   }
   const library = doc.library;
+  library.symbols ??= {};
+  library.audio ??= {};
+  library.fonts ??= {};
+  library.bitmaps ??= {};
   const symbolIds = new Set<string>();
   const audioIds = new Set<string>();
   const fontIds = new Set<string>();
@@ -194,6 +257,9 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
       if (layerIds.has(layer.id)) {
         throw new ValidationError(`Duplicate layer id: "${layer.id}"`, `${lPath}.id`);
       }
+      layer.kind ??= 'normal';
+      layer.visible ??= true;
+      layer.locked ??= false;
       layerIds.add(layer.id);
     }
 
@@ -222,9 +288,28 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
             `${lPath}.parentLayerId`,
           );
         }
-        if (layer.parentLayerId === layer.id) {
-          throw new ValidationError('Layer cannot parent itself', `${lPath}.parentLayerId`);
+        let curr: string | undefined = layer.parentLayerId;
+        const visited = new Set<string>([layer.id]);
+        while (curr) {
+          if (visited.has(curr)) {
+            throw new ValidationError('Cyclic parentLayerId detected', `${lPath}.parentLayerId`);
+          }
+          visited.add(curr);
+          const pLayer = (timeline.layers as any[]).find((l) => l.id === curr);
+          curr = pLayer?.parentLayerId;
         }
+      }
+
+      if (layer.transform && typeof layer.transform === 'object') {
+        layer.transform.x ??= 0;
+        layer.transform.y ??= 0;
+        layer.transform.scaleX ??= 1;
+        layer.transform.scaleY ??= 1;
+        layer.transform.rotation ??= 0;
+        layer.transform.skewX ??= 0;
+        layer.transform.skewY ??= 0;
+        layer.transform.originX ??= 0;
+        layer.transform.originY ??= 0;
       }
 
       if (!Array.isArray(layer.keyframes)) {
@@ -286,6 +371,18 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
           }
         }
 
+        if (kf.transform && typeof kf.transform === 'object') {
+          kf.transform.x ??= 0;
+          kf.transform.y ??= 0;
+          kf.transform.scaleX ??= 1;
+          kf.transform.scaleY ??= 1;
+          kf.transform.rotation ??= 0;
+          kf.transform.skewX ??= 0;
+          kf.transform.skewY ??= 0;
+          kf.transform.originX ??= 0;
+          kf.transform.originY ??= 0;
+        }
+
         if (!Array.isArray(kf.elements)) {
           throw new ValidationError('Keyframe elements must be an array', `${kfPath}.elements`);
         }
@@ -307,6 +404,20 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
             throw new ValidationError(`Duplicate element id in keyframe: "${el.id}"`, `${elPath}.id`);
           }
           elIds.add(el.id);
+
+          el.alpha ??= 1;
+          el.visible ??= true;
+          if (el.transform && typeof el.transform === 'object') {
+            el.transform.x ??= 0;
+            el.transform.y ??= 0;
+            el.transform.scaleX ??= 1;
+            el.transform.scaleY ??= 1;
+            el.transform.rotation ??= 0;
+            el.transform.skewX ??= 0;
+            el.transform.skewY ??= 0;
+            el.transform.originX ??= 0;
+            el.transform.originY ??= 0;
+          }
 
           if (el.instanceName) {
             if (instanceNames.has(el.instanceName)) {
@@ -331,11 +442,34 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
                 `${elPath}.symbolId`,
               );
             }
+            if (
+              el.playMode !== undefined &&
+              !['loop', 'once', 'stop', 'sync'].includes(el.playMode)
+            ) {
+              throw new ValidationError(
+                `Invalid playMode: "${el.playMode}"`,
+                `${elPath}.playMode`,
+              );
+            }
           } else if (el.type === 'bitmap') {
-            if (!bitmapIds.has(el.bitmapId)) {
+            if (!bitmapIds.has(el.bitmapId) && !el.src) {
               throw new ValidationError(
                 `Referenced bitmap "${el.bitmapId}" does not exist in library`,
                 `${elPath}.bitmapId`,
+              );
+            }
+          } else if (el.type === 'video') {
+            if (typeof el.src !== 'string' || !el.src) {
+              throw new ValidationError(
+                'Video element requires a non-empty src URL',
+                `${elPath}.src`,
+              );
+            }
+          } else if (el.type === 'text') {
+            if (el.i18nKey !== undefined && typeof el.i18nKey !== 'string') {
+              throw new ValidationError(
+                'Text element i18nKey must be a string',
+                `${elPath}.i18nKey`,
               );
             }
           }
@@ -349,6 +483,113 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
     throw new ValidationError('Document missing root timeline', 'root');
   }
   validateTimeline(doc.root, 'root');
+
+  // 5b. Validate Artboards
+  if (doc.artboards !== undefined) {
+    if (!Array.isArray(doc.artboards)) {
+      throw new ValidationError('Document artboards must be an array', 'artboards');
+    }
+    const artboardIds = new Set<string>();
+    for (let i = 0; i < doc.artboards.length; i++) {
+      const ab = doc.artboards[i];
+      const p = `artboards[${i}]`;
+      if (!ab || typeof ab !== 'object') {
+        throw new ValidationError(`Artboard at index ${i} must be an object`, p);
+      }
+      if (typeof ab.id !== 'string' || !ab.id.trim()) {
+        throw new ValidationError('Artboard id must be a non-empty string', `${p}.id`);
+      }
+      if (artboardIds.has(ab.id)) {
+        throw new ValidationError(`Duplicate artboard id "${ab.id}"`, `${p}.id`);
+      }
+      artboardIds.add(ab.id);
+
+      if (typeof ab.name !== 'string' || !ab.name.trim()) {
+        throw new ValidationError('Artboard name must be a non-empty string', `${p}.name`);
+      }
+      if (typeof ab.width !== 'number' || ab.width <= 0) {
+        throw new ValidationError('Artboard width must be a positive number', `${p}.width`);
+      }
+      if (typeof ab.height !== 'number' || ab.height <= 0) {
+        throw new ValidationError('Artboard height must be a positive number', `${p}.height`);
+      }
+      if (!ab.root || typeof ab.root !== 'object') {
+        throw new ValidationError('Artboard missing root timeline', `${p}.root`);
+      }
+      validateTimeline(ab.root, `${p}.root`);
+
+      if (ab.background !== undefined) {
+        if (!ab.background || typeof ab.background !== 'object') {
+          throw new ValidationError('Artboard background must be an object', `${p}.background`);
+        }
+      }
+      if (ab.breakpoints !== undefined) {
+        if (!Array.isArray(ab.breakpoints)) {
+          throw new ValidationError('Artboard breakpoints must be an array', `${p}.breakpoints`);
+        }
+        for (let b = 0; b < ab.breakpoints.length; b++) {
+          const bp = ab.breakpoints[b];
+          const bpPath = `${p}.breakpoints[${b}]`;
+          if (!bp || typeof bp !== 'object') {
+            throw new ValidationError('Invalid breakpoint definition', bpPath);
+          }
+          if (typeof bp.id !== 'string' || !bp.id) {
+            throw new ValidationError('Breakpoint id is required', `${bpPath}.id`);
+          }
+          if (typeof bp.name !== 'string' || !bp.name) {
+            throw new ValidationError('Breakpoint name is required', `${bpPath}.name`);
+          }
+          if (typeof bp.maxWidth !== 'number' || bp.maxWidth <= 0) {
+            throw new ValidationError(
+              'Breakpoint maxWidth must be a positive number',
+              `${bpPath}.maxWidth`
+            );
+          }
+          if (typeof bp.width !== 'number' || bp.width <= 0) {
+            throw new ValidationError(
+              'Breakpoint width must be a positive number',
+              `${bpPath}.width`
+            );
+          }
+          if (typeof bp.height !== 'number' || bp.height <= 0) {
+            throw new ValidationError(
+              'Breakpoint height must be a positive number',
+              `${bpPath}.height`
+            );
+          }
+        }
+      }
+    }
+
+    if (doc.activeArtboardId !== undefined) {
+      if (typeof doc.activeArtboardId !== 'string') {
+        throw new ValidationError('activeArtboardId must be a string', 'activeArtboardId');
+      }
+      if (doc.artboards.length > 0 && !artboardIds.has(doc.activeArtboardId)) {
+        throw new ValidationError(
+          `Active artboard id "${doc.activeArtboardId}" not found in artboards`,
+          'activeArtboardId'
+        );
+      }
+    }
+  } else if (doc.activeArtboardId !== undefined) {
+    if (typeof doc.activeArtboardId !== 'string') {
+      throw new ValidationError('activeArtboardId must be a string', 'activeArtboardId');
+    }
+  }
+
+  // 6. Validate i18n
+  if (doc.i18n !== undefined) {
+    if (typeof doc.i18n !== 'object' || doc.i18n === null) {
+      throw new ValidationError('Document i18n must be an object', 'i18n');
+    }
+    if (typeof doc.i18n.defaultLocale !== 'string' || !doc.i18n.defaultLocale) {
+      throw new ValidationError('i18n defaultLocale must be a non-empty string', 'i18n.defaultLocale');
+    }
+    if (typeof doc.i18n.locales !== 'object' || doc.i18n.locales === null) {
+      throw new ValidationError('i18n locales must be an object', 'i18n.locales');
+    }
+  }
 
   // 6. Validate Library Symbols Timelines
   if (library.symbols) {

@@ -334,11 +334,11 @@ describe('Editor Store', () => {
       const dur1 = computeTotalTimelineDuration(tl, 24);
       const dur2 = computeTotalTimelineDuration(tl, 24);
       expect(dur1).toBe(dur2);
-      expect(dur1).toBeGreaterThanOrEqual(2.0);
+      expect(dur1).toBeGreaterThanOrEqual(1.0);
 
       // Different FPS computes with corresponding time scaling
       const dur60 = computeTotalTimelineDuration(tl, 60);
-      expect(dur60).toBeGreaterThanOrEqual(2.0);
+      expect(dur60).toBeCloseTo(0.4, 2);
 
       // Invalidate cache
       invalidateTimelineDurationCache(tl);

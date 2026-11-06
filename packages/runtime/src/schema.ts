@@ -34,6 +34,37 @@ export const SCHEMA_VERSION = 1 as const;
  * 1. Document root
  * ========================================================================== */
 
+export interface I18nDef {
+  defaultLocale: string;
+  locales: Record<string, Record<string, string>>;
+}
+
+export interface StageBreakpoint {
+  id: ID;
+  name: string;
+  maxWidth: number;
+  width: number;
+  height: number;
+}
+
+export interface ArtboardTransition {
+  type: 'none' | 'fade' | 'slide';
+  duration?: number;
+  direction?: 'left' | 'right' | 'up' | 'down';
+}
+
+export interface Artboard {
+  id: ID;
+  name: string;
+  width: number;
+  height: number;
+  background?: Fill;
+  root: TimelineDef;
+  breakpoints?: StageBreakpoint[];
+}
+
+export type ReducedMotionMode = 'auto' | 'full' | 'stop-motion' | 'fixed';
+
 export interface AnimDocument {
   version: typeof SCHEMA_VERSION;
   meta: DocumentMeta;
@@ -41,8 +72,16 @@ export interface AnimDocument {
   library: Library;
   /** The main timeline (Flash `_root`). Structurally identical to a MovieClip symbol. */
   root: TimelineDef;
+  /** Optional artboards (tabbed canvases, one active at a time). */
+  artboards?: Artboard[];
+  /** Currently active artboard ID. */
+  activeArtboardId?: ID;
+  /** Optional internationalization dictionary for multi-language text rendering. */
+  i18n?: I18nDef;
   /** Runs once before frame 1 of root. `this` = root MovieClipAPI. */
   onInit?: ScriptFn<MovieClipContext>;
+  /** Scripts dictionary mapped by element identifier/instance name. */
+  scripts?: Record<string, any>;
 }
 
 export interface DocumentMeta {
@@ -59,6 +98,12 @@ export interface StageDef {
   fps: number;
   background: Fill;
   scaleMode: 'showAll' | 'noBorder' | 'exactFit' | 'noScale';
+  reducedMotion?: {
+    mode: ReducedMotionMode;
+    posterFrame?: number;
+    stopMotionFps?: number;
+  };
+  breakpoints?: StageBreakpoint[];
 }
 
 /* ========================================================================== *
@@ -169,6 +214,8 @@ export interface LayerDef {
   maskLayerId?: ID;
   /** For layers inside a folder layer. */
   parentLayerId?: ID;
+  /** Optional base or group transform for folder/group layers. */
+  transform?: Transform;
   /** Sorted by `index`, non-overlapping. Gaps = empty frames. */
   keyframes: KeyframeDef[];
 }
@@ -252,7 +299,8 @@ export type DisplayElement =
   | SymbolInstance
   | ShapeElement
   | TextElement
-  | BitmapElement;
+  | BitmapElement
+  | VideoElement;
 
 interface ElementBase {
   /**
@@ -272,11 +320,21 @@ interface ElementBase {
   blendMode?: BlendMode;
   /** Render this element as a bitmap layer (`will-change: transform`). */
   cacheAsBitmap?: boolean;
+  /** Element-level event handlers. `this` = target element context. */
+  events?: InstanceEvents;
 }
+
+export type PlayMode = 'loop' | 'once' | 'stop' | 'sync';
 
 export interface SymbolInstance extends ElementBase {
   type: 'instance';
   symbolId: ID;
+  /** Playback mode: loop continuously, play once to end, stop on first frame, or sync with parent. */
+  playMode?: PlayMode;
+  /** Whether the instance animation automatically plays. Defaults to true. */
+  autoplay?: boolean;
+  /** Whether the instance animation loops. Defaults to true. */
+  loop?: boolean;
   /** Graphic symbols: which inner frame to show & loop mode. */
   graphicPlayback?: { mode: 'loop' | 'playOnce' | 'singleFrame'; firstFrame: FrameIndex };
   /** Instance-level event handlers. `this` = THIS instance (Flash `on(release){}` semantics). */
@@ -290,6 +348,17 @@ export interface ShapeElement extends ElementBase {
   type: 'shape';
   /** One or more SVG paths, rendered in order inside an inline <svg>. */
   paths: VectorPath[];
+  /** Parametric star / polygon configuration */
+  starConfig?: {
+    points: number;
+    pointRatio: number;
+    outerRadius: number;
+    startAngle?: number;
+    cx?: number;
+    cy?: number;
+  };
+  /** Whether the path has been customized manually (e.g. via Subselect anchor manipulation) */
+  isCustomizedPath?: boolean;
 }
 
 export interface VectorPath {
@@ -347,15 +416,43 @@ export interface TextElement extends ElementBase {
   pathConfig?: TextPathConfig;
   /** Dynamic/Input text: bind to a variable on the parent timeline (Flash "Var:"). */
   variable?: string;
+  /** Optional i18n translation dictionary key. */
+  i18nKey?: string;
   events?: Pick<InstanceEvents, 'onChange' | 'onFocus' | 'onBlur'>;
 }
 
 export interface BitmapElement extends ElementBase {
   type: 'bitmap';
   bitmapId: ID;
+  /** Optional direct URL/data URI override if not solely looked up in library.bitmaps */
+  src?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface VideoElement extends ElementBase {
+  type: 'video';
+  /** Direct video URL (.mp4, .webm, .ogg) or hosted video URL (YouTube, Vimeo, Dailymotion, Twitch) */
+  src: string;
+  width: number;
+  height: number;
+  autoplay?: boolean;
+  loop?: boolean;
+  muted?: boolean;
+  controls?: boolean;
+  poster?: string;
 }
 
 /* ----- Visual properties ------------------------------------------------ */
+
+export type LayoutPin =
+  | 'none'
+  | 'center'
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'stretch';
 
 export interface Transform {
   x: number;
@@ -372,6 +469,8 @@ export interface Transform {
   /** Transform point, element-local px (Flash's white circle). */
   originX: number;
   originY: number;
+  /** Optional responsive layout anchor pin. */
+  pin?: LayoutPin;
 }
 
 export interface ColorTransform {
@@ -434,6 +533,11 @@ export interface InstanceEvents {
   onDragOver?: ScriptFn<MovieClipContext, [AnimPointerEvent]>;
   onDragOut?: ScriptFn<MovieClipContext, [AnimPointerEvent]>;
   onMouseMove?: ScriptFn<MovieClipContext, [AnimPointerEvent]>;
+  // Pointer DOM aliases
+  onPointerDown?: ScriptFn<MovieClipContext, [AnimPointerEvent]>;
+  onPointerUp?: ScriptFn<MovieClipContext, [AnimPointerEvent]>;
+  onPointerEnter?: ScriptFn<MovieClipContext, [AnimPointerEvent]>;
+  onPointerLeave?: ScriptFn<MovieClipContext, [AnimPointerEvent]>;
   // Keyboard (global, delivered to every listening instance)
   onKeyDown?: ScriptFn<MovieClipContext, [AnimKeyEvent]>;
   onKeyUp?: ScriptFn<MovieClipContext, [AnimKeyEvent]>;
@@ -514,6 +618,13 @@ export interface DisplayObjectAPI {
   on<E extends keyof InstanceEvents>(type: E, fn: NonNullable<InstanceEvents[E]>): void;
   off<E extends keyof InstanceEvents>(type: E, fn?: NonNullable<InstanceEvents[E]>): void;
 
+  play?(): void;
+  stop?(): void;
+  gotoAndPlay?(frame: FrameRef): void;
+  gotoAndStop?(frame: FrameRef): void;
+  gotoArtboard?(idOrName: string, transition?: ArtboardTransition): void;
+  getInstance?<T extends DisplayObjectAPI = MovieClipContext>(nameOrId: string): T | null;
+
   /** Escape hatch for power users. Undocumented in the Actions panel by default. */
   readonly element: HTMLElement | SVGElement;
 }
@@ -524,6 +635,7 @@ export interface MovieClipAPI extends DisplayObjectAPI {
   stop(): void;
   gotoAndPlay(frame: FrameRef): void;
   gotoAndStop(frame: FrameRef): void;
+  gotoArtboard(idOrName: string, transition?: ArtboardTransition): void;
   nextFrame(): void;
   prevFrame(): void;
   readonly currentFrame: number; // 1-based (`_currentframe`)
@@ -532,7 +644,9 @@ export interface MovieClipAPI extends DisplayObjectAPI {
   readonly isPlaying: boolean;
 
   // Display list traversal
+  getInstance<T extends DisplayObjectAPI = MovieClipContext>(nameOrId: string): T | null;
   getChild<T extends DisplayObjectAPI = MovieClipContext>(name: InstanceName): T | null;
+  getChildAt<T extends DisplayObjectAPI = MovieClipContext>(index: number): T | null;
   /** Dot-path lookup: `this.getChildByPath('menu.btnStart')`. Supports `_parent`/`_root`. */
   getChildByPath<T extends DisplayObjectAPI = MovieClipContext>(path: string): T | null;
   readonly children: ReadonlyArray<DisplayObjectAPI>;
@@ -579,6 +693,9 @@ export interface StageAPI {
   readonly mouseY: number;
   isKeyDown(code: string): boolean; // Flash `Key.isDown`
   readonly global: Record<string, unknown>; // `_global`
+  gotoArtboard?(idOrName: string, transition?: ArtboardTransition): void;
+  readonly activeArtboardId?: string;
+  readonly artboards?: Artboard[];
 }
 
 /**

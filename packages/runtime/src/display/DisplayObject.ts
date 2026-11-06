@@ -8,14 +8,22 @@ import type {
   InstanceEvents,
   StageAPI,
   ID,
+  DisplayElement,
+  FrameRef,
+  ArtboardTransition,
 } from '../schema';
 import { Matrix2D, type Point2D } from '../math/Matrix2D';
 import { HeadlessStage, type RendererHooks } from './types';
 import { createContextProxy } from './contextProxy';
 import type { MovieClip } from './MovieClip';
+import { ScriptVM } from '../script/ScriptVM';
 
 export class DisplayObject implements DisplayObjectAPI {
   public id?: ID;
+  public currentDef?: DisplayElement;
+  public layerId?: ID;
+  public layerKind?: string;
+  public maskLayerId?: ID;
   public _name: InstanceName = '';
   public _parent: MovieClip | null = null;
   public _stage: StageAPI | null = null;
@@ -37,6 +45,7 @@ export class DisplayObject implements DisplayObjectAPI {
   public _filters: Filter[] = [];
   public _colorTransform: ColorTransform = { mode: 'none' };
   public _blendMode: BlendMode = 'normal';
+  public parentLayerMatrix: Matrix2D = Matrix2D.identity();
 
   protected _element?: HTMLElement | SVGElement;
   protected _context?: MovieClipContext;
@@ -271,7 +280,9 @@ export class DisplayObject implements DisplayObjectAPI {
   }
 
   public getWorldMatrix(): Matrix2D {
-    const local = this.getLocalMatrix();
+    const local = this.parentLayerMatrix.isIdentity()
+      ? this.getLocalMatrix()
+      : this.parentLayerMatrix.multiply(this.getLocalMatrix());
     if (this._parent) {
       return this._parent.getWorldMatrix().multiply(local);
     }
@@ -357,7 +368,83 @@ export class DisplayObject implements DisplayObjectAPI {
     );
   }
 
+  // --- Playhead & Instance Shortcuts ---
+
+  public getInstance<T extends DisplayObjectAPI = MovieClipContext>(nameOrId: string): T | null {
+    if (this._parent && typeof (this._parent as any).getInstance === 'function') {
+      return (this._parent as any).getInstance(nameOrId);
+    }
+    const root = this.getRoot();
+    if (root && root !== this && typeof (root as any).getInstance === 'function') {
+      return (root as any).getInstance(nameOrId);
+    }
+    return null;
+  }
+
+  public play(): void {
+    if (this._parent && typeof (this._parent as any).play === 'function') {
+      (this._parent as any).play();
+    } else {
+      const root = this.getRoot();
+      if (root && root !== this && typeof (root as any).play === 'function') {
+        (root as any).play();
+      }
+    }
+  }
+
+  public stop(): void {
+    if (this._parent && typeof (this._parent as any).stop === 'function') {
+      (this._parent as any).stop();
+    } else {
+      const root = this.getRoot();
+      if (root && root !== this && typeof (root as any).stop === 'function') {
+        (root as any).stop();
+      }
+    }
+  }
+
+  public gotoAndPlay(frame: FrameRef): void {
+    if (this._parent && typeof (this._parent as any).gotoAndPlay === 'function') {
+      (this._parent as any).gotoAndPlay(frame);
+    } else {
+      const root = this.getRoot();
+      if (root && root !== this && typeof (root as any).gotoAndPlay === 'function') {
+        (root as any).gotoAndPlay(frame);
+      }
+    }
+  }
+
+  public gotoAndStop(frame: FrameRef): void {
+    if (this._parent && typeof (this._parent as any).gotoAndStop === 'function') {
+      (this._parent as any).gotoAndStop(frame);
+    } else {
+      const root = this.getRoot();
+      if (root && root !== this && typeof (root as any).gotoAndStop === 'function') {
+        (root as any).gotoAndStop(frame);
+      }
+    }
+  }
+
+  public gotoArtboard(idOrName: string, transition?: ArtboardTransition): void {
+    if (this._stage && typeof (this._stage as any).gotoArtboard === 'function') {
+      (this._stage as any).gotoArtboard(idOrName, transition);
+      return;
+    }
+    const root = this.getRoot();
+    if (root && root !== this && typeof (root as any).gotoArtboard === 'function') {
+      (root as any).gotoArtboard(idOrName, transition);
+    }
+  }
+
   // --- Events ---
+
+  public hasEventListeners(): boolean {
+    return this._eventListeners.size > 0;
+  }
+
+  public clearEventListeners(): void {
+    this._eventListeners.clear();
+  }
 
   public on<E extends keyof InstanceEvents>(type: E, fn: NonNullable<InstanceEvents[E]>): void {
     if (!this._eventListeners.has(type)) {
@@ -375,11 +462,54 @@ export class DisplayObject implements DisplayObjectAPI {
   }
 
   public emit<E extends keyof InstanceEvents>(type: E, ...args: any[]): void {
-    const listeners = this._eventListeners.get(type);
-    if (!listeners) return;
-    for (const fn of listeners) {
+    const executed = new Set<Function>();
+    const toCall: Function[] = [];
+
+    const addListeners = (evtName: string) => {
+      const list = this._eventListeners.get(evtName);
+      if (list) {
+        for (const fn of list) {
+          if (!executed.has(fn)) {
+            executed.add(fn);
+            toCall.push(fn);
+          }
+        }
+      }
+    };
+
+    addListeners(type);
+
+    // Map common aliases
+    if (type === 'onRollOver' || type === 'onPointerEnter') {
+      addListeners('onRollOver');
+      addListeners('onPointerEnter');
+      addListeners('hover');
+      addListeners('pointerenter');
+      addListeners('mouseenter');
+    } else if (type === 'onRollOut' || type === 'onPointerLeave') {
+      addListeners('onRollOut');
+      addListeners('onPointerLeave');
+      addListeners('pointerleave');
+      addListeners('mouseleave');
+    } else if (type === 'onClick' || type === 'onRelease') {
+      addListeners('onClick');
+      addListeners('click');
+      addListeners('onRelease');
+      addListeners('release');
+    } else if (type === 'onPress' || type === 'onPointerDown') {
+      addListeners('onPress');
+      addListeners('press');
+      addListeners('onPointerDown');
+      addListeners('pointerdown');
+    } else if (type === 'onPointerUp') {
+      addListeners('onPointerUp');
+      addListeners('pointerup');
+      addListeners('onRelease');
+    }
+
+    for (const fn of toCall) {
       try {
-        fn.call(this.context, ...args);
+        ScriptVM.execute(fn, this.context, args[0]);
       } catch (err) {
         console.error(`Error in event listener '${type}':`, err);
       }

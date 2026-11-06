@@ -7,6 +7,9 @@ import {
   Plus,
   Trash2,
   Layers as LayersIcon,
+  Folder,
+  FolderOpen,
+  FolderPlus,
   Eye,
   EyeOff,
   Lock,
@@ -14,12 +17,15 @@ import {
   Square,
   Type,
   Component,
+  Image as ImageIcon,
+  Video as VideoIcon,
 } from 'lucide-react';
 import type { Filter, ShapeElement, TextElement, SymbolInstance } from '@flashback/runtime';
 import {
   useEditorStore,
   editorActions,
   getActiveTimeline,
+  getActiveArtboard,
   findKeyframeAt,
   findKeyframeAtTime,
   type EditorLayer,
@@ -358,6 +364,100 @@ export const LayerFiltersManager: React.FC<LayerFiltersManagerProps> = ({ layer 
   );
 };
 
+export interface LayerMaskSettingsProps {
+  layer: EditorLayer;
+  allLayers: EditorLayer[];
+}
+
+export const LayerMaskSettings: React.FC<LayerMaskSettingsProps> = ({ layer, allLayers }) => {
+  const maskLayers = allLayers.filter((l) => l.kind === 'mask' && l.id !== layer.id);
+
+  return (
+    <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--mx-border-light)' }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+          color: 'var(--mx-text-muted)',
+          marginBottom: 8,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span>Layer Masking</span>
+        {layer.kind === 'mask' && (
+          <span
+            style={{
+              padding: '2px 6px',
+              backgroundColor: '#8b5cf6',
+              color: '#ffffff',
+              borderRadius: 3,
+              fontSize: 10,
+              fontWeight: 700,
+            }}
+          >
+            ACTIVE MASK
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <button
+          type="button"
+          style={{
+            flex: 1,
+            padding: '5px 12px',
+            fontSize: 11,
+            fontWeight: 600,
+            borderRadius: 4,
+            border: layer.kind === 'mask' ? '1px solid #8b5cf6' : '1px solid var(--mx-border)',
+            backgroundColor: layer.kind === 'mask' ? '#8b5cf6' : 'transparent',
+            color: layer.kind === 'mask' ? '#ffffff' : 'var(--mx-text-main)',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+          onClick={() => editorActions.toggleLayerMask(layer.id)}
+          title="Toggle layer mask mode (automatically masks layer below)"
+          data-testid="toggle-mask-btn"
+        >
+          {layer.kind === 'mask' ? '🎭 Mask Layer (Enabled)' : '🎭 Set as Mask Layer'}
+        </button>
+      </div>
+
+      {layer.kind !== 'mask' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 11, color: 'var(--mx-text-muted)' }}>Clipped by Mask Layer:</div>
+          <select
+            value={layer.maskLayerId || ''}
+            onChange={(e) => editorActions.setLayerMaskId(layer.id, e.target.value || undefined)}
+            style={{
+              width: '100%',
+              backgroundColor: 'var(--mx-bg-input, #1b1c20)',
+              color: 'var(--mx-text-main)',
+              border: '1px solid var(--mx-border-light)',
+              borderRadius: 3,
+              padding: '4px 8px',
+              fontSize: 12,
+              outline: 'none',
+            }}
+            data-testid="layer-mask-select"
+          >
+            <option value="">None (Normal / Unclipped)</option>
+            {maskLayers.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name} (Mask)
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const Layers: React.FC = () => {
   const doc = useEditorStore((s) => s.doc);
   const currentFrame = useEditorStore((s) => s.currentFrame);
@@ -402,8 +502,44 @@ export const Layers: React.FC = () => {
 
   const selectedLayer = activeTl.layers.find((l) => l.id === selectedLayerId) ?? activeTl.layers[0];
 
-  const handleDragStart = (idx: number) => {
+  const handleDragStart = (idx: number, e: React.DragEvent, layerId: string) => {
     setDraggedLayerIdx(idx);
+    e.dataTransfer.setData('application/x-flashback-layer', layerId);
+    e.dataTransfer.setData('text/plain', layerId);
+  };
+
+  const handleLayerContextMenu = (e: React.MouseEvent, layer: EditorLayer) => {
+    e.preventDefault();
+    e.stopPropagation();
+    editorActions.selectLayer(layer.id);
+    const activeAb = getActiveArtboard(doc);
+    const otherArtboards =
+      doc.artboards && doc.artboards.length > 1
+        ? doc.artboards.filter((a) => a.id !== activeAb.id)
+        : [];
+    const moveArtboardItems = otherArtboards.map((ab) => ({
+      label: `Move Layer to Artboard "${ab.name}"`,
+      action: () => editorActions.moveLayerToArtboard(layer.id, ab.id),
+    }));
+
+    editorActions.openContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: 'Rename Layer', action: () => handleStartRename(layer) },
+        { label: 'Duplicate Layer', action: () => editorActions.duplicateLayer(layer.id) },
+        ...(moveArtboardItems.length > 0
+          ? [{ separator: true }, ...moveArtboardItems]
+          : []),
+        { separator: true },
+        {
+          label: 'Delete Layer',
+          disabled: activeTl.layers.length <= 1,
+          danger: true,
+          action: () => editorActions.deleteLayer(layer.id),
+        },
+      ],
+    });
   };
 
   const handleDragOver = (e: React.DragEvent, idx: number) => {
@@ -434,7 +570,13 @@ export const Layers: React.FC = () => {
     if (el.type === 'shape') {
       return 'Vector Shape';
     }
-    return el.type;
+    if (el.type === 'bitmap') {
+      return (el as any).name || 'Bitmap Image';
+    }
+    if (el.type === 'video') {
+      return 'Video Player';
+    }
+    return (el as any).type || 'Element';
   };
 
   const getElementIcon = (el: EditorElement): React.ReactNode => {
@@ -445,6 +587,10 @@ export const Layers: React.FC = () => {
         return <Type size={12} />;
       case 'instance':
         return <Component size={12} />;
+      case 'bitmap':
+        return <ImageIcon size={12} />;
+      case 'video':
+        return <VideoIcon size={12} />;
       default:
         return <Square size={12} />;
     }
@@ -481,6 +627,14 @@ export const Layers: React.FC = () => {
             <button
               type="button"
               className={styles.headerBtn}
+              onClick={() => editorActions.addFolder()}
+              title="Add Group / Folder"
+            >
+              <FolderPlus size={12} />
+            </button>
+            <button
+              type="button"
+              className={styles.headerBtn}
               onClick={() => editorActions.addLayer()}
               title="Add New Layer"
             >
@@ -499,106 +653,216 @@ export const Layers: React.FC = () => {
         </div>
 
         <div className={styles.layersList}>
-          {activeTl.layers.map((layer, idx) => {
-            const isSelected = layer.id === selectedLayerId;
-            const isExpanded = expandedLayerIds.has(layer.id);
-            const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
-            const childElements = kf?.elements ?? [];
-            const filterCount = layer.filters?.length ?? 0;
+          {(() => {
+            const layersByParent = new Map<string | undefined, EditorLayer[]>();
+            for (const l of activeTl.layers) {
+              const pId = l.parentLayerId || (l as any).parentId;
+              const list = layersByParent.get(pId) || [];
+              list.push(l);
+              layersByParent.set(pId, list);
+            }
 
-            return (
-              <div
-                key={layer.id}
-                className={styles.layerItem}
-                draggable
-                onDragStart={() => handleDragStart(idx)}
-                onDragOver={(e) => handleDragOver(e, idx)}
-                onDrop={() => handleDrop(idx)}
-              >
+            const flattenedLayers: Array<{
+              layer: EditorLayer;
+              depth: number;
+              isFolder: boolean;
+              hasChildren: boolean;
+            }> = [];
+            const processedLayerIds = new Set<string>();
+
+            const traverseLayers = (layer: EditorLayer, depth: number) => {
+              if (processedLayerIds.has(layer.id)) return;
+              processedLayerIds.add(layer.id);
+              const isFolder = layer.kind === 'folder';
+              const childLayers = layersByParent.get(layer.id) || [];
+              const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
+              const childElements = kf?.elements ?? [];
+              const hasChildren = childLayers.length > 0 || (!isFolder && childElements.length > 0);
+              const isExpanded = expandedLayerIds.has(layer.id);
+
+              flattenedLayers.push({
+                layer,
+                depth,
+                isFolder,
+                hasChildren,
+              });
+
+              if (isFolder && isExpanded) {
+                for (const child of childLayers) {
+                  traverseLayers(child, depth + 1);
+                }
+              }
+            };
+
+            const topLevelLayers = activeTl.layers.filter((l) => !l.parentLayerId && !(l as any).parentId);
+            for (const l of topLevelLayers) {
+              traverseLayers(l, 0);
+            }
+            for (const l of activeTl.layers) {
+              if (!processedLayerIds.has(l.id)) {
+                traverseLayers(l, 0);
+              }
+            }
+
+            return flattenedLayers.map(({ layer, depth, isFolder, hasChildren }, idx) => {
+              const isSelected = layer.id === selectedLayerId;
+              const isExpanded = expandedLayerIds.has(layer.id);
+              const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
+              const childElements = kf?.elements ?? [];
+              const filterCount = layer.filters?.length ?? 0;
+              const rawIdx = activeTl.layers.indexOf(layer);
+
+              return (
                 <div
-                  className={`${styles.layerRow} ${isSelected ? styles.selected : ''} ${
-                    dragOverIdx === idx ? styles.dragOver : ''
-                  }`}
-                  onClick={() => editorActions.selectLayer(layer.id)}
-                  onDoubleClick={() => handleStartRename(layer)}
+                  key={layer.id}
+                  className={styles.layerItem}
+                  draggable
+                  onDragStart={(e) => handleDragStart(rawIdx, e, layer.id)}
+                  onDragOver={(e) => handleDragOver(e, rawIdx)}
+                  onDrop={() => handleDrop(rawIdx)}
+                  onContextMenu={(e) => handleLayerContextMenu(e, layer)}
                 >
-                  {/* Expand / collapse chevron */}
-                  <button
-                    type="button"
-                    className={`${styles.expandBtn} ${isExpanded ? styles.expanded : ''}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleExpand(layer.id);
-                    }}
-                    title={isExpanded ? 'Collapse' : 'Expand'}
+                  <div
+                    className={`${styles.layerRow} ${isSelected ? styles.selected : ''} ${
+                      dragOverIdx === rawIdx ? styles.dragOver : ''
+                    }`}
+                    style={{ paddingLeft: `${depth * 16 + 6}px` }}
+                    onClick={() => editorActions.selectLayer(layer.id)}
+                    onDoubleClick={() => handleStartRename(layer)}
                   >
-                    {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                  </button>
+                    {/* Expand / collapse chevron */}
+                    {hasChildren ? (
+                      <button
+                        type="button"
+                        className={`${styles.expandBtn} ${isExpanded ? styles.expanded : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleExpand(layer.id);
+                        }}
+                        title={isExpanded ? 'Collapse' : 'Expand'}
+                      >
+                        {isExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                      </button>
+                    ) : (
+                      <div style={{ width: 14 }} />
+                    )}
 
-                  <span className={styles.layerIcon}><LayersIcon size={13} /></span>
-
-                  {editingLayerId === layer.id ? (
-                    <input
-                      type="text"
-                      className={styles.nameInput}
-                      autoFocus
-                      value={editingDraft}
-                      onChange={(e) => setEditingDraft(e.target.value)}
-                      onBlur={() => handleFinishRename(layer.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleFinishRename(layer.id);
-                        if (e.key === 'Escape') setEditingLayerId(null);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  ) : (
-                    <span className={styles.layerName} title={layer.name}>
-                      {layer.name}
+                    <span className={styles.layerIcon}>
+                      {isFolder ? (
+                        isExpanded ? <FolderOpen size={13} /> : <Folder size={13} />
+                      ) : childElements.length === 1 ? (
+                        getElementIcon(childElements[0])
+                      ) : (
+                        <LayersIcon size={13} />
+                      )}
                     </span>
-                  )}
 
-                  {filterCount > 0 && (
-                    <span className={styles.filterBadge} title={`${filterCount} CSS filters applied`}>
-                      ⚡ {filterCount}
-                    </span>
-                  )}
+                    {editingLayerId === layer.id ? (
+                      <input
+                        type="text"
+                        className={styles.nameInput}
+                        autoFocus
+                        value={editingDraft}
+                        onChange={(e) => setEditingDraft(e.target.value)}
+                        onBlur={() => handleFinishRename(layer.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleFinishRename(layer.id);
+                          if (e.key === 'Escape') setEditingLayerId(null);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <span className={styles.layerName} title={layer.name}>
+                        {childElements.length === 1 && layer.name.startsWith('Layer ')
+                          ? getElementLabel(childElements[0])
+                          : layer.name}
+                      </span>
+                    )}
 
-                  {childElements.length > 0 && (
-                    <span className={styles.badge} title={`${childElements.length} elements`}>
-                      {childElements.length}
-                    </span>
-                  )}
+                    {layer.kind === 'mask' && (
+                      <span
+                        className={styles.filterBadge}
+                        style={{ backgroundColor: '#8b5cf6', color: '#ffffff', fontWeight: 700 }}
+                        title="Mask Layer"
+                      >
+                        MASK
+                      </span>
+                    )}
 
-                  <div className={styles.layerToggles}>
-                    <button
-                      type="button"
-                      className={`${styles.toggleBtn} ${layer.visible ? styles.active : ''}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        editorActions.toggleLayerVisibility(layer.id);
-                      }}
-                      title={layer.visible ? 'Hide Layer' : 'Show Layer'}
-                    >
-                      {layer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
-                    </button>
-                    <button
-                      type="button"
-                      className={`${styles.toggleBtn} ${layer.locked ? styles.active : ''}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        editorActions.toggleLayerLock(layer.id);
-                      }}
-                      title={layer.locked ? 'Unlock Layer' : 'Lock Layer'}
-                    >
-                      {layer.locked ? <Lock size={12} /> : <Unlock size={12} />}
-                    </button>
+                    {layer.maskLayerId && (() => {
+                      const mLayer = activeTl.layers.find((l) => l.id === layer.maskLayerId);
+                      return (
+                        <span
+                          className={styles.filterBadge}
+                          style={{ backgroundColor: 'rgba(139, 92, 246, 0.25)', color: '#c4b5fd' }}
+                          title={`Masked by: ${mLayer?.name || layer.maskLayerId}`}
+                        >
+                          ⤹ Masked
+                        </span>
+                      );
+                    })()}
+
+                    {filterCount > 0 && (
+                      <span className={styles.filterBadge} title={`${filterCount} CSS filters applied`}>
+                        ⚡ {filterCount}
+                      </span>
+                    )}
+
+                    {!isFolder && childElements.length > 1 && (
+                      <span className={styles.badge} title={`${childElements.length} elements`}>
+                        {childElements.length}
+                      </span>
+                    )}
+
+                    <div className={styles.layerToggles}>
+                      {/* Mask Layer Toggle */}
+                      <button
+                        type="button"
+                        className={`${styles.toggleBtn} ${layer.kind === 'mask' ? styles.active : ''}`}
+                        style={
+                          layer.kind === 'mask'
+                            ? { backgroundColor: '#8b5cf6', color: '#ffffff', fontWeight: 800 }
+                            : undefined
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          editorActions.toggleLayerMask(layer.id);
+                        }}
+                        title={layer.kind === 'mask' ? 'Unset Mask Layer' : 'Set as Mask Layer'}
+                        aria-label="Toggle Mask Layer"
+                        data-testid={`mask-toggle-${layer.id}`}
+                      >
+                        M
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.toggleBtn} ${layer.visible ? styles.active : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          editorActions.toggleLayerVisibility(layer.id);
+                        }}
+                        title={layer.visible ? 'Hide Layer' : 'Show Layer'}
+                      >
+                        {layer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.toggleBtn} ${layer.locked ? styles.active : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          editorActions.toggleLayerLock(layer.id);
+                        }}
+                        title={layer.locked ? 'Unlock Layer' : 'Lock Layer'}
+                      >
+                        {layer.locked ? <Lock size={12} /> : <Unlock size={12} />}
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                {/* Expanded Child Elements */}
-                {isExpanded && childElements.length > 0 && (
-                  <div className={styles.childrenList}>
-                    {childElements.map((el) => {
+                  {/* Expanded Child Elements */}
+                  {!isFolder && isExpanded && childElements.length > 0 && (
+                    <div className={styles.childrenList}>
+                      {childElements.map((el) => {
                       const isChildSelected = selectedElementIds.includes(el.id);
                       return (
                         <div
@@ -634,12 +898,18 @@ export const Layers: React.FC = () => {
                 )}
               </div>
             );
-          })}
+          });
+        })()}
         </div>
       </div>
 
-      {/* Right Pane: Selected Layer CSS Filters Manager */}
-      {selectedLayer && <LayerFiltersManager layer={selectedLayer} />}
+      {/* Right Pane: Selected Layer Mask & CSS Filters Manager */}
+      {selectedLayer && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+          <LayerMaskSettings layer={selectedLayer} allLayers={activeTl.layers} />
+          <LayerFiltersManager layer={selectedLayer} />
+        </div>
+      )}
     </div>
   );
 };

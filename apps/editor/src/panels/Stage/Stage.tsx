@@ -1,12 +1,28 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import {
+  RotateCw,
+  MoveHorizontal,
+  MoveVertical,
+  Crosshair as CrosshairIcon,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  CornerUpLeft,
+  Component as ComponentIcon,
+  Layers as LayersIcon,
+  Film,
+  ExternalLink,
+} from 'lucide-react';
 import type {
   ShapeElement,
   TextElement,
   TextSpan,
   SymbolInstance,
   Transform,
+  BitmapElement,
+  VideoElement,
 } from '@flashback/runtime';
-import { Matrix2D, filtersToCSS, fillToCSS } from '@flashback/runtime';
+import { Matrix2D, filtersToCSS, fillToCSS, computeEasingProgress, normalizeRotation } from '@flashback/runtime';
 import {
   useEditorStore,
   editorActions,
@@ -14,8 +30,11 @@ import {
   findKeyframeAtTime,
   getKeyframeTime,
   getActiveTimeline,
+  getActiveArtboard,
+  computeTotalTimelineDuration,
   type EditorElement,
   type EditorKeyframe,
+  type EditorLayer,
   type EditorSymbol,
 } from '../../state/editorStore';
 import {
@@ -52,6 +71,9 @@ interface DragState {
   handle?: 'tl' | 'tc' | 'tr' | 'mr' | 'br' | 'bc' | 'bl' | 'ml';
   resizeElId?: string;
   initialBounds?: { x: number; y: number; width: number; height: number };
+  folderId?: string;
+  initialPaths?: ShapeElement['paths'];
+  pivotLocal?: Vector2D;
   startPanX?: number;
   startPanY?: number;
   startClientX?: number;
@@ -71,6 +93,7 @@ interface DragState {
   initialPathD?: string;
   polygonPoints?: number;
   polygonStarRatio?: number;
+  shiftKey?: boolean;
 }
 
 export function getShapeBounds(shape: ShapeElement): {
@@ -126,6 +149,70 @@ export function getShapeBounds(shape: ShapeElement): {
   };
 }
 
+/**
+ * Scales an SVG path `d` string from `initB` box dimensions to `(newW, newH)`
+ * so vector shapes resize their true geometry instead of stretching via CSS scale.
+ */
+export function scaleSvgPathD(
+  d: string,
+  initB: { x: number; y: number; width: number; height: number },
+  newW: number,
+  newH: number
+): string {
+  const sx = newW / Math.max(1, initB.width);
+  const sy = newH / Math.max(1, initB.height);
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  const segments = d.match(/[a-zA-Z][^a-zA-Z]*/g);
+  if (!segments) return d;
+
+  return segments
+    .map((seg) => {
+      const cmd = seg[0];
+      const upper = cmd.toUpperCase();
+      const isRel = cmd !== upper;
+      if (upper === 'Z') return cmd;
+
+      const rawNums = seg.slice(1).match(/[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?/g);
+      if (!rawNums || rawNums.length === 0) return cmd;
+      const nums = rawNums.map(Number);
+
+      if (upper === 'H') {
+        const scaled = nums.map((v) => round2(isRel ? v * sx : (v - initB.x) * sx + initB.x));
+        return `${cmd} ${scaled.join(' ')}`;
+      }
+      if (upper === 'V') {
+        const scaled = nums.map((v) => round2(isRel ? v * sy : (v - initB.y) * sy + initB.y));
+        return `${cmd} ${scaled.join(' ')}`;
+      }
+      if (upper === 'A') {
+        const out: number[] = [];
+        for (let i = 0; i < nums.length; i += 7) {
+          const rx = round2(Math.abs((nums[i] ?? 0) * sx));
+          const ry = round2(Math.abs((nums[i + 1] ?? 0) * sy));
+          const xRot = nums[i + 2] ?? 0;
+          const largeArc = nums[i + 3] ?? 0;
+          const sweep = nums[i + 4] ?? 0;
+          const xVal = nums[i + 5] ?? 0;
+          const yVal = nums[i + 6] ?? 0;
+          const nx = round2(isRel ? xVal * sx : (xVal - initB.x) * sx + initB.x);
+          const ny = round2(isRel ? yVal * sy : (yVal - initB.y) * sy + initB.y);
+          out.push(rx, ry, xRot, largeArc, sweep, nx, ny);
+        }
+        return `${cmd} ${out.join(' ')}`;
+      }
+
+      const scaled = nums.map((v, idx) => {
+        if (idx % 2 === 0) {
+          return round2(isRel ? v * sx : (v - initB.x) * sx + initB.x);
+        }
+        return round2(isRel ? v * sy : (v - initB.y) * sy + initB.y);
+      });
+      return `${cmd} ${scaled.join(' ')}`;
+    })
+    .join(' ');
+}
+
 export function getElementBounds(el: EditorElement): {
   x: number;
   y: number;
@@ -152,26 +239,63 @@ export function getElementBounds(el: EditorElement): {
       height: 80,
     };
   }
+  if (el.type === 'bitmap') {
+    const bmp = el as BitmapElement;
+    return {
+      x: 0,
+      y: 0,
+      width: bmp.width || 200,
+      height: bmp.height || 150,
+    };
+  }
+  if (el.type === 'video') {
+    const vid = el as VideoElement;
+    return {
+      x: 0,
+      y: 0,
+      width: vid.width || 320,
+      height: vid.height || 180,
+    };
+  }
   return { x: 0, y: 0, width: 50, height: 50 };
 }
 
 export function computeInterpolatedTransform(
   startEl: EditorElement,
   endEl: EditorElement,
-  t: number
+  t: number,
+  tweenRotate?: { direction: 'cw' | 'ccw'; turns: number }
 ): Transform {
   const s = startEl.transform;
   const e = endEl.transform;
+  const { startRot, endRot } = normalizeRotation(
+    s.rotation ?? 0,
+    e.rotation ?? 0,
+    tweenRotate
+  );
+
   return {
     x: s.x + (e.x - s.x) * t,
     y: s.y + (e.y - s.y) * t,
     scaleX: (s.scaleX ?? 1) + ((e.scaleX ?? 1) - (s.scaleX ?? 1)) * t,
     scaleY: (s.scaleY ?? 1) + ((e.scaleY ?? 1) - (s.scaleY ?? 1)) * t,
-    rotation: (s.rotation ?? 0) + ((e.rotation ?? 0) - (s.rotation ?? 0)) * t,
+    rotation: startRot + (endRot - startRot) * t,
     skewX: (s.skewX ?? 0) + ((e.skewX ?? 0) - (s.skewX ?? 0)) * t,
     skewY: (s.skewY ?? 0) + ((e.skewY ?? 0) - (s.skewY ?? 0)) * t,
-    originX: s.originX ?? 0,
-    originY: s.originY ?? 0,
+    originX: (s.originX ?? e.originX ?? 0) + (((e.originX ?? s.originX ?? 0) - (s.originX ?? e.originX ?? 0)) * t),
+    originY: (s.originY ?? e.originY ?? 0) + (((e.originY ?? s.originY ?? 0) - (s.originY ?? e.originY ?? 0)) * t),
+    ...(s.rotateX !== undefined || e.rotateX !== undefined
+      ? { rotateX: (s.rotateX ?? 0) + ((e.rotateX ?? 0) - (s.rotateX ?? 0)) * t }
+      : {}),
+    ...(s.rotateY !== undefined || e.rotateY !== undefined
+      ? { rotateY: (s.rotateY ?? 0) + ((e.rotateY ?? 0) - (s.rotateY ?? 0)) * t }
+      : {}),
+    ...(s.perspective !== undefined || e.perspective !== undefined
+      ? {
+          perspective:
+            (s.perspective ?? 800) + ((e.perspective ?? 800) - (s.perspective ?? 800)) * t,
+        }
+      : {}),
   };
 }
 
@@ -243,9 +367,10 @@ export function interpolateColor(color1: string, color2: string, t: number): str
 export function computeInterpolatedElement(
   startEl: EditorElement,
   endEl: EditorElement,
-  t: number
+  t: number,
+  tweenRotate?: { direction: 'cw' | 'ccw'; turns: number }
 ): EditorElement {
-  const effectiveTransform = computeInterpolatedTransform(startEl, endEl, t);
+  const effectiveTransform = computeInterpolatedTransform(startEl, endEl, t, tweenRotate);
   const effectiveAlpha = (startEl.alpha ?? 1) + ((endEl.alpha ?? 1) - (startEl.alpha ?? 1)) * t;
 
   if (startEl.type === 'shape' && endEl.type === 'shape') {
@@ -254,9 +379,31 @@ export function computeInterpolatedElement(
     const interpPaths = sShape.paths.map((p, pIdx) => {
       const eP = eShape.paths[pIdx];
       if (!eP) return p;
+      const interpFill =
+        p.fill?.type === 'solid' && eP.fill?.type === 'solid' && p.fill.color !== eP.fill.color
+          ? { type: 'solid' as const, color: interpolateColor(p.fill.color, eP.fill.color, t) }
+          : p.fill;
+      const interpStroke =
+        p.stroke && eP.stroke
+          ? {
+              ...p.stroke,
+              width: p.stroke.width + (eP.stroke.width - p.stroke.width) * t,
+              fill:
+                p.stroke.fill.type === 'solid' &&
+                eP.stroke.fill.type === 'solid' &&
+                p.stroke.fill.color !== eP.stroke.fill.color
+                  ? {
+                      type: 'solid' as const,
+                      color: interpolateColor(p.stroke.fill.color, eP.stroke.fill.color, t),
+                    }
+                  : p.stroke.fill,
+            }
+          : p.stroke;
       return {
         ...p,
         d: interpolatePathD(p.d, eP.d, t),
+        fill: interpFill,
+        stroke: interpStroke,
       };
     });
     return {
@@ -375,11 +522,78 @@ export function computeInterpolatedElement(
     };
   }
 
+  if (startEl.type === 'bitmap' && endEl.type === 'bitmap') {
+    const sBmp = startEl as BitmapElement;
+    const eBmp = endEl as BitmapElement;
+    const sW = sBmp.width || 200;
+    const eW = eBmp.width || 200;
+    const sH = sBmp.height || 150;
+    const eH = eBmp.height || 150;
+    return {
+      ...sBmp,
+      transform: effectiveTransform,
+      alpha: effectiveAlpha,
+      width: Math.round(sW + (eW - sW) * t),
+      height: Math.round(sH + (eH - sH) * t),
+    };
+  }
+
+  if (startEl.type === 'video' && endEl.type === 'video') {
+    const sVid = startEl as VideoElement;
+    const eVid = endEl as VideoElement;
+    const sW = sVid.width || 320;
+    const eW = eVid.width || 320;
+    const sH = sVid.height || 180;
+    const eH = eVid.height || 180;
+    return {
+      ...sVid,
+      transform: effectiveTransform,
+      alpha: effectiveAlpha,
+      width: Math.round(sW + (eW - sW) * t),
+      height: Math.round(sH + (eH - sH) * t),
+    };
+  }
+
   return {
     ...startEl,
     transform: effectiveTransform,
     alpha: effectiveAlpha,
   };
+}
+
+export function parseVideoEmbed(url: string): {
+  isEmbed: boolean;
+  embedUrl?: string;
+  platform: 'youtube' | 'vimeo' | 'video';
+} {
+  if (!url) return { isEmbed: false, platform: 'video' };
+
+  // YouTube match: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/embed/ID
+  const ytMatch = url.match(
+    /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i
+  );
+  if (ytMatch && ytMatch[1]) {
+    return {
+      isEmbed: true,
+      embedUrl: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&mute=1&loop=1&playlist=${ytMatch[1]}`,
+      platform: 'youtube',
+    };
+  }
+
+  // Vimeo match: vimeo.com/ID
+  const vimeoMatch = url.match(
+    /(?:vimeo\.com\/(?:channels\/(?:\w+\/)?|groups\/([^\/]*)\/videos\/|album\/(\d+)\/video\/|video\/|))(\d+)/i
+  );
+  if (vimeoMatch && (vimeoMatch[3] || vimeoMatch[2])) {
+    const vimeoId = vimeoMatch[3] || vimeoMatch[2];
+    return {
+      isEmbed: true,
+      embedUrl: `https://player.vimeo.com/video/${vimeoId}?autoplay=1&muted=1&loop=1`,
+      platform: 'vimeo',
+    };
+  }
+
+  return { isEmbed: false, platform: 'video' };
 }
 
 function stageToElementLocal(
@@ -392,7 +606,7 @@ function stageToElementLocal(
   return { x: pt.x, y: pt.y };
 }
 
-function elementLocalToStage(
+export function elementLocalToStage(
   localX: number,
   localY: number,
   transform: Transform
@@ -414,7 +628,10 @@ export const Stage: React.FC = () => {
   const strokeColor = useEditorStore((s) => s.strokeColor);
   const strokeWidth = useEditorStore((s) => s.strokeWidth);
   const isolationStack = useEditorStore((s) => s.isolationStack);
+  const starConfig = useEditorStore((s) => s.starConfig);
   const textSelection = useEditorStore((s) => s.textSelection);
+  const previewLocale = useEditorStore((s) => s.previewLocale);
+  const activeLocale = previewLocale || doc.i18n?.defaultLocale || 'en';
 
   const activeTl = getActiveTimeline(doc, isolationStack);
 
@@ -465,11 +682,14 @@ export const Stage: React.FC = () => {
     anchorIndex: number;
   } | null>(null);
 
-  // Interaction dragging state
+  const [hoveredRotateCorner, setHoveredRotateCorner] = useState<'tl' | 'tr' | 'bl' | 'br' | null>(null);
+  const [hoveredSkewEdge, setHoveredSkewEdge] = useState<'top' | 'bottom' | 'left' | 'right' | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const rotateDragRef = useRef<{ lastAngle: number; accumulatedRot: number } | null>(null);
 
-  const width = doc.stage.width || 550;
-  const height = doc.stage.height || 400;
+  const activeArtboard = getActiveArtboard(doc);
+  const width = activeArtboard.width || doc.stage.width || 550;
+  const height = activeArtboard.height || doc.stage.height || 400;
 
   const finishPenDrawing = useCallback(
     (anchors: BezierAnchor[], closed = false) => {
@@ -736,14 +956,17 @@ export const Stage: React.FC = () => {
     }
 
     if (activeTool === 'polygon') {
+      const pts = starConfig?.points ?? 5;
+      const ratio = starConfig?.pointRatio ?? 0.5;
       setDragState({
         type: 'draw_polygon',
         startX: x,
         startY: y,
         currentX: x,
         currentY: y,
-        polygonPoints: 5,
-        polygonStarRatio: 0.5,
+        polygonPoints: pts,
+        polygonStarRatio: ratio,
+        shiftKey: e.shiftKey,
         initialTransforms: {},
       });
       return;
@@ -834,29 +1057,25 @@ export const Stage: React.FC = () => {
       editorActions.selectElement(el.id, e.shiftKey);
     }
 
-    const owningLayer = activeTl.layers.find((l) => {
-      const currentKf = findKeyframeAtTime(l, currentTime) ?? findKeyframeAt(l, currentFrame);
-      return currentKf?.elements.some((item) => item.id === el.id);
-    });
-    if (owningLayer && owningLayer.id !== selectedLayerId) {
-      editorActions.selectLayer(owningLayer.id);
-    }
-
     const { x, y } = getStageCoordinates(e);
 
     const initialTransforms: Record<string, Transform> = {};
-    const ids = isAlreadySelected ? selectedElementIds : [el.id];
+    const ids = isAlreadySelected
+      ? selectedElementIds
+      : (e.shiftKey ? [...selectedElementIds, el.id] : [el.id]);
 
     for (const layer of activeTl.layers) {
       const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
       if (!kf) continue;
       for (const item of kf.elements) {
         if (ids.includes(item.id)) {
-          initialTransforms[item.id] = { ...item.transform };
+          initialTransforms[item.id] =
+            item.id === el.id ? { ...el.transform } : { ...item.transform };
         }
       }
     }
 
+    editorActions.commitHistorySnapshot();
     setDragState({
       type: 'move',
       startX: x,
@@ -901,6 +1120,42 @@ export const Stage: React.FC = () => {
     e.stopPropagation();
     const { x, y } = getStageCoordinates(e);
 
+    const sx0 = Math.abs(el.transform.scaleX ?? 1) || 1;
+    const sy0 = Math.abs(el.transform.scaleY ?? 1) || 1;
+    const isBakedBox =
+      el.type === 'shape' || el.type === 'bitmap' || el.type === 'video' || el.type === 'text';
+
+    const normalizedBounds = isBakedBox
+      ? {
+          x: Math.round(bounds.x * sx0 * 100) / 100,
+          y: Math.round(bounds.y * sy0 * 100) / 100,
+          width: Math.max(8, Math.round(bounds.width * sx0 * 100) / 100),
+          height: Math.max(8, Math.round(bounds.height * sy0 * 100) / 100),
+        }
+      : bounds;
+
+    const normalizedTransform: Transform = isBakedBox
+      ? {
+          ...el.transform,
+          scaleX: 1,
+          scaleY: 1,
+          originX: Math.round((el.transform.originX ?? 0) * sx0 * 100) / 100,
+          originY: Math.round((el.transform.originY ?? 0) * sy0 * 100) / 100,
+        }
+      : { ...el.transform };
+
+    const initialPaths =
+      el.type === 'shape'
+        ? (el as ShapeElement).paths.map((p) => ({
+            ...p,
+            d:
+              sx0 !== 1 || sy0 !== 1
+                ? scaleSvgPathD(p.d, bounds, normalizedBounds.width, normalizedBounds.height)
+                : p.d,
+          }))
+        : undefined;
+
+    editorActions.commitHistorySnapshot();
     setDragState({
       type: 'resize',
       handle,
@@ -909,8 +1164,9 @@ export const Stage: React.FC = () => {
       startY: y,
       currentX: x,
       currentY: y,
-      initialTransforms: { [el.id]: { ...el.transform } },
-      initialBounds: bounds,
+      initialTransforms: { [el.id]: normalizedTransform },
+      initialBounds: normalizedBounds,
+      initialPaths,
     });
   };
 
@@ -918,26 +1174,41 @@ export const Stage: React.FC = () => {
   const handleRotateMouseDown = (
     e: React.MouseEvent,
     el: EditorElement,
-    bounds: { x: number; y: number; width: number; height: number }
+    bounds: { x: number; y: number; width: number; height: number },
+    cornerHandle?: 'tl' | 'tr' | 'bl' | 'br'
   ) => {
     e.stopPropagation();
     const { x, y } = getStageCoordinates(e);
 
-    const pivotX = el.transform.originX ?? bounds.x + bounds.width / 2;
-    const pivotY = el.transform.originY ?? bounds.y + bounds.height / 2;
+    const pivotX =
+      el.transform.originX !== undefined
+        ? el.transform.originX
+        : Math.round((bounds.x + bounds.width / 2) * 100) / 100;
+    const pivotY =
+      el.transform.originY !== undefined
+        ? el.transform.originY
+        : Math.round((bounds.y + bounds.height / 2) * 100) / 100;
 
     const rotCenter = elementLocalToStage(pivotX, pivotY, el.transform);
 
     const startAngle = Math.atan2(y - rotCenter.y, x - rotCenter.x) * (180 / Math.PI);
 
+    rotateDragRef.current = {
+      lastAngle: startAngle,
+      accumulatedRot: el.transform.rotation ?? 0,
+    };
+
+    editorActions.commitHistorySnapshot();
     setDragState({
       type: 'rotate',
+      handle: cornerHandle,
       resizeElId: el.id,
       startX: x,
       startY: y,
       currentX: x,
       currentY: y,
       rotCenter,
+      pivotLocal: { x: pivotX, y: pivotY },
       initialRotation: el.transform.rotation ?? 0,
       startAngle,
       initialTransforms: { [el.id]: { ...el.transform } },
@@ -953,6 +1224,7 @@ export const Stage: React.FC = () => {
     e.stopPropagation();
     const { x, y } = getStageCoordinates(e);
 
+    editorActions.commitHistorySnapshot();
     setDragState({
       type: 'pivot',
       resizeElId: el.id,
@@ -975,6 +1247,7 @@ export const Stage: React.FC = () => {
     e.stopPropagation();
     const { x, y } = getStageCoordinates(e);
 
+    editorActions.commitHistorySnapshot();
     setDragState({
       type: 'skew',
       resizeElId: el.id,
@@ -1007,6 +1280,7 @@ export const Stage: React.FC = () => {
       anchorIndex,
     });
 
+    editorActions.commitHistorySnapshot();
     setDragState({
       type: 'subselect_drag_anchor',
       startX: x,
@@ -1033,6 +1307,7 @@ export const Stage: React.FC = () => {
     e.stopPropagation();
     const { x, y } = getStageCoordinates(e);
 
+    editorActions.commitHistorySnapshot();
     setDragState({
       type: 'subselect_drag_handle',
       startX: x,
@@ -1073,77 +1348,74 @@ export const Stage: React.FC = () => {
         const dx = x - dragState.startX;
         const dy = y - dragState.startY;
 
-        for (const [id, initialT] of Object.entries(dragState.initialTransforms)) {
-          editorActions.updateElementTransform(id, {
-            x: initialT.x + dx,
-            y: initialT.y + dy,
-          });
+        if (dragState.folderId) {
+          const initT = dragState.initialTransforms[dragState.folderId];
+          if (initT) {
+            editorActions.updateFolderTransform(
+              dragState.folderId,
+              {
+                x: initT.x + dx,
+                y: initT.y + dy,
+              },
+              { skipHistory: true }
+            );
+          }
+        } else {
+          for (const [id, initialT] of Object.entries(dragState.initialTransforms)) {
+            editorActions.updateElementTransform(
+              id,
+              {
+                x: initialT.x + dx,
+                y: initialT.y + dy,
+              },
+              { skipHistory: true }
+            );
+          }
         }
-      } else if (dragState.type === 'resize' && dragState.resizeElId && dragState.initialBounds) {
-        const initT = dragState.initialTransforms[dragState.resizeElId];
+      } else if (dragState.type === 'resize' && dragState.folderId && dragState.initialBounds) {
+        const initT = dragState.initialTransforms[dragState.folderId] ?? { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 };
         const initB = dragState.initialBounds;
         const dx = x - dragState.startX;
         const dy = y - dragState.startY;
+        let newW = initB.width;
+        let newH = initB.height;
+        if (dragState.handle?.includes('r')) newW += dx;
+        if (dragState.handle?.includes('l')) newW -= dx;
+        if (dragState.handle?.includes('b')) newH += dy;
+        if (dragState.handle?.includes('t')) newH -= dy;
+        const sx = (initT.scaleX ?? 1) * (newW / Math.max(1, initB.width));
+        const sy = (initT.scaleY ?? 1) * (newH / Math.max(1, initB.height));
+        editorActions.updateFolderTransform(
+          dragState.folderId,
+          {
+            scaleX: Math.round(sx * 100) / 100,
+            scaleY: Math.round(sy * 100) / 100,
+          },
+          { skipHistory: true }
+        );
+      } else if (dragState.type === 'resize' && dragState.resizeElId && dragState.initialBounds) {
+        const initT = dragState.initialTransforms[dragState.resizeElId];
+        const initB = dragState.initialBounds;
 
-        let scaleFactorX = 1;
-        let scaleFactorY = 1;
-
-        switch (dragState.handle) {
-          case 'br': {
-            const newW = Math.max(8, initB.width + dx);
-            const newH = Math.max(8, initB.height + dy);
-            scaleFactorX = newW / initB.width;
-            scaleFactorY = newH / initB.height;
-            break;
-          }
-          case 'bl': {
-            const newW = Math.max(8, initB.width - dx);
-            const newH = Math.max(8, initB.height + dy);
-            scaleFactorX = newW / initB.width;
-            scaleFactorY = newH / initB.height;
-            break;
-          }
-          case 'tr': {
-            const newW = Math.max(8, initB.width + dx);
-            const newH = Math.max(8, initB.height - dy);
-            scaleFactorX = newW / initB.width;
-            scaleFactorY = newH / initB.height;
-            break;
-          }
-          case 'tl': {
-            const newW = Math.max(8, initB.width - dx);
-            const newH = Math.max(8, initB.height - dy);
-            scaleFactorX = newW / initB.width;
-            scaleFactorY = newH / initB.height;
-            break;
-          }
-          case 'tc': {
-            const newH = Math.max(8, initB.height - dy);
-            scaleFactorY = newH / initB.height;
-            break;
-          }
-          case 'bc': {
-            const newH = Math.max(8, initB.height + dy);
-            scaleFactorY = newH / initB.height;
-            break;
-          }
-          case 'ml': {
-            const newW = Math.max(8, initB.width - dx);
-            scaleFactorX = newW / initB.width;
-            break;
-          }
-          case 'mr': {
-            const newW = Math.max(8, initB.width + dx);
-            scaleFactorX = newW / initB.width;
-            break;
-          }
-        }
+        // Compute mouse delta in the element's local unscaled coordinate space
+        // so resizing works naturally even when the element is rotated
+        const localStart = stageToElementLocal(dragState.startX, dragState.startY, {
+          ...initT,
+          scaleX: 1,
+          scaleY: 1,
+        });
+        const localCurr = stageToElementLocal(x, y, {
+          ...initT,
+          scaleX: 1,
+          scaleY: 1,
+        });
+        const dx = localCurr.x - localStart.x;
+        const dy = localCurr.y - localStart.y;
 
         // Check for 3D Perspective & Distort modifier (Cmd / Ctrl drag)
         if (e.metaKey || e.ctrlKey) {
           const initRotX = initT.rotateX ?? 0;
           const initRotY = initT.rotateY ?? 0;
-          // Calculate angular tilt based on dragging direction
           const tiltFactor = 0.5;
           let deltaRotX = 0;
           let deltaRotY = 0;
@@ -1163,11 +1435,15 @@ export const Stage: React.FC = () => {
           const newRotX = Math.max(-75, Math.min(75, Math.round(initRotX + deltaRotX)));
           const newRotY = Math.max(-75, Math.min(75, Math.round(initRotY + deltaRotY)));
 
-          editorActions.updateElementTransform(dragState.resizeElId, {
-            rotateX: newRotX,
-            rotateY: newRotY,
-            perspective: initT.perspective || 800,
-          });
+          editorActions.updateElementTransform(
+            dragState.resizeElId,
+            {
+              rotateX: newRotX,
+              rotateY: newRotY,
+              perspective: initT.perspective || 800,
+            },
+            { skipHistory: true }
+          );
 
           setTransformBadge({
             x: e.clientX,
@@ -1177,36 +1453,52 @@ export const Stage: React.FC = () => {
           return;
         }
 
-        // Special case: for text elements, dragging edge handles resizes the wrapping box rather than scaling
-        let isTextTarget = false;
+        // Locate target element
+        let targetEl: EditorElement | undefined;
         for (const l of activeTl.layers) {
           const kf = findKeyframeAtTime(l, currentTime) ?? findKeyframeAt(l, currentFrame);
           const found = kf?.elements.find((el) => el.id === dragState.resizeElId);
-          if (found && found.type === 'text') {
-            isTextTarget = true;
+          if (found) {
+            targetEl = found;
             break;
           }
         }
 
-        if (isTextTarget && (dragState.handle === 'mr' || dragState.handle === 'ml' || dragState.handle === 'bc' || dragState.handle === 'tc')) {
-          let newW = initB.width;
-          let newH = initB.height;
-          if (dragState.handle === 'mr') newW = Math.max(30, initB.width + dx);
-          if (dragState.handle === 'ml') newW = Math.max(30, initB.width - dx);
-          if (dragState.handle === 'bc') newH = Math.max(20, initB.height + dy);
-          if (dragState.handle === 'tc') newH = Math.max(20, initB.height - dy);
+        const minW = targetEl?.type === 'text' ? 30 : 8;
+        const minH = targetEl?.type === 'text' ? 20 : 8;
 
-          editorActions.updateElementProps(dragState.resizeElId, {
-            width: Math.round(newW),
-            height: Math.round(newH),
-            multiline: true, // auto-enable multiline wrapping when resizing box
-          });
-          setTransformBadge({
-            x: e.clientX,
-            y: e.clientY - 28,
-            text: `Box Size: ${Math.round(newW)} × ${Math.round(newH)} (Wrapped)`,
-          });
-          return;
+        let newW = initB.width;
+        let newH = initB.height;
+
+        switch (dragState.handle) {
+          case 'br':
+            newW = Math.max(minW, initB.width + dx);
+            newH = Math.max(minH, initB.height + dy);
+            break;
+          case 'bl':
+            newW = Math.max(minW, initB.width - dx);
+            newH = Math.max(minH, initB.height + dy);
+            break;
+          case 'tr':
+            newW = Math.max(minW, initB.width + dx);
+            newH = Math.max(minH, initB.height - dy);
+            break;
+          case 'tl':
+            newW = Math.max(minW, initB.width - dx);
+            newH = Math.max(minH, initB.height - dy);
+            break;
+          case 'tc':
+            newH = Math.max(minH, initB.height - dy);
+            break;
+          case 'bc':
+            newH = Math.max(minH, initB.height + dy);
+            break;
+          case 'ml':
+            newW = Math.max(minW, initB.width - dx);
+            break;
+          case 'mr':
+            newW = Math.max(minW, initB.width + dx);
+            break;
         }
 
         if (
@@ -1216,37 +1508,200 @@ export const Stage: React.FC = () => {
             dragState.handle === 'bl' ||
             dragState.handle === 'br')
         ) {
-          const maxS = Math.max(scaleFactorX, scaleFactorY);
-          scaleFactorX = maxS;
-          scaleFactorY = maxS;
+          const ratio = initB.width / Math.max(1, initB.height);
+          if (Math.abs(newW / initB.width - 1) >= Math.abs(newH / initB.height - 1)) {
+            newH = Math.max(minH, newW / ratio);
+          } else {
+            newW = Math.max(minW, newH * ratio);
+          }
         }
 
-        editorActions.updateElementTransform(dragState.resizeElId, {
-          scaleX: (initT.scaleX ?? 1) * scaleFactorX,
-          scaleY: (initT.scaleY ?? 1) * scaleFactorY,
+        newW = Math.round(newW * 100) / 100;
+        newH = Math.round(newH * 100) / 100;
+
+        // Determine opposite corner/edge anchor so it stays fixed on Stage
+        let anchorOld = { x: initB.x, y: initB.y };
+        let anchorNew = { x: initB.x, y: initB.y };
+        if (dragState.handle === 'tl') {
+          anchorOld = { x: initB.x + initB.width, y: initB.y + initB.height };
+          anchorNew = { x: initB.x + newW, y: initB.y + newH };
+        } else if (dragState.handle === 'tr' || dragState.handle === 'tc') {
+          anchorOld = { x: initB.x, y: initB.y + initB.height };
+          anchorNew = { x: initB.x, y: initB.y + newH };
+        } else if (dragState.handle === 'bl' || dragState.handle === 'ml') {
+          anchorOld = { x: initB.x + initB.width, y: initB.y };
+          anchorNew = { x: initB.x + newW, y: initB.y };
+        }
+
+        const hasCustomOrigin = (initT.originX ?? 0) !== 0 || (initT.originY ?? 0) !== 0;
+        const newOriginX = hasCustomOrigin
+          ? Math.round(
+              (initB.x +
+                (((initT.originX ?? 0) - initB.x) / Math.max(1, initB.width)) * newW) *
+                100
+            ) / 100
+          : 0;
+        const newOriginY = hasCustomOrigin
+          ? Math.round(
+              (initB.y +
+                (((initT.originY ?? 0) - initB.y) / Math.max(1, initB.height)) * newH) *
+                100
+            ) / 100
+          : 0;
+
+        const anchorStage = elementLocalToStage(anchorOld.x, anchorOld.y, initT);
+        const anchorAtZero = elementLocalToStage(anchorNew.x, anchorNew.y, {
+          ...initT,
+          x: 0,
+          y: 0,
+          scaleX: 1,
+          scaleY: 1,
+          originX: newOriginX,
+          originY: newOriginY,
         });
-      } else if (dragState.type === 'rotate' && dragState.resizeElId && dragState.rotCenter) {
+        const newX = Math.round((anchorStage.x - anchorAtZero.x) * 100) / 100;
+        const newY = Math.round((anchorStage.y - anchorAtZero.y) * 100) / 100;
+
+        const updatedTransform: Transform = {
+          ...initT,
+          x: newX,
+          y: newY,
+          scaleX: 1,
+          scaleY: 1,
+          originX: newOriginX,
+          originY: newOriginY,
+        };
+
+        if (targetEl?.type === 'shape' && dragState.initialPaths) {
+          const scaledPaths = dragState.initialPaths.map((p) => ({
+            ...p,
+            d: scaleSvgPathD(p.d, initB, newW, newH),
+          }));
+          editorActions.updateElementProps(
+            dragState.resizeElId,
+            {
+              paths: scaledPaths,
+              transform: updatedTransform,
+            },
+            { skipHistory: true }
+          );
+          setTransformBadge({
+            x: e.clientX,
+            y: e.clientY - 28,
+            text: `Size: ${Math.round(newW)} × ${Math.round(newH)} px`,
+          });
+          return;
+        }
+
+        if (
+          targetEl?.type === 'bitmap' ||
+          targetEl?.type === 'video' ||
+          targetEl?.type === 'text'
+        ) {
+          editorActions.updateElementProps(
+            dragState.resizeElId,
+            {
+              width: Math.round(newW),
+              height: Math.round(newH),
+              ...(targetEl.type === 'text' ? { multiline: true } : {}),
+              transform: updatedTransform,
+            },
+            { skipHistory: true }
+          );
+          setTransformBadge({
+            x: e.clientX,
+            y: e.clientY - 28,
+            text: `Size: ${Math.round(newW)} × ${Math.round(newH)} px`,
+          });
+          return;
+        }
+
+        // SymbolInstance fallback: scaleX / scaleY
+        const scaleFactorX = newW / Math.max(1, initB.width);
+        const scaleFactorY = newH / Math.max(1, initB.height);
+        editorActions.updateElementTransform(
+          dragState.resizeElId,
+          {
+            scaleX: Math.round((initT.scaleX ?? 1) * scaleFactorX * 1000) / 1000,
+            scaleY: Math.round((initT.scaleY ?? 1) * scaleFactorY * 1000) / 1000,
+          },
+          { skipHistory: true }
+        );
+        setTransformBadge({
+          x: e.clientX,
+          y: e.clientY - 28,
+          text: `Scale: ${Math.round((initT.scaleX ?? 1) * scaleFactorX * 100)}% × ${Math.round((initT.scaleY ?? 1) * scaleFactorY * 100)}%`,
+        });
+      } else if (dragState.type === 'rotate' && dragState.folderId && dragState.rotCenter) {
         const currentAngle =
           Math.atan2(y - dragState.rotCenter.y, x - dragState.rotCenter.x) * (180 / Math.PI);
-        const deltaAngle = currentAngle - (dragState.startAngle ?? 0);
-        let newRot = Math.round(((dragState.initialRotation ?? 0) + deltaAngle) % 360);
-        newRot = (newRot + 360) % 360;
+        if (!rotateDragRef.current) {
+          rotateDragRef.current = {
+            lastAngle: dragState.startAngle ?? currentAngle,
+            accumulatedRot: dragState.initialRotation ?? 0,
+          };
+        }
+        let delta = currentAngle - rotateDragRef.current.lastAngle;
+        if (delta > 180) delta -= 360;
+        else if (delta < -180) delta += 360;
+        rotateDragRef.current.accumulatedRot += delta;
+        rotateDragRef.current.lastAngle = currentAngle;
+
+        let newRot = Math.round(rotateDragRef.current.accumulatedRot);
         if (e.shiftKey) {
           newRot = Math.round(newRot / 15) * 15;
         }
-        editorActions.updateElementTransform(dragState.resizeElId, {
-          rotation: newRot,
-        });
+        editorActions.updateFolderTransform(
+          dragState.folderId,
+          {
+            rotation: newRot,
+          },
+          { skipHistory: true }
+        );
+        setTransformBadge({ x: e.clientX, y: e.clientY - 28, text: `Folder Rotation: ${newRot}°` });
+      } else if (dragState.type === 'rotate' && dragState.resizeElId && dragState.rotCenter) {
+        const currentAngle =
+          Math.atan2(y - dragState.rotCenter.y, x - dragState.rotCenter.x) * (180 / Math.PI);
+        if (!rotateDragRef.current) {
+          rotateDragRef.current = {
+            lastAngle: dragState.startAngle ?? currentAngle,
+            accumulatedRot: dragState.initialRotation ?? 0,
+          };
+        }
+        let delta = currentAngle - rotateDragRef.current.lastAngle;
+        if (delta > 180) delta -= 360;
+        else if (delta < -180) delta += 360;
+        rotateDragRef.current.accumulatedRot += delta;
+        rotateDragRef.current.lastAngle = currentAngle;
+
+        let newRot = Math.round(rotateDragRef.current.accumulatedRot);
+        if (e.shiftKey) {
+          newRot = Math.round(newRot / 15) * 15;
+        }
+        editorActions.updateElementTransform(
+          dragState.resizeElId,
+          {
+            rotation: newRot,
+          },
+          { skipHistory: true }
+        );
         setTransformBadge({ x: e.clientX, y: e.clientY - 28, text: `Rotation: ${newRot}°` });
       } else if (dragState.type === 'pivot' && dragState.resizeElId) {
         const initT = dragState.initialTransforms[dragState.resizeElId] ?? {};
         const localPt = stageToElementLocal(x, y, initT as Transform);
         const originX = Math.round(localPt.x);
         const originY = Math.round(localPt.y);
-        editorActions.updateElementTransform(dragState.resizeElId, {
-          originX,
-          originY,
-        });
+        const newStageOrigin = elementLocalToStage(originX, originY, initT as Transform);
+        editorActions.updateElementTransform(
+          dragState.resizeElId,
+          {
+            x: Math.round(newStageOrigin.x * 100) / 100,
+            y: Math.round(newStageOrigin.y * 100) / 100,
+            originX,
+            originY,
+          },
+          { skipHistory: true }
+        );
         setTransformBadge({
           x: e.clientX,
           y: e.clientY - 28,
@@ -1270,7 +1725,11 @@ export const Stage: React.FC = () => {
             newSkewX = Math.round(newSkewX / 15) * 15;
           }
           newSkewX = Math.max(-85, Math.min(85, newSkewX));
-          editorActions.updateElementTransform(dragState.resizeElId, { skewX: newSkewX });
+          editorActions.updateElementTransform(
+            dragState.resizeElId,
+            { skewX: newSkewX },
+            { skipHistory: true }
+          );
           setTransformBadge({
             x: e.clientX,
             y: e.clientY - 28,
@@ -1285,7 +1744,11 @@ export const Stage: React.FC = () => {
             newSkewY = Math.round(newSkewY / 15) * 15;
           }
           newSkewY = Math.max(-85, Math.min(85, newSkewY));
-          editorActions.updateElementTransform(dragState.resizeElId, { skewY: newSkewY });
+          editorActions.updateElementTransform(
+            dragState.resizeElId,
+            { skewY: newSkewY },
+            { skipHistory: true }
+          );
           setTransformBadge({
             x: e.clientX,
             y: e.clientY - 28,
@@ -1348,7 +1811,11 @@ export const Stage: React.FC = () => {
             d: updatedD,
           };
 
-          editorActions.updateElementProps(targetEl.id, { paths: newPaths });
+          editorActions.updateElementProps(
+            targetEl.id,
+            { paths: newPaths, isCustomizedPath: true },
+            { skipHistory: true }
+          );
         }
       } else if (
         dragState.type === 'subselect_drag_handle' &&
@@ -1358,7 +1825,7 @@ export const Stage: React.FC = () => {
       ) {
         let targetEl: ShapeElement | undefined;
         for (const l of activeTl.layers) {
-          const kf = findKeyframeAt(l, currentFrame);
+          const kf = findKeyframeAtTime(l, currentTime) ?? findKeyframeAt(l, currentFrame);
           const el = kf?.elements.find((e) => e.id === dragState.subselectShapeId);
           if (el && el.type === 'shape') {
             targetEl = el as ShapeElement;
@@ -1383,16 +1850,30 @@ export const Stage: React.FC = () => {
             d: updatedD,
           };
 
-          editorActions.updateElementProps(targetEl.id, { paths: newPaths });
+          editorActions.updateElementProps(
+            targetEl.id,
+            { paths: newPaths, isCustomizedPath: true },
+            { skipHistory: true }
+          );
         }
       }
 
-      setDragState((prev) => (prev ? { ...prev, currentX: x, currentY: y } : null));
+      setDragState((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentX: x,
+              currentY: y,
+              shiftKey: e.shiftKey !== undefined ? e.shiftKey : prev.shiftKey,
+            }
+          : null
+      );
     };
 
     const handleMouseUp = (e: MouseEvent) => {
       if (!dragState) return;
       setTransformBadge(null);
+      rotateDragRef.current = null;
 
       if (
         dragState.type === 'pan' ||
@@ -1403,6 +1884,18 @@ export const Stage: React.FC = () => {
         dragState.type === 'pivot' ||
         dragState.type === 'skew'
       ) {
+        if (
+          (dragState.type === 'subselect_drag_anchor' ||
+            dragState.type === 'subselect_drag_handle') &&
+          dragState.subselectShapeId &&
+          (dragState.currentX !== dragState.startX || dragState.currentY !== dragState.startY)
+        ) {
+          editorActions.updateElementProps(
+            dragState.subselectShapeId,
+            { isCustomizedPath: true },
+            { skipHistory: true }
+          );
+        }
         setDragState(null);
         return;
       }
@@ -1443,20 +1936,22 @@ export const Stage: React.FC = () => {
         const ry = Math.min(dragState.startY, y);
         const rw = Math.max(8, Math.abs(x - dragState.startX));
         const rh = Math.max(8, Math.abs(y - dragState.startY));
+        const cx = Math.round((rw / 2) * 100) / 100;
+        const cy = Math.round((rh / 2) * 100) / 100;
 
         const newRect: ShapeElement = {
           id: `rect_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           type: 'shape',
           transform: {
-            x: rx,
-            y: ry,
+            x: Math.round((rx + cx) * 100) / 100,
+            y: Math.round((ry + cy) * 100) / 100,
             scaleX: 1,
             scaleY: 1,
             rotation: 0,
             skewX: 0,
             skewY: 0,
-            originX: 0,
-            originY: 0,
+            originX: cx,
+            originY: cy,
           },
           paths: [
             {
@@ -1483,20 +1978,22 @@ export const Stage: React.FC = () => {
         const rh = Math.max(8, Math.abs(y - dragState.startY));
         const rX = rw / 2;
         const rY = rh / 2;
+        const cx = Math.round(rX * 100) / 100;
+        const cy = Math.round(rY * 100) / 100;
 
         const newOval: ShapeElement = {
           id: `oval_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           type: 'shape',
           transform: {
-            x: rx,
-            y: ry,
+            x: Math.round((rx + cx) * 100) / 100,
+            y: Math.round((ry + cy) * 100) / 100,
             scaleX: 1,
             scaleY: 1,
             rotation: 0,
             skewX: 0,
             skewY: 0,
-            originX: 0,
-            originY: 0,
+            originX: cx,
+            originY: cy,
           },
           paths: [
             {
@@ -1517,10 +2014,17 @@ export const Stage: React.FC = () => {
         editorActions.addElement(newOval);
         editorActions.setActiveTool('select');
       } else if (dragState.type === 'draw_polygon') {
-        const radius = Math.max(8, Math.hypot(x - dragState.startX, y - dragState.startY));
+        const dx = x - dragState.startX;
+        const dy = y - dragState.startY;
+        const rawRadius = Math.hypot(dx, dy);
+        const radius = Math.max(8, rawRadius);
         const pts = dragState.polygonPoints ?? 5;
         const ratio = dragState.polygonStarRatio ?? 0.5;
-        const angle = Math.atan2(y - dragState.startY, x - dragState.startX);
+        let angle = rawRadius < 4 ? -Math.PI / 2 : Math.atan2(dy, dx);
+        if (e.shiftKey || dragState.shiftKey) {
+          const snap = Math.PI / 12; // 15 degrees
+          angle = Math.round(angle / snap) * snap;
+        }
 
         const pathD = generatePolygonStarPath(radius, radius, radius, pts, ratio, angle);
 
@@ -1528,8 +2032,8 @@ export const Stage: React.FC = () => {
           id: `poly_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           type: 'shape',
           transform: {
-            x: dragState.startX - radius,
-            y: dragState.startY - radius,
+            x: dragState.startX,
+            y: dragState.startY,
             scaleX: 1,
             scaleY: 1,
             rotation: 0,
@@ -1552,6 +2056,13 @@ export const Stage: React.FC = () => {
           ],
           alpha: 1,
           visible: true,
+        };
+
+        (newPoly as any).starConfig = {
+          points: pts,
+          pointRatio: ratio,
+          outerRadius: radius,
+          startAngle: angle,
         };
 
         editorActions.addElement(newPoly);
@@ -1580,16 +2091,58 @@ export const Stage: React.FC = () => {
               ? { ...prev, polygonPoints: Math.max(3, (prev.polygonPoints ?? 5) - 1) }
               : prev
           );
+        } else if (e.key === 'ArrowLeft' || e.key === '[') {
+          e.preventDefault();
+          setDragState((prev) =>
+            prev && prev.type === 'draw_polygon'
+              ? {
+                  ...prev,
+                  polygonStarRatio: Math.max(
+                    0.05,
+                    Math.round(((prev.polygonStarRatio ?? 0.5) - 0.05) * 100) / 100
+                  ),
+                }
+              : prev
+          );
+        } else if (e.key === 'ArrowRight' || e.key === ']') {
+          e.preventDefault();
+          setDragState((prev) =>
+            prev && prev.type === 'draw_polygon'
+              ? {
+                  ...prev,
+                  polygonStarRatio: Math.min(
+                    3.0,
+                    Math.round(((prev.polygonStarRatio ?? 0.5) + 0.05) * 100) / 100
+                  ),
+                }
+              : prev
+          );
+        } else if (e.key === 'Shift') {
+          setDragState((prev) =>
+            prev && prev.type === 'draw_polygon' ? { ...prev, shiftKey: true } : prev
+          );
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (dragState && dragState.type === 'draw_polygon') {
+        if (e.key === 'Shift') {
+          setDragState((prev) =>
+            prev && prev.type === 'draw_polygon' ? { ...prev, shiftKey: false } : prev
+          );
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
 
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
     };
   }, [
     dragState,
@@ -1655,6 +2208,15 @@ export const Stage: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     editorActions.selectElement(el.id);
+    const otherArtboards =
+      doc.artboards && doc.artboards.length > 1
+        ? doc.artboards.filter((a) => a.id !== activeArtboard.id)
+        : [];
+    const moveArtboardItems = otherArtboards.map((ab) => ({
+      label: `Move to Artboard "${ab.name}"`,
+      action: () => editorActions.moveElementToArtboard(el.id, ab.id),
+    }));
+
     editorActions.openContextMenu({
       x: e.clientX,
       y: e.clientY,
@@ -1692,6 +2254,9 @@ export const Stage: React.FC = () => {
             if (targetLayer) editorActions.createMotionTween(targetLayer, currentFrame);
           },
         },
+        ...(moveArtboardItems.length > 0
+          ? [{ separator: true }, ...moveArtboardItems]
+          : []),
         {
           label: 'Delete',
           shortcut: 'Del',
@@ -1706,6 +2271,16 @@ export const Stage: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     editorActions.selectElement(el.id);
+
+    const otherArtboards =
+      doc.artboards && doc.artboards.length > 1
+        ? doc.artboards.filter((a) => a.id !== activeArtboard.id)
+        : [];
+    const moveArtboardItems = otherArtboards.map((ab) => ({
+      label: `Move to Artboard "${ab.name}"`,
+      action: () => editorActions.moveElementToArtboard(el.id, ab.id),
+    }));
+
     editorActions.openContextMenu({
       x: e.clientX,
       y: e.clientY,
@@ -1739,6 +2314,9 @@ export const Stage: React.FC = () => {
           label: 'Send Backward',
           action: () => editorActions.sendElementBackward(el.id),
         },
+        ...(moveArtboardItems.length > 0
+          ? [{ separator: true }, ...moveArtboardItems]
+          : []),
         { separator: true },
         {
           label: 'Delete',
@@ -1966,7 +2544,7 @@ export const Stage: React.FC = () => {
               fill={textEl.color || '#ffffff'}
             >
               <textPath href={`#${pathId}`} startOffset={offset}>
-                {textEl.text}
+                {(textEl.i18nKey && doc.i18n?.locales?.[activeLocale]?.[textEl.i18nKey]) || textEl.text}
               </textPath>
             </text>
           </svg>
@@ -2053,7 +2631,126 @@ export const Stage: React.FC = () => {
                   </span>
                 );
               })
-            : textEl.text}
+            : (textEl.i18nKey && doc.i18n?.locales?.[activeLocale]?.[textEl.i18nKey]) || textEl.text}
+        </div>
+      );
+    }
+
+    if (el.type === 'bitmap') {
+      const bmp = el as BitmapElement;
+      const w = bmp.width || 200;
+      const h = bmp.height || 150;
+      const imgSrc = bmp.src || doc.library?.bitmaps?.[bmp.bitmapId]?.src || '';
+
+      return (
+        <div
+          style={{
+            width: `${w}px`,
+            height: `${h}px`,
+            position: 'relative',
+            userSelect: 'none',
+            overflow: 'hidden',
+          }}
+          onContextMenu={(e) => handleShapeContextMenu(e, el)}
+        >
+          <img
+            src={imgSrc}
+            width={w}
+            height={h}
+            style={{
+              display: 'block',
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              pointerEvents: 'none',
+              userSelect: 'none',
+            }}
+            alt=""
+          />
+        </div>
+      );
+    }
+
+    if (el.type === 'video') {
+      const vid = el as VideoElement;
+      const w = vid.width || 320;
+      const h = vid.height || 180;
+      const embedInfo = parseVideoEmbed(vid.src);
+
+      return (
+        <div
+          style={{
+            width: `${w}px`,
+            height: `${h}px`,
+            position: 'relative',
+            userSelect: 'none',
+            backgroundColor: '#000000',
+            overflow: 'hidden',
+            borderRadius: 2,
+          }}
+          onContextMenu={(e) => handleShapeContextMenu(e, el)}
+        >
+          {embedInfo.isEmbed && embedInfo.embedUrl ? (
+            <iframe
+              src={embedInfo.embedUrl}
+              width={w}
+              height={h}
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                display: 'block',
+                pointerEvents: dragState ? 'none' : 'auto',
+              }}
+              allow="autoplay; encrypted-media"
+              title="Video embed"
+            />
+          ) : (
+            <video
+              src={vid.src}
+              width={w}
+              height={h}
+              muted={vid.muted ?? true}
+              loop={vid.loop ?? true}
+              autoPlay={vid.autoplay ?? true}
+              controls={vid.controls ?? true}
+              playsInline
+              style={{
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+                display: 'block',
+                objectFit: 'cover',
+              }}
+            />
+          )}
+
+          <div
+            style={{
+              position: 'absolute',
+              top: 4,
+              left: 4,
+              padding: '2px 6px',
+              backgroundColor: 'rgba(0, 0, 0, 0.75)',
+              color: '#ffffff',
+              fontSize: 10,
+              fontWeight: 600,
+              borderRadius: 3,
+              pointerEvents: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              zIndex: 5,
+            }}
+          >
+            <span>
+              🎬 {embedInfo.platform === 'youtube'
+                ? 'YouTube'
+                : embedInfo.platform === 'vimeo'
+                ? 'Vimeo'
+                : 'Video'}
+            </span>
+          </div>
         </div>
       );
     }
@@ -2077,6 +2774,24 @@ export const Stage: React.FC = () => {
         );
       }
 
+      // Compute nested preview time based on playMode & autoplay
+      const symFps = doc.stage.fps || 24;
+      const totalSymDuration = computeTotalTimelineDuration(symbolDef.timeline, symFps);
+      let innerTime = 0;
+
+      if (inst.playMode === 'stop' || inst.autoplay === false) {
+        innerTime = 0;
+      } else if (inst.playMode === 'sync') {
+        innerTime = totalSymDuration > 0 ? currentTime % totalSymDuration : 0;
+      } else if (inst.playMode === 'once' || inst.loop === false) {
+        innerTime = Math.min(currentTime, totalSymDuration);
+      } else {
+        // Default 'loop'
+        innerTime = totalSymDuration > 0 ? currentTime % totalSymDuration : 0;
+      }
+
+      const innerFrame = Math.round(innerTime * symFps);
+
       return (
         <div
           onContextMenu={(e) => handleShapeContextMenu(e, el)}
@@ -2086,7 +2801,9 @@ export const Stage: React.FC = () => {
           }}
         >
           {symbolDef.timeline.layers.map((subLayer) => {
-            const kf = subLayer.keyframes[0];
+            const kf = findKeyframeAtTime(subLayer, innerTime, symFps) ??
+              findKeyframeAt(subLayer, innerFrame) ??
+              subLayer.keyframes[0];
             if (!kf) return null;
             return (
               <div key={subLayer.id}>
@@ -2160,7 +2877,7 @@ export const Stage: React.FC = () => {
     };
   }
 
-  const stageBg = doc.stage.background;
+  const stageBg = activeArtboard.background ?? doc.stage.background;
   const isTransparent = !stageBg || stageBg.type === 'none';
   const stageBackgroundCss = isTransparent
     ? undefined
@@ -2242,6 +2959,7 @@ export const Stage: React.FC = () => {
       >
         <div
           ref={canvasRef}
+          data-testid="stage-canvas"
           className={`${styles.stageCanvas} ${cursorClass} ${
             isTransparent ? styles.transparentCheckerboard : ''
           }`}
@@ -2254,6 +2972,59 @@ export const Stage: React.FC = () => {
           onDoubleClick={handleCanvasDoubleClick}
           onContextMenu={handleStageContextMenu}
         >
+          {/* SVG ClipPaths for Mask Layers */}
+          {(() => {
+            const fps = doc.stage.fps || 24;
+            return (
+              <svg
+                style={{
+                  position: 'absolute',
+                  width: 0,
+                  height: 0,
+                  pointerEvents: 'none',
+                  overflow: 'hidden',
+                }}
+                aria-hidden="true"
+              >
+                <defs>
+                  {activeTl.layers
+                    .filter((l) => l.kind === 'mask')
+                    .map((maskLayer) => {
+                      const maskKf =
+                        findKeyframeAtTime(maskLayer, currentTime, fps) ??
+                        findKeyframeAt(maskLayer, currentFrame);
+                      const shapes = (maskKf?.elements || []).filter(
+                        (e) => e.type === 'shape'
+                      ) as ShapeElement[];
+
+                      return (
+                        <clipPath
+                          id={`stage_mask_${maskLayer.id}`}
+                          key={maskLayer.id}
+                          clipPathUnits="userSpaceOnUse"
+                        >
+                          {shapes.map((s) => {
+                            const m = Matrix2D.fromTransform(s.transform);
+                            return (
+                              <g key={s.id} transform={m.toCSS()}>
+                                {s.paths.map((p, pi) => (
+                                  <path
+                                    key={pi}
+                                    d={p.d}
+                                    fillRule={p.fillRule || 'nonzero'}
+                                  />
+                                ))}
+                              </g>
+                            );
+                          })}
+                        </clipPath>
+                      );
+                    })}
+                </defs>
+              </svg>
+            );
+          })()}
+
           {/* Render layers in back-to-front stack */}
           {reversedLayers.map((layer) => {
             if (!layer.visible) return null;
@@ -2267,7 +3038,7 @@ export const Stage: React.FC = () => {
             const kf = findKeyframeAtTime(layer, currentTime, fps) ?? findKeyframeAt(layer, currentFrame);
             if (!kf) return null;
 
-            const isTween = kf.tween?.type === 'motion';
+            const isTween = kf.tween?.type === 'motion' || kf.tween?.type === 'shape';
             let nextKf: EditorKeyframe | undefined;
             if (isTween) {
               const kfIdx = layer.keyframes.indexOf(kf);
@@ -2277,63 +3048,91 @@ export const Stage: React.FC = () => {
             const kfTime = getKeyframeTime(kf, fps);
             const nextKfTime = nextKf ? getKeyframeTime(nextKf, fps) : kfTime;
 
-            const tweenProgress =
+            const rawTweenProgress =
               isTween && nextKf && nextKfTime > kfTime
                 ? Math.max(0, Math.min(1, (currentTime - kfTime) / (nextKfTime - kfTime)))
                 : 0;
+            const tweenProgress =
+              isTween && kf.tween?.easing
+                ? computeEasingProgress(kf.tween.easing, rawTweenProgress)
+                : rawTweenProgress;
 
-            // Compute parent folder transform & filters if inside a folder
+            // Compute ancestor folder transforms & filters across the full parentLayerId chain
             let parentFilters = '';
             let parentMatrix: Matrix2D | null = null;
             if (layer.parentLayerId) {
-              const parentFolder = activeTl.layers.find((l) => l.id === layer.parentLayerId);
-              if (parentFolder) {
+              const ancestors: EditorLayer[] = [];
+              let currId: string | undefined = layer.parentLayerId;
+              const visited = new Set<string>();
+              while (currId && !visited.has(currId)) {
+                visited.add(currId);
+                const p = activeTl.layers.find((l) => l.id === currId);
+                if (!p) break;
+                ancestors.unshift(p);
+                currId = p.parentLayerId;
+              }
+
+              let composedM = Matrix2D.identity();
+              const filterParts: string[] = [];
+
+              for (const parentFolder of ancestors) {
                 if (parentFolder.filters?.length) {
-                  parentFilters = filtersToCSS(parentFolder.filters);
+                  filterParts.push(filtersToCSS(parentFolder.filters));
                 }
                 const parentKf = findKeyframeAtTime(parentFolder, currentTime, fps) ?? findKeyframeAt(parentFolder, currentFrame);
-                if (parentKf?.transform) {
-                  let folderTransform = parentKf.transform;
-                  const isFolderTween = parentKf.tween?.type === 'motion';
-                  if (isFolderTween) {
-                    const kfIdx = parentFolder.keyframes.indexOf(parentKf);
-                    const nextFolderKf = parentFolder.keyframes[kfIdx + 1];
-                    if (nextFolderKf?.transform) {
-                      const parentKfTime = getKeyframeTime(parentKf, fps);
-                      const nextParentKfTime = getKeyframeTime(nextFolderKf, fps);
-                      if (nextParentKfTime > parentKfTime) {
-                        const prog = Math.max(0, Math.min(1, (currentTime - parentKfTime) / (nextParentKfTime - parentKfTime)));
-                        folderTransform = {
-                          x: folderTransform.x + (nextFolderKf.transform.x - folderTransform.x) * prog,
-                          y: folderTransform.y + (nextFolderKf.transform.y - folderTransform.y) * prog,
-                          scaleX:
-                            (folderTransform.scaleX ?? 1) +
-                            ((nextFolderKf.transform.scaleX ?? 1) - (folderTransform.scaleX ?? 1)) * prog,
-                          scaleY:
-                            (folderTransform.scaleY ?? 1) +
-                            ((nextFolderKf.transform.scaleY ?? 1) - (folderTransform.scaleY ?? 1)) * prog,
-                          rotation:
-                            (folderTransform.rotation ?? 0) +
-                            ((nextFolderKf.transform.rotation ?? 0) - (folderTransform.rotation ?? 0)) * prog,
-                          skewX:
-                            (folderTransform.skewX ?? 0) +
-                            ((nextFolderKf.transform.skewX ?? 0) - (folderTransform.skewX ?? 0)) * prog,
-                          skewY:
-                            (folderTransform.skewY ?? 0) +
-                            ((nextFolderKf.transform.skewY ?? 0) - (folderTransform.skewY ?? 0)) * prog,
-                          originX: folderTransform.originX ?? 0,
-                          originY: folderTransform.originY ?? 0,
-                        };
-                      }
+                let folderTransform = parentKf?.transform ?? parentFolder.transform;
+                if (parentKf?.tween?.type === 'motion') {
+                  const kfIdx = parentFolder.keyframes.indexOf(parentKf);
+                  const nextFolderKf = parentFolder.keyframes[kfIdx + 1];
+                  const nextT = nextFolderKf?.transform ?? parentFolder.transform;
+                  if (folderTransform && nextT) {
+                    const parentKfTime = getKeyframeTime(parentKf, fps);
+                    const nextParentKfTime = getKeyframeTime(nextFolderKf, fps);
+                    if (nextParentKfTime > parentKfTime) {
+                      const prog = Math.max(0, Math.min(1, (currentTime - parentKfTime) / (nextParentKfTime - parentKfTime)));
+                      const easedProg = parentKf.tween.easing ? computeEasingProgress(parentKf.tween.easing, prog) : prog;
+                      const { startRot: fStartRot, endRot: fEndRot } = normalizeRotation(
+                        folderTransform.rotation ?? 0,
+                        nextT.rotation ?? 0,
+                        parentKf.tween?.rotate
+                      );
+                      folderTransform = {
+                        x: folderTransform.x + (nextT.x - folderTransform.x) * easedProg,
+                        y: folderTransform.y + (nextT.y - folderTransform.y) * easedProg,
+                        scaleX: (folderTransform.scaleX ?? 1) + ((nextT.scaleX ?? 1) - (folderTransform.scaleX ?? 1)) * easedProg,
+                        scaleY: (folderTransform.scaleY ?? 1) + ((nextT.scaleY ?? 1) - (folderTransform.scaleY ?? 1)) * easedProg,
+                        rotation: fStartRot + (fEndRot - fStartRot) * easedProg,
+                        skewX: (folderTransform.skewX ?? 0) + ((nextT.skewX ?? 0) - (folderTransform.skewX ?? 0)) * easedProg,
+                        skewY: (folderTransform.skewY ?? 0) + ((nextT.skewY ?? 0) - (folderTransform.skewY ?? 0)) * easedProg,
+                        originX: folderTransform.originX ?? 0,
+                        originY: folderTransform.originY ?? 0,
+                      };
                     }
                   }
-                  parentMatrix = Matrix2D.fromTransform(folderTransform);
+                }
+                if (folderTransform) {
+                  composedM = composedM.multiply(Matrix2D.fromTransform(folderTransform));
                 }
               }
+
+              if (!composedM.isIdentity()) {
+                parentMatrix = composedM;
+              }
+              parentFilters = filterParts.join(' ');
             }
 
             const layerFilterCSS = filtersToCSS(layer.filters);
             const combinedFilter = [parentFilters, layerFilterCSS].filter(Boolean).join(' ') || undefined;
+
+            const maskLayer = layer.maskLayerId
+              ? activeTl.layers.find((l) => l.id === layer.maskLayerId)
+              : null;
+            const clipPathCSS = maskLayer ? `url(#stage_mask_${maskLayer.id})` : undefined;
+
+            const isMaskLayer = layer.kind === 'mask';
+            const isMaskSelected =
+              selectedLayerId === layer.id ||
+              kf.elements.some((e) => selectedElementIds.includes(e.id));
 
             return (
               <div
@@ -2341,6 +3140,9 @@ export const Stage: React.FC = () => {
                 className={styles.stageLayer}
                 style={{
                   filter: combinedFilter,
+                  clipPath: clipPathCSS,
+                  WebkitClipPath: clipPathCSS,
+                  opacity: isMaskLayer ? (isMaskSelected ? 0.45 : 0) : undefined,
                 }}
               >
                 {kf.elements.map((el) => {
@@ -2353,7 +3155,8 @@ export const Stage: React.FC = () => {
                       displayEl = computeInterpolatedElement(
                         el,
                         matchEl,
-                        tweenProgress
+                        tweenProgress,
+                        kf.tween?.rotate
                       );
                     }
                   }
@@ -2376,200 +3179,277 @@ export const Stage: React.FC = () => {
                         transform: cssTransform,
                         opacity: effectiveAlpha,
                       }}
-                      onMouseDown={(e) => handleElementMouseDown(e, el)}
-                      onDoubleClick={(e) => handleElementDoubleClick(e, el)}
+                      onMouseDown={(e) => handleElementMouseDown(e, displayEl)}
+                      onDoubleClick={(e) => handleElementDoubleClick(e, displayEl)}
                     >
                       {renderElementContent(displayEl)}
 
                       {/* Freeform Transformation Box in Selection Mode */}
-                      {isSelected && !isLocked && activeTool === 'select' && editingTextElId !== el.id && (
-                        <div
-                          className={styles.selectionBox}
-                          style={{
-                            left: `${bounds.x}px`,
-                            top: `${bounds.y}px`,
-                            width: `${bounds.width}px`,
-                            height: `${bounds.height}px`,
-                          }}
-                        >
-                          {/* Accent badge for Component Instance */}
-                          {el.type === 'instance' && (() => {
-                            const inst = el as SymbolInstance;
-                            const sym = doc.library.symbols[inst.symbolId];
-                            const compName = sym?.name || inst.instanceName || 'Component';
-                            return (
-                              <div
-                                className={styles.componentBadge}
-                                onMouseDown={(e) => e.stopPropagation()}
-                              >
-                                <span className={styles.componentBadgeLabel}>
-                                  ❖ {compName} (Component)
-                                </span>
-                                <button
-                                  type="button"
-                                  className={styles.componentBadgeEditBtn}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    editorActions.enterIsolation(inst.symbolId);
-                                  }}
-                                  title="Edit Master Component in isolation mode"
+                      {isSelected && !isLocked && activeTool === 'select' && editingTextElId !== el.id && (() => {
+                        const absScaleX = Math.max(0.001, Math.abs(effectiveTransform.scaleX ?? 1));
+                        const absScaleY = Math.max(0.001, Math.abs(effectiveTransform.scaleY ?? 1));
+                        const signScaleX = (effectiveTransform.scaleX ?? 1) < 0 ? -1 : 1;
+                        const signScaleY = (effectiveTransform.scaleY ?? 1) < 0 ? -1 : 1;
+                        const boxW = bounds.width * absScaleX;
+                        const boxH = bounds.height * absScaleY;
+                        const unskewCSS = `skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`;
+                        const pivotLocalX =
+                          effectiveTransform.originX !== undefined
+                            ? effectiveTransform.originX
+                            : bounds.x + bounds.width / 2;
+                        const pivotLocalY =
+                          effectiveTransform.originY !== undefined
+                            ? effectiveTransform.originY
+                            : bounds.y + bounds.height / 2;
+
+                        return (
+                          <div
+                            className={styles.selectionBox}
+                            style={{
+                              left: `${bounds.x}px`,
+                              top: `${bounds.y}px`,
+                              width: `${boxW}px`,
+                              height: `${boxH}px`,
+                              transformOrigin: '0 0',
+                              transform: `scale(${signScaleX / absScaleX}, ${signScaleY / absScaleY})`,
+                            }}
+                          >
+                            {/* Accent badge for Component Instance */}
+                            {el.type === 'instance' && (() => {
+                              const inst = el as SymbolInstance;
+                              const sym = doc.library.symbols[inst.symbolId];
+                              const compName = sym?.name || inst.instanceName || 'Component';
+                              return (
+                                <div
+                                  className={styles.componentBadge}
+                                  onMouseDown={(e) => e.stopPropagation()}
                                 >
-                                  ↗ Edit Master Component
-                                </button>
+                                  <span className={styles.componentBadgeLabel}>
+                                    ❖ {compName} (Component)
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className={styles.componentBadgeEditBtn}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      editorActions.enterIsolation(inst.symbolId);
+                                    }}
+                                    title="Edit Master Component in isolation mode"
+                                  >
+                                    ↗ Edit Master Component
+                                  </button>
+                                </div>
+                              );
+                            })()}
+                            {/* 4 Corner handles: resize / scale */}
+                            <div
+                              className={`${styles.transformHandle} ${styles.handleTopLeft}`}
+                              style={{ transform: unskewCSS }}
+                              onMouseDown={(e) => handleResizeMouseDown(e, displayEl, 'tl', bounds)}
+                              title="Resize / 3D Perspective (Hold Shift for aspect lock, Cmd/Ctrl to distort perspective)"
+                              data-testid="resize-handle-tl"
+                            />
+                            <div
+                              className={`${styles.transformHandle} ${styles.handleTopRight}`}
+                              style={{ transform: unskewCSS }}
+                              onMouseDown={(e) => handleResizeMouseDown(e, displayEl, 'tr', bounds)}
+                              title="Resize / 3D Perspective (Hold Shift for aspect lock, Cmd/Ctrl to distort perspective)"
+                              data-testid="resize-handle-tr"
+                            />
+                            <div
+                              className={`${styles.transformHandle} ${styles.handleBottomLeft}`}
+                              style={{ transform: unskewCSS }}
+                              onMouseDown={(e) => handleResizeMouseDown(e, displayEl, 'bl', bounds)}
+                              title="Resize / 3D Perspective (Hold Shift for aspect lock, Cmd/Ctrl to distort perspective)"
+                              data-testid="resize-handle-bl"
+                            />
+                            <div
+                              className={`${styles.transformHandle} ${styles.handleBottomRight}`}
+                              style={{ transform: unskewCSS }}
+                              onMouseDown={(e) => handleResizeMouseDown(e, displayEl, 'br', bounds)}
+                              title="Resize / 3D Perspective (Hold Shift for aspect lock, Cmd/Ctrl to distort perspective)"
+                              data-testid="resize-handle-br"
+                            />
+
+                            {/* 4 Mid-edge handles: resize width / height */}
+                            <div
+                              className={`${styles.transformHandle} ${styles.handleTopCenter}`}
+                              style={{ transform: unskewCSS }}
+                              onMouseDown={(e) => handleResizeMouseDown(e, displayEl, 'tc', bounds)}
+                              title="Resize Height"
+                              data-testid="resize-handle-tc"
+                            />
+                            <div
+                              className={`${styles.transformHandle} ${styles.handleMiddleRight}`}
+                              style={{ transform: unskewCSS }}
+                              onMouseDown={(e) => handleResizeMouseDown(e, displayEl, 'mr', bounds)}
+                              title="Resize Width"
+                              data-testid="resize-handle-mr"
+                            />
+                            <div
+                              className={`${styles.transformHandle} ${styles.handleBottomCenter}`}
+                              style={{ transform: unskewCSS }}
+                              onMouseDown={(e) => handleResizeMouseDown(e, displayEl, 'bc', bounds)}
+                              title="Resize Height"
+                              data-testid="resize-handle-bc"
+                            />
+                            <div
+                              className={`${styles.transformHandle} ${styles.handleMiddleLeft}`}
+                              style={{ transform: unskewCSS }}
+                              onMouseDown={(e) => handleResizeMouseDown(e, displayEl, 'ml', bounds)}
+                              title="Resize Width"
+                              data-testid="resize-handle-ml"
+                            />
+
+                            {/* 4 Skew zones outside edges (shear X and Y - floating outside edges like rotation) */}
+                            <div
+                              className={`${styles.skewZoneTop} ${hoveredSkewEdge === 'top' || (dragState?.type === 'skew' && dragState.skewAxis === 'x') ? styles.skewZoneActive : ''}`}
+                              onMouseDown={(e) => handleSkewMouseDown(e, displayEl, 'x', bounds)}
+                              onMouseEnter={() => setHoveredSkewEdge('top')}
+                              onMouseLeave={() => setHoveredSkewEdge(null)}
+                              title="Shear X (Skew horizontally along top edge - Hold Shift to snap 15°)"
+                              data-testid="skew-handle-top"
+                            >
+                              <div className={styles.skewStem} />
+                              <div className={styles.skewIconBadge} style={{ transform: unskewCSS }}>
+                                <MoveHorizontal size={12} strokeWidth={2.2} />
                               </div>
-                            );
-                          })()}
-                          {/* 4 Corner handles: scale */}
-                          <div
-                            className={`${styles.transformHandle} ${styles.handleTopLeft}`}
-                            style={{
-                              transform: `scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handleResizeMouseDown(e, el, 'tl', bounds)}
-                            title="Scale / 3D Perspective (Hold Cmd/Ctrl to distort perspective, Shift for uniform)"
-                          />
-                          <div
-                            className={`${styles.transformHandle} ${styles.handleTopRight}`}
-                            style={{
-                              transform: `scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handleResizeMouseDown(e, el, 'tr', bounds)}
-                            title="Scale / 3D Perspective (Hold Cmd/Ctrl to distort perspective, Shift for uniform)"
-                          />
-                          <div
-                            className={`${styles.transformHandle} ${styles.handleBottomLeft}`}
-                            style={{
-                              transform: `scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handleResizeMouseDown(e, el, 'bl', bounds)}
-                            title="Scale / 3D Perspective (Hold Cmd/Ctrl to distort perspective, Shift for uniform)"
-                          />
-                          <div
-                            className={`${styles.transformHandle} ${styles.handleBottomRight}`}
-                            style={{
-                              transform: `scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handleResizeMouseDown(e, el, 'br', bounds)}
-                            title="Scale / 3D Perspective (Hold Cmd/Ctrl to distort perspective, Shift for uniform)"
-                          />
+                            </div>
+                            <div
+                              className={`${styles.skewZoneBottom} ${hoveredSkewEdge === 'bottom' || (dragState?.type === 'skew' && dragState.skewAxis === 'x') ? styles.skewZoneActive : ''}`}
+                              onMouseDown={(e) => handleSkewMouseDown(e, displayEl, 'x', bounds)}
+                              onMouseEnter={() => setHoveredSkewEdge('bottom')}
+                              onMouseLeave={() => setHoveredSkewEdge(null)}
+                              title="Shear X (Skew horizontally along bottom edge - Hold Shift to snap 15°)"
+                              data-testid="skew-handle-bottom"
+                            >
+                              <div className={styles.skewStem} />
+                              <div className={styles.skewIconBadge} style={{ transform: unskewCSS }}>
+                                <MoveHorizontal size={12} strokeWidth={2.2} />
+                              </div>
+                            </div>
+                            <div
+                              className={`${styles.skewZoneLeft} ${hoveredSkewEdge === 'left' || (dragState?.type === 'skew' && dragState.skewAxis === 'y') ? styles.skewZoneActive : ''}`}
+                              onMouseDown={(e) => handleSkewMouseDown(e, displayEl, 'y', bounds)}
+                              onMouseEnter={() => setHoveredSkewEdge('left')}
+                              onMouseLeave={() => setHoveredSkewEdge(null)}
+                              title="Shear Y (Skew vertically along left edge - Hold Shift to snap 15°)"
+                              data-testid="skew-handle-left"
+                            >
+                              <div className={styles.skewStem} />
+                              <div className={styles.skewIconBadge} style={{ transform: unskewCSS }}>
+                                <MoveVertical size={12} strokeWidth={2.2} />
+                              </div>
+                            </div>
+                            <div
+                              className={`${styles.skewZoneRight} ${hoveredSkewEdge === 'right' || (dragState?.type === 'skew' && dragState.skewAxis === 'y') ? styles.skewZoneActive : ''}`}
+                              onMouseDown={(e) => handleSkewMouseDown(e, displayEl, 'y', bounds)}
+                              onMouseEnter={() => setHoveredSkewEdge('right')}
+                              onMouseLeave={() => setHoveredSkewEdge(null)}
+                              title="Shear Y (Skew vertically along right edge - Hold Shift to snap 15°)"
+                              data-testid="skew-handle-right"
+                            >
+                              <div className={styles.skewStem} />
+                              <div className={styles.skewIconBadge} style={{ transform: unskewCSS }}>
+                                <MoveVertical size={12} strokeWidth={2.2} />
+                              </div>
+                            </div>
 
-                          {/* 4 Mid-edge handles: stretch */}
-                          <div
-                            className={`${styles.transformHandle} ${styles.handleTopCenter}`}
-                            style={{
-                              transform: `scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handleResizeMouseDown(e, el, 'tc', bounds)}
-                            title="Stretch Vertical"
-                          />
-                          <div
-                            className={`${styles.transformHandle} ${styles.handleMiddleRight}`}
-                            style={{
-                              transform: `scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handleResizeMouseDown(e, el, 'mr', bounds)}
-                            title="Stretch Horizontal"
-                          />
-                          <div
-                            className={`${styles.transformHandle} ${styles.handleBottomCenter}`}
-                            style={{
-                              transform: `scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handleResizeMouseDown(e, el, 'bc', bounds)}
-                            title="Stretch Vertical"
-                          />
-                          <div
-                            className={`${styles.transformHandle} ${styles.handleMiddleLeft}`}
-                            style={{
-                              transform: `scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handleResizeMouseDown(e, el, 'ml', bounds)}
-                            title="Stretch Horizontal"
-                          />
+                            {/* 4 Rotation zones outside corners with arc'd arrow icons */}
+                            <div
+                              className={`${styles.rotateZone} ${styles.rotTopLeft} ${hoveredRotateCorner === 'tl' || (dragState?.type === 'rotate' && dragState.handle === 'tl') ? styles.rotateZoneActive : ''}`}
+                              onMouseDown={(e) => handleRotateMouseDown(e, displayEl, bounds, 'tl')}
+                              onMouseEnter={() => setHoveredRotateCorner('tl')}
+                              onMouseLeave={() => setHoveredRotateCorner(null)}
+                              title="Rotate (Hold Shift to snap 15°)"
+                              data-testid="rotate-handle-tl"
+                            >
+                              <div
+                                className={styles.rotateCornerIcon}
+                                style={{ transform: `${unskewCSS} rotate(-45deg)` }}
+                              >
+                                <RotateCw size={14} strokeWidth={2.4} />
+                              </div>
+                            </div>
+                            <div
+                              className={`${styles.rotateZone} ${styles.rotTopRight} ${hoveredRotateCorner === 'tr' || (dragState?.type === 'rotate' && dragState.handle === 'tr') ? styles.rotateZoneActive : ''}`}
+                              onMouseDown={(e) => handleRotateMouseDown(e, displayEl, bounds, 'tr')}
+                              onMouseEnter={() => setHoveredRotateCorner('tr')}
+                              onMouseLeave={() => setHoveredRotateCorner(null)}
+                              title="Rotate (Hold Shift to snap 15°)"
+                              data-testid="rotate-handle-tr"
+                            >
+                              <div
+                                className={styles.rotateCornerIcon}
+                                style={{ transform: `${unskewCSS} rotate(45deg)` }}
+                              >
+                                <RotateCw size={14} strokeWidth={2.4} />
+                              </div>
+                            </div>
+                            <div
+                              className={`${styles.rotateZone} ${styles.rotBottomLeft} ${hoveredRotateCorner === 'bl' || (dragState?.type === 'rotate' && dragState.handle === 'bl') ? styles.rotateZoneActive : ''}`}
+                              onMouseDown={(e) => handleRotateMouseDown(e, displayEl, bounds, 'bl')}
+                              onMouseEnter={() => setHoveredRotateCorner('bl')}
+                              onMouseLeave={() => setHoveredRotateCorner(null)}
+                              title="Rotate (Hold Shift to snap 15°)"
+                              data-testid="rotate-handle-bl"
+                            >
+                              <div
+                                className={styles.rotateCornerIcon}
+                                style={{ transform: `${unskewCSS} rotate(-135deg)` }}
+                              >
+                                <RotateCw size={14} strokeWidth={2.4} />
+                              </div>
+                            </div>
+                            <div
+                              className={`${styles.rotateZone} ${styles.rotBottomRight} ${hoveredRotateCorner === 'br' || (dragState?.type === 'rotate' && dragState.handle === 'br') ? styles.rotateZoneActive : ''}`}
+                              onMouseDown={(e) => handleRotateMouseDown(e, displayEl, bounds, 'br')}
+                              onMouseEnter={() => setHoveredRotateCorner('br')}
+                              onMouseLeave={() => setHoveredRotateCorner(null)}
+                              title="Rotate (Hold Shift to snap 15°)"
+                              data-testid="rotate-handle-br"
+                            >
+                              <div
+                                className={styles.rotateCornerIcon}
+                                style={{ transform: `${unskewCSS} rotate(135deg)` }}
+                              >
+                                <RotateCw size={14} strokeWidth={2.4} />
+                              </div>
+                            </div>
 
-                          {/* 4 Skew zones along edges (shear X and Y) */}
-                          <div
-                            className={styles.skewZoneTop}
-                            onMouseDown={(e) => handleSkewMouseDown(e, el, 'x', bounds)}
-                            title="Shear X (Skew along top edge)"
-                          >
-                            <div className={styles.skewHandleBarH} />
+                            {/* Center registration point / draggable pivot */}
+                            <div
+                              className={styles.pivotHandle}
+                              style={{
+                                left: `${(pivotLocalX - bounds.x) * absScaleX}px`,
+                                top: `${(pivotLocalY - bounds.y) * absScaleY}px`,
+                                transform: `translate(-50%, -50%) ${unskewCSS}`,
+                              }}
+                              onMouseDown={(e) => handlePivotMouseDown(e, displayEl, bounds)}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                // Double-click snaps registration point back to exact center
+                                const targetOriginX = Math.round(bounds.x + bounds.width / 2);
+                                const targetOriginY = Math.round(bounds.y + bounds.height / 2);
+                                const newStageOrigin = elementLocalToStage(
+                                  targetOriginX,
+                                  targetOriginY,
+                                  displayEl.transform
+                                );
+                                editorActions.updateElementTransform(el.id, {
+                                  x: Math.round(newStageOrigin.x * 100) / 100,
+                                  y: Math.round(newStageOrigin.y * 100) / 100,
+                                  originX: targetOriginX,
+                                  originY: targetOriginY,
+                                });
+                              }}
+                              title="Registration Point (Double-click to center, drag or use 9-point grid in Properties)"
+                            >
+                              <CrosshairIcon size={14} strokeWidth={2.2} className={styles.pivotIcon} />
+                            </div>
                           </div>
-                          <div
-                            className={styles.skewZoneBottom}
-                            onMouseDown={(e) => handleSkewMouseDown(e, el, 'x', bounds)}
-                            title="Shear X (Skew along bottom edge)"
-                          >
-                            <div className={styles.skewHandleBarH} />
-                          </div>
-                          <div
-                            className={styles.skewZoneLeft}
-                            onMouseDown={(e) => handleSkewMouseDown(e, el, 'y', bounds)}
-                            title="Shear Y (Skew along left edge)"
-                          >
-                            <div className={styles.skewHandleBarV} />
-                          </div>
-                          <div
-                            className={styles.skewZoneRight}
-                            onMouseDown={(e) => handleSkewMouseDown(e, el, 'y', bounds)}
-                            title="Shear Y (Skew along right edge)"
-                          >
-                            <div className={styles.skewHandleBarV} />
-                          </div>
-
-                          {/* 4 Rotation zones outside corners */}
-                          <div
-                            className={`${styles.rotateZone} ${styles.rotTopLeft}`}
-                            onMouseDown={(e) => handleRotateMouseDown(e, el, bounds)}
-                            title="Rotate"
-                          />
-                          <div
-                            className={`${styles.rotateZone} ${styles.rotTopRight}`}
-                            onMouseDown={(e) => handleRotateMouseDown(e, el, bounds)}
-                            title="Rotate"
-                          />
-                          <div
-                            className={`${styles.rotateZone} ${styles.rotBottomLeft}`}
-                            onMouseDown={(e) => handleRotateMouseDown(e, el, bounds)}
-                            title="Rotate"
-                          />
-                          <div
-                            className={`${styles.rotateZone} ${styles.rotBottomRight}`}
-                            onMouseDown={(e) => handleRotateMouseDown(e, el, bounds)}
-                            title="Rotate"
-                          />
-
-                          {/* Center registration point / draggable pivot */}
-                          <div
-                            className={styles.pivotHandle}
-                            style={{
-                              left: `${
-                                (el.transform.originX ?? bounds.x + bounds.width / 2) -
-                                bounds.x
-                              }px`,
-                              top: `${
-                                (el.transform.originY ?? bounds.y + bounds.height / 2) -
-                                bounds.y
-                              }px`,
-                              transform: `translate(-50%, -50%) scale(${1 / (effectiveTransform.scaleX || 1)}, ${1 / (effectiveTransform.scaleY || 1)}) skew(${-((effectiveTransform.skewX ?? 0))}deg, ${-((effectiveTransform.skewY ?? 0))}deg)`,
-                            }}
-                            onMouseDown={(e) => handlePivotMouseDown(e, el, bounds)}
-                            onDoubleClick={(e) => {
-                              e.stopPropagation();
-                              // Double-click snaps registration point back to exact center
-                              editorActions.updateElementTransform(el.id, {
-                                originX: Math.round(bounds.x + bounds.width / 2),
-                                originY: Math.round(bounds.y + bounds.height / 2),
-                              });
-                            }}
-                            title="Registration Point (Double-click to center, drag or use 9-point grid in Properties)"
-                          >
-                            <div className={styles.pivotCrosshairH} />
-                            <div className={styles.pivotCrosshairV} />
-                            <div className={styles.pivotRing} />
-                          </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -2591,19 +3471,75 @@ export const Stage: React.FC = () => {
             if (!selLayer || !selLayer.visible || selLayer.locked) return null;
 
             const fps = doc.stage.fps || 24;
-            const currentKf =
-              findKeyframeAtTime(selLayer, currentTime, fps) ??
-              findKeyframeAt(selLayer, currentFrame);
-            if (!currentKf || currentKf.elements.length === 0) return null;
+            const isFolder = selLayer.kind === 'folder';
+            const targetElements: { el: EditorElement; layer: EditorLayer }[] = [];
 
-            // Compute composite stage-space bounding box of all elements on this layer
+            if (isFolder) {
+              const descendantLayerIds = new Set<string>();
+              const findDescendants = (parentId: string) => {
+                for (const l of activeTl.layers) {
+                  if (l.parentLayerId === parentId && !descendantLayerIds.has(l.id)) {
+                    descendantLayerIds.add(l.id);
+                    findDescendants(l.id);
+                  }
+                }
+              };
+              findDescendants(selLayer.id);
+
+              for (const lId of descendantLayerIds) {
+                const l = activeTl.layers.find((ly) => ly.id === lId);
+                if (!l || !l.visible || l.locked) continue;
+                const kf = findKeyframeAtTime(l, currentTime, fps) ?? findKeyframeAt(l, currentFrame);
+                if (kf) {
+                  for (const el of kf.elements) {
+                    if (el.visible !== false) {
+                      targetElements.push({ el, layer: l });
+                    }
+                  }
+                }
+              }
+            } else {
+              const currentKf =
+                findKeyframeAtTime(selLayer, currentTime, fps) ??
+                findKeyframeAt(selLayer, currentFrame);
+              if (currentKf) {
+                for (const el of currentKf.elements) {
+                  if (el.visible !== false) {
+                    targetElements.push({ el, layer: selLayer });
+                  }
+                }
+              }
+            }
+
+            if (targetElements.length === 0) return null;
+
+            // Compute composite stage-space bounding box of all target elements
             let lMinX = Infinity;
             let lMinY = Infinity;
             let lMaxX = -Infinity;
             let lMaxY = -Infinity;
 
-            for (const el of currentKf.elements) {
-              if (el.visible === false) continue;
+            const getLayerAncestorMatrix = (lId: string): Matrix2D => {
+              const ancestors: EditorLayer[] = [];
+              let curr: string | undefined = lId;
+              const visited = new Set<string>();
+              while (curr && !visited.has(curr)) {
+                visited.add(curr);
+                const p = activeTl.layers.find((ly) => ly.id === curr);
+                if (!p) break;
+                ancestors.unshift(p);
+                curr = p.parentLayerId;
+              }
+              let m = Matrix2D.identity();
+              for (const anc of ancestors) {
+                const kf = findKeyframeAtTime(anc, currentTime, fps) ?? findKeyframeAt(anc, currentFrame);
+                const t = kf?.transform ?? anc.transform;
+                if (t) m = m.multiply(Matrix2D.fromTransform(t));
+              }
+              return m;
+            };
+
+            for (const { el, layer: elLayer } of targetElements) {
               const bounds = getElementBounds(el);
               const corners = [
                 { x: bounds.x, y: bounds.y },
@@ -2611,9 +3547,12 @@ export const Stage: React.FC = () => {
                 { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
                 { x: bounds.x, y: bounds.y + bounds.height },
               ];
+              const parentM = getLayerAncestorMatrix(elLayer.id);
+              const elM = Matrix2D.fromTransform(el.transform);
+              const effM = parentM.multiply(elM);
 
               for (const pt of corners) {
-                const stagePt = elementLocalToStage(pt.x, pt.y, el.transform);
+                const stagePt = effM.transformPoint(pt);
                 lMinX = Math.min(lMinX, stagePt.x);
                 lMinY = Math.min(lMinY, stagePt.y);
                 lMaxX = Math.max(lMaxX, stagePt.x);
@@ -2631,19 +3570,56 @@ export const Stage: React.FC = () => {
               e.stopPropagation();
               const { x, y } = getStageCoordinates(e);
 
-              const initialTransforms: Record<string, Transform> = {};
-              for (const el of currentKf.elements) {
-                initialTransforms[el.id] = { ...el.transform };
-              }
+              if (isFolder) {
+                const folderKf = findKeyframeAtTime(selLayer, currentTime, fps) ?? findKeyframeAt(selLayer, currentFrame);
+                const initT = folderKf?.transform ?? selLayer.transform ?? { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 };
+                editorActions.commitHistorySnapshot();
+                setDragState({
+                  type: 'move',
+                  folderId: selLayer.id,
+                  startX: x,
+                  startY: y,
+                  currentX: x,
+                  currentY: y,
+                  initialTransforms: { [selLayer.id]: { ...initT } },
+                  initialBounds: { x: lMinX, y: lMinY, width: layerBoxW, height: layerBoxH },
+                });
+              } else {
+                const initialTransforms: Record<string, Transform> = {};
+                for (const { el } of targetElements) {
+                  initialTransforms[el.id] = { ...el.transform };
+                }
 
-              setDragState({
-                type: 'move',
-                startX: x,
-                startY: y,
-                currentX: x,
-                currentY: y,
-                initialTransforms,
-              });
+                setDragState({
+                  type: 'move',
+                  startX: x,
+                  startY: y,
+                  currentX: x,
+                  currentY: y,
+                  initialTransforms,
+                });
+              }
+            };
+
+            const handleFolderHandleMouseDown = (handle: 'tl' | 'tc' | 'tr' | 'mr' | 'br' | 'bc' | 'bl' | 'ml', e: React.MouseEvent) => {
+              e.stopPropagation();
+              const { x, y } = getStageCoordinates(e);
+              if (isFolder) {
+                const folderKf = findKeyframeAtTime(selLayer, currentTime, fps) ?? findKeyframeAt(selLayer, currentFrame);
+                const initT = folderKf?.transform ?? selLayer.transform ?? { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 };
+                editorActions.commitHistorySnapshot();
+                setDragState({
+                  type: 'resize',
+                  folderId: selLayer.id,
+                  handle,
+                  startX: x,
+                  startY: y,
+                  currentX: x,
+                  currentY: y,
+                  initialTransforms: { [selLayer.id]: { ...initT } },
+                  initialBounds: { x: lMinX, y: lMinY, width: layerBoxW, height: layerBoxH },
+                });
+              }
             };
 
             return (
@@ -2654,32 +3630,32 @@ export const Stage: React.FC = () => {
                   top: `${lMinY}px`,
                   width: `${layerBoxW}px`,
                   height: `${layerBoxH}px`,
-                  border: '1.5px solid #3b82f6',
-                  backgroundColor: 'rgba(59, 130, 246, 0.04)',
+                  border: isFolder ? '1.5px solid #a855f7' : '1.5px solid #3b82f6',
+                  backgroundColor: isFolder ? 'rgba(168, 85, 247, 0.05)' : 'rgba(59, 130, 246, 0.04)',
                   pointerEvents: 'auto',
                   cursor: 'move',
                   zIndex: 40,
                 }}
                 onMouseDown={handleLayerBoxMouseDown}
-                title={`Layer: ${selLayer.name} (${currentKf.elements.length} elements grouped)`}
+                title={isFolder ? `Folder: ${selLayer.name} (${targetElements.length} nested elements)` : `Layer: ${selLayer.name} (${targetElements.length} elements)`}
               >
                 {/* 8 Bounding Box Corner and Edge Handles */}
-                <div className={`${styles.handle} ${styles.handleTl}`} />
-                <div className={`${styles.handle} ${styles.handleTc}`} />
-                <div className={`${styles.handle} ${styles.handleTr}`} />
-                <div className={`${styles.handle} ${styles.handleMr}`} />
-                <div className={`${styles.handle} ${styles.handleBr}`} />
-                <div className={`${styles.handle} ${styles.handleBc}`} />
-                <div className={`${styles.handle} ${styles.handleBl}`} />
-                <div className={`${styles.handle} ${styles.handleMl}`} />
+                <div className={`${styles.handle} ${styles.handleTl}`} onMouseDown={(e) => handleFolderHandleMouseDown('tl', e)} />
+                <div className={`${styles.handle} ${styles.handleTc}`} onMouseDown={(e) => handleFolderHandleMouseDown('tc', e)} />
+                <div className={`${styles.handle} ${styles.handleTr}`} onMouseDown={(e) => handleFolderHandleMouseDown('tr', e)} />
+                <div className={`${styles.handle} ${styles.handleMr}`} onMouseDown={(e) => handleFolderHandleMouseDown('mr', e)} />
+                <div className={`${styles.handle} ${styles.handleBr}`} onMouseDown={(e) => handleFolderHandleMouseDown('br', e)} />
+                <div className={`${styles.handle} ${styles.handleBc}`} onMouseDown={(e) => handleFolderHandleMouseDown('bc', e)} />
+                <div className={`${styles.handle} ${styles.handleBl}`} onMouseDown={(e) => handleFolderHandleMouseDown('bl', e)} />
+                <div className={`${styles.handle} ${styles.handleMl}`} onMouseDown={(e) => handleFolderHandleMouseDown('ml', e)} />
 
-                {/* Layer Badge Label */}
+                {/* Layer / Folder Badge Label */}
                 <div
                   style={{
                     position: 'absolute',
                     top: -20,
                     left: 0,
-                    backgroundColor: '#3b82f6',
+                    backgroundColor: isFolder ? '#a855f7' : '#3b82f6',
                     color: '#ffffff',
                     fontSize: '10px',
                     fontWeight: 600,
@@ -2692,7 +3668,7 @@ export const Stage: React.FC = () => {
                     gap: '4px',
                   }}
                 >
-                  <span>⚡</span>
+                  <span>{isFolder ? '📁' : '⚡'}</span>
                   <span>{selLayer.name}</span>
                 </div>
               </div>
@@ -2802,6 +3778,8 @@ export const Stage: React.FC = () => {
                                 ? styles.subselectAnchorSelected
                                 : styles.subselectAnchor
                             }
+                            data-testid="subselect-anchor"
+                            data-anchor-index={aIdx}
                             onMouseDown={(e) =>
                               handleAnchorMouseDown(
                                 e,
@@ -2901,6 +3879,61 @@ export const Stage: React.FC = () => {
           {dragState?.type === 'draw_oval' && drawPreviewStyle && (
             <div className={styles.drawPreviewOval} style={drawPreviewStyle} />
           )}
+          {dragState?.type === 'draw_polygon' && (() => {
+            const dx = dragState.currentX - dragState.startX;
+            const dy = dragState.currentY - dragState.startY;
+            const rawRadius = Math.hypot(dx, dy);
+            const radius = Math.max(8, rawRadius);
+            const pts = dragState.polygonPoints ?? 5;
+            const ratio = dragState.polygonStarRatio ?? 0.5;
+            let angle = rawRadius < 4 ? -Math.PI / 2 : Math.atan2(dy, dx);
+            if (dragState.shiftKey) {
+              const snap = Math.PI / 12;
+              angle = Math.round(angle / snap) * snap;
+            }
+
+            const pathD = generatePolygonStarPath(
+              dragState.startX,
+              dragState.startY,
+              radius,
+              pts,
+              ratio,
+              angle
+            );
+
+            return (
+              <svg
+                className={styles.starPreviewOverlay}
+                data-testid="star-draw-preview-svg"
+              >
+                <path
+                  d={pathD}
+                  fill={activeFill ? fillToCSS(activeFill) : fillColor}
+                  fillOpacity={0.35}
+                  stroke={strokeColor || '#3b82f6'}
+                  strokeWidth={Math.max(1.5, strokeWidth || 1.5)}
+                  strokeDasharray="4 3"
+                />
+                <circle
+                  cx={dragState.startX}
+                  cy={dragState.startY}
+                  r={3.5}
+                  fill="#3b82f6"
+                  stroke="#ffffff"
+                  strokeWidth={1}
+                />
+                <line
+                  x1={dragState.startX}
+                  y1={dragState.startY}
+                  x2={dragState.startX + radius * Math.cos(angle)}
+                  y2={dragState.startY + radius * Math.sin(angle)}
+                  stroke="rgba(59, 130, 246, 0.6)"
+                  strokeWidth={1}
+                  strokeDasharray="2 2"
+                />
+              </svg>
+            );
+          })()}
 
           {/* Marquee Selection Box */}
           {dragState?.type === 'marquee' && marqueeStyle && (
@@ -2930,7 +3963,7 @@ export const Stage: React.FC = () => {
             onClick={handleZoomOut}
             title="Zoom Out (Ctrl -)"
           >
-            −
+            <ZoomOut size={13} />
           </button>
           <span
             className={styles.zoomPercent}
@@ -2945,15 +3978,17 @@ export const Stage: React.FC = () => {
             onClick={handleZoomIn}
             title="Zoom In (Ctrl +)"
           >
-            +
+            <ZoomIn size={13} />
           </button>
           <button
             type="button"
             className={styles.zoomBtn}
             onClick={handleZoomFit}
             title="Fit Stage in View"
+            style={{ gap: 4 }}
           >
-            Fit
+            <Maximize2 size={11} />
+            <span>Fit</span>
           </button>
           <button
             type="button"

@@ -112,97 +112,185 @@
 
 .transformHandle {
   position: absolute;
-  width: 7px;
-  height: 7px;
+  width: 9px;
+  height: 9px;
   background-color: #ffffff;
   border: 1.5px solid var(--mx-selection);
-  border-radius: 1px;
+  border-radius: 1.5px;
   pointer-events: auto;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  z-index: 35;
   transition: transform 0.1s ease, background-color 0.1s ease;
+}
+
+.transformHandle::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 
 .transformHandle:hover {
   background-color: var(--mx-selection);
-  transform: scale(1.3);
+  transform: scale(1.25);
 }
 
 .handleTopLeft {
-  top: -4px;
-  left: -4px;
+  top: -4.5px;
+  left: -4.5px;
   cursor: nwse-resize;
 }
 
 .handleTopCenter {
-  top: -4px;
-  left: calc(50% - 3.5px);
+  top: -4.5px;
+  left: calc(50% - 4.5px);
   cursor: ns-resize;
 }
 
 .handleTopRight {
-  top: -4px;
-  right: -4px;
+  top: -4.5px;
+  right: -4.5px;
   cursor: nesw-resize;
 }
 
 .handleMiddleRight {
-  top: calc(50% - 3.5px);
-  right: -4px;
+  top: calc(50% - 4.5px);
+  right: -4.5px;
   cursor: ew-resize;
 }
 
 .handleBottomRight {
-  bottom: -4px;
-  right: -4px;
+  bottom: -4.5px;
+  right: -4.5px;
   cursor: nwse-resize;
 }
 
 .handleBottomCenter {
-  bottom: -4px;
-  left: calc(50% - 3.5px);
+  bottom: -4.5px;
+  left: calc(50% - 4.5px);
   cursor: ns-resize;
 }
 
 .handleBottomLeft {
-  bottom: -4px;
-  left: -4px;
+  bottom: -4.5px;
+  left: -4.5px;
   cursor: nesw-resize;
 }
 
 .handleMiddleLeft {
-  top: calc(50% - 3.5px);
-  left: -4px;
+  top: calc(50% - 4.5px);
+  left: -4.5px;
   cursor: ew-resize;
 }
 
 /* Rotation zones outside corners */
 .rotateZone {
   position: absolute;
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   pointer-events: auto;
-  cursor: crosshair;
-  z-index: 5;
+  cursor: grab;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rotateZone:active {
+  cursor: grabbing;
+}
+
+.rotateCornerIcon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background-color: rgba(15, 23, 42, 0.92);
+  border: 1.5px solid var(--mx-selection, #3b82f6);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+  pointer-events: none;
+}
+
+.rotateZone:hover .rotateCornerIcon,
+.rotateZoneActive .rotateCornerIcon {
+  opacity: 1;
+  background-color: var(--mx-selection, #3b82f6);
 }
 
 .rotTopLeft {
-  top: -16px;
-  left: -16px;
+  top: -25px;
+  left: -25px;
 }
 
 .rotTopRight {
-  top: -16px;
-  right: -16px;
+  top: -25px;
+  right: -25px;
 }
 
 .rotBottomLeft {
-  bottom: -16px;
-  left: -16px;
+  bottom: -25px;
+  left: -25px;
 }
 
 .rotBottomRight {
-  bottom: -16px;
-  right: -16px;
+  bottom: -25px;
+  right: -25px;
+}
+
+/* Layer composite bounding box handles */
+.handle {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  background-color: #ffffff;
+  border: 1.5px solid #3b82f6;
+  border-radius: 1px;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.handleTl {
+  top: -4px;
+  left: -4px;
+}
+
+.handleTc {
+  top: -4px;
+  left: calc(50% - 3.5px);
+}
+
+.handleTr {
+  top: -4px;
+  right: -4px;
+}
+
+.handleMr {
+  top: calc(50% - 3.5px);
+  right: -4px;
+}
+
+.handleBr {
+  bottom: -4px;
+  right: -4px;
+}
+
+.handleBc {
+  bottom: -4px;
+  left: calc(50% - 3.5px);
+}
+
+.handleBl {
+  bottom: -4px;
+  left: -4px;
+}
+
+.handleMl {
+  top: calc(50% - 3.5px);
+  left: -4px;
 }
 
 /* Subselect Vector Editing */
@@ -224,11 +312,15 @@
 
 .subselectHandleCircle {
   pointer-events: all;
-  cursor: crosshair;
+  cursor: grab;
   fill: #38bdf8;
   stroke: #0f172a;
   stroke-width: 1.5;
   transition: r 0.1s ease;
+}
+
+.subselectHandleCircle:active {
+  cursor: grabbing;
 }
 
 .subselectHandleCircle:hover {
@@ -281,6 +373,35 @@
   border: 1.5px dashed var(--mx-accent);
   border-radius: 50%;
   background-color: rgba(59, 130, 246, 0.15);
+}
+
+/* Star Live Drawing Preview */
+.starPreviewOverlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 105;
+  overflow: visible;
+}
+
+.starHudBadge {
+  position: absolute;
+  z-index: 120;
+  pointer-events: none;
+  background: rgba(15, 23, 42, 0.94);
+  color: #f8fafc;
+  border: 1px solid rgba(59, 130, 246, 0.6);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+  user-select: none;
 }
 
 /* Marquee selection box */
@@ -573,8 +694,8 @@
 
 .pivotHandle {
   position: absolute;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   transform: translate(-50%, -50%);
   pointer-events: auto;
   cursor: move;
@@ -584,109 +705,157 @@
   justify-content: center;
 }
 
-.pivotRing {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1.5px solid var(--mx-selection);
-  background-color: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+.pivotIcon {
+  color: var(--mx-selection, #3b82f6);
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.95)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+  transition: transform 0.12s ease, color 0.12s ease;
 }
 
-.pivotCrosshairH {
-  position: absolute;
-  width: 14px;
-  height: 1px;
-  background-color: var(--mx-selection);
-}
-
-.pivotCrosshairV {
-  position: absolute;
-  width: 1px;
-  height: 14px;
-  background-color: var(--mx-selection);
+.pivotHandle:hover .pivotIcon {
+  transform: scale(1.2);
+  color: #60a5fa;
 }
 
 /* ========================================================================= *
- * Skew Handles (Shear along X and Y)
+ * Skew Handles (Shear along X and Y - Positioned outside edges like rotation)
  * ========================================================================= */
 
 .skewZoneTop {
   position: absolute;
-  top: -8px;
-  left: 20%;
-  width: 60%;
-  height: 10px;
+  top: -28px;
+  left: calc(50% - 11px);
+  width: 22px;
+  height: 22px;
   pointer-events: auto;
-  cursor: col-resize;
-  z-index: 10;
+  cursor: ew-resize;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .skewZoneBottom {
   position: absolute;
-  bottom: -8px;
-  left: 20%;
-  width: 60%;
-  height: 10px;
+  bottom: -28px;
+  left: calc(50% - 11px);
+  width: 22px;
+  height: 22px;
   pointer-events: auto;
-  cursor: col-resize;
-  z-index: 10;
+  cursor: ew-resize;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .skewZoneLeft {
   position: absolute;
-  left: -8px;
-  top: 20%;
-  width: 10px;
-  height: 60%;
+  left: -28px;
+  top: calc(50% - 11px);
+  width: 22px;
+  height: 22px;
   pointer-events: auto;
-  cursor: row-resize;
-  z-index: 10;
+  cursor: ns-resize;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .skewZoneRight {
   position: absolute;
-  right: -8px;
-  top: 20%;
-  width: 10px;
-  height: 60%;
+  right: -28px;
+  top: calc(50% - 11px);
+  width: 22px;
+  height: 22px;
   pointer-events: auto;
-  cursor: row-resize;
-  z-index: 10;
+  cursor: ns-resize;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.skewHandleBarH {
+.skewZoneTop:active,
+.skewZoneBottom:active {
+  cursor: ew-resize;
+}
+
+.skewZoneLeft:active,
+.skewZoneRight:active {
+  cursor: ns-resize;
+}
+
+.skewIconBadge {
   position: absolute;
-  top: 3px;
-  left: calc(50% - 12px);
-  width: 24px;
-  height: 3px;
-  background-color: #38bdf8;
-  border-radius: 2px;
-  opacity: 0.7;
-  transition: opacity 0.1s ease;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background-color: rgba(15, 23, 42, 0.92);
+  border: 1.5px solid #38bdf8;
+  color: #38bdf8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+  pointer-events: none;
+  z-index: 16;
 }
 
-.skewZoneTop:hover .skewHandleBarH,
-.skewZoneBottom:hover .skewHandleBarH {
+.skewZoneTop:hover .skewIconBadge,
+.skewZoneBottom:hover .skewIconBadge,
+.skewZoneLeft:hover .skewIconBadge,
+.skewZoneRight:hover .skewIconBadge,
+.skewZoneActive .skewIconBadge {
   opacity: 1;
+  background-color: #0284c7;
+  color: #ffffff;
 }
 
-.skewHandleBarV {
+.skewStem {
   position: absolute;
-  left: 3px;
-  top: calc(50% - 12px);
-  width: 3px;
-  height: 24px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
   background-color: #38bdf8;
-  border-radius: 2px;
-  opacity: 0.7;
-  transition: opacity 0.1s ease;
 }
 
-.skewZoneLeft:hover .skewHandleBarV,
-.skewZoneRight:hover .skewHandleBarV {
-  opacity: 1;
+.skewZoneTop .skewStem {
+  top: 20px;
+  left: calc(50% - 0.5px);
+  width: 1px;
+  height: 8px;
+}
+
+.skewZoneBottom .skewStem {
+  bottom: 20px;
+  left: calc(50% - 0.5px);
+  width: 1px;
+  height: 8px;
+}
+
+.skewZoneLeft .skewStem {
+  left: 20px;
+  top: calc(50% - 0.5px);
+  width: 8px;
+  height: 1px;
+}
+
+.skewZoneRight .skewStem {
+  right: 20px;
+  top: calc(50% - 0.5px);
+  width: 8px;
+  height: 1px;
+}
+
+.skewZoneTop:hover .skewStem,
+.skewZoneBottom:hover .skewStem,
+.skewZoneLeft:hover .skewStem,
+.skewZoneRight:hover .skewStem,
+.skewZoneActive .skewStem {
+  opacity: 0.7;
 }
 
 /* ========================================================================= *

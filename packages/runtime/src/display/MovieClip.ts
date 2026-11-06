@@ -11,6 +11,8 @@ import type {
   SymbolDef,
   SymbolBehavior,
   Library,
+  PlayMode,
+  ArtboardTransition,
 } from '../schema';
 import { DisplayObject } from './DisplayObject';
 import { createContextProxy } from './contextProxy';
@@ -26,6 +28,9 @@ export class MovieClip extends DisplayObject implements MovieClipAPI {
   public behavior?: SymbolBehavior;
   public library?: Library;
   public timelineController?: TimelineController;
+  public playMode?: PlayMode;
+  public autoplay?: boolean;
+  public loop?: boolean;
 
   public _currentFrame = 1; // 1-based frame number
   public _isPlaying = true;
@@ -75,6 +80,18 @@ export class MovieClip extends DisplayObject implements MovieClipAPI {
     } else {
       this.seekInternal(frame);
     }
+  }
+
+  public override gotoArtboard(idOrName: string, transition?: ArtboardTransition): void {
+    if (
+      this.timelineController &&
+      (this.timelineController as any).pipeline &&
+      typeof ((this.timelineController as any).pipeline as any).gotoArtboard === 'function'
+    ) {
+      ((this.timelineController as any).pipeline as any).gotoArtboard(idOrName, transition);
+      return;
+    }
+    super.gotoArtboard(idOrName, transition);
   }
 
   public nextFrame(): void {
@@ -144,13 +161,33 @@ export class MovieClip extends DisplayObject implements MovieClipAPI {
 
   // --- Display List & Children ---
 
+  public getInstance<T extends DisplayObjectAPI = MovieClipContext>(nameOrId: string): T | null {
+    if (!nameOrId) return null;
+    const byName = this._childrenByName.get(nameOrId);
+    if (byName) return byName.context as unknown as T;
+    const byId = this._children.find((c) => c.id === nameOrId || c.name === nameOrId);
+    if (byId) return byId.context as unknown as T;
+    return null;
+  }
+
   public getChild<T extends DisplayObjectAPI = MovieClipContext>(name: InstanceName): T | null {
-    const child = this._childrenByName.get(name);
+    const child = this.getChildRaw(name);
+    return child ? (child.context as unknown as T) : null;
+  }
+
+  public getChildAt<T extends DisplayObjectAPI = MovieClipContext>(index: number): T | null {
+    const child = this._children[index];
     return child ? (child.context as unknown as T) : null;
   }
 
   public getChildRaw(name: InstanceName): DisplayObject | null {
-    return this._childrenByName.get(name) ?? null;
+    const byName = this._childrenByName.get(name);
+    if (byName) return byName;
+    return this._children.find((c) => c.id === name || c.name === name) ?? null;
+  }
+
+  public getChildRawAt(index: number): DisplayObject | null {
+    return this._children[index] ?? null;
   }
 
   public getChildByPath<T extends DisplayObjectAPI = MovieClipContext>(path: string): T | null {

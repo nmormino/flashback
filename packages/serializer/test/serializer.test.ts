@@ -876,6 +876,80 @@ describe('@flashback/serializer', () => {
       };
       expect(() => validate(good)).not.toThrow();
     });
+
+    it('validates document with video, i18n, breakpoints, reducedMotion, and direct bitmap src', () => {
+      const advancedDoc = JSON.parse(JSON.stringify(validBaseDoc));
+      advancedDoc.stage.reducedMotion = {
+        mode: 'stop-motion',
+        posterFrame: 1,
+        stopMotionFps: 6,
+      };
+      advancedDoc.stage.breakpoints = [
+        {
+          id: 'bp1',
+          name: 'mobile',
+          maxWidth: 600,
+          width: 375,
+          height: 667,
+        },
+      ];
+      advancedDoc.i18n = {
+        defaultLocale: 'en',
+        locales: {
+          en: { title: 'Hello', desc: 'World' },
+          es: { title: 'Hola', desc: 'Mundo' },
+        },
+      };
+      advancedDoc.root.layers[0].keyframes[0].elements.push(
+        {
+          id: 'video_el_1',
+          type: 'video',
+          src: 'https://example.com/stream.mp4',
+          width: 640,
+          height: 360,
+          autoplay: true,
+          loop: false,
+          controls: true,
+          transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0, pin: 'center' },
+          alpha: 1,
+          visible: true,
+        },
+        {
+          id: 'direct_bmp_1',
+          type: 'bitmap',
+          bitmapId: 'external_bmp',
+          src: 'https://example.com/pic.png',
+          width: 300,
+          height: 200,
+          transform: { x: 10, y: 10, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0, pin: 'top-left' },
+          alpha: 1,
+          visible: true,
+        },
+        {
+          id: 'i18n_text_1',
+          type: 'text',
+          mode: 'static',
+          text: 'Hello',
+          i18nKey: 'title',
+          fontId: 'f1',
+          fontSize: 20,
+          color: '#333333',
+          align: 'center',
+          width: 150,
+          height: 40,
+          multiline: false,
+          selectable: false,
+          transform: { x: 50, y: 50, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 },
+          alpha: 1,
+          visible: true,
+        }
+      );
+
+      expect(() => validate(advancedDoc)).not.toThrow();
+
+      // Ensure round-trip serialization works without errors
+      roundTrip(advancedDoc);
+    });
   });
 
   describe('hydrate() and compileScript()', () => {
@@ -1014,6 +1088,87 @@ describe('@flashback/serializer', () => {
       const elCtx: any = {};
       el.events.onPress.call(elCtx, {});
       expect(elCtx.pressed).toBe(true);
+    });
+  });
+
+  describe('Phase 4: Component instance serialization & validation', () => {
+    const baseDoc: EditorDocument = {
+      version: 1,
+      meta: { name: 'test' },
+      stage: { width: 550, height: 400, fps: 24, background: { type: 'solid', color: '#ffffff' }, scaleMode: 'showAll' },
+      library: {
+        symbols: {
+          sym_box: {
+            id: 'sym_box',
+            name: 'Box',
+            kind: 'movieclip',
+            timeline: { frameCount: 1, layers: [] },
+          },
+        },
+      },
+      root: {
+        frameCount: 1,
+        layers: [
+          {
+            id: 'l1',
+            name: 'Layer 1',
+            keyframes: [
+              {
+                id: 'kf1',
+                index: 0,
+                duration: 1,
+                elements: [
+                  {
+                    id: 'inst_1',
+                    type: 'instance',
+                    symbolId: 'sym_box',
+                    instanceName: 'box1',
+                    playMode: 'loop',
+                    autoplay: true,
+                    loop: true,
+                    transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 },
+                    alpha: 1,
+                    visible: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    it('omits defaults (playMode: loop, autoplay: true, loop: true) in concise serialization', () => {
+      const serialized = serialize(baseDoc);
+      expect(serialized).not.toContain('playMode');
+      expect(serialized).not.toContain('autoplay');
+      expect(serialized).not.toContain('loop: true');
+    });
+
+    it('preserves non-default playMode, autoplay, and loop', () => {
+      const nonDefaultDoc: EditorDocument = JSON.parse(JSON.stringify(baseDoc));
+      const el = nonDefaultDoc.root.layers[0].keyframes[0].elements[0] as any;
+      el.playMode = 'once';
+      el.autoplay = false;
+      el.loop = false;
+
+      const serialized = serialize(nonDefaultDoc);
+      expect(serialized).toContain('playMode: "once"');
+      expect(serialized).toContain('autoplay: false');
+      expect(serialized).toContain('loop: false');
+    });
+
+    it('validates playMode accepts valid modes and rejects invalid modes', () => {
+      const validDoc: EditorDocument = JSON.parse(JSON.stringify(baseDoc));
+      const el = validDoc.root.layers[0].keyframes[0].elements[0] as any;
+
+      for (const mode of ['loop', 'once', 'stop', 'sync']) {
+        el.playMode = mode;
+        expect(() => validate(validDoc)).not.toThrow();
+      }
+
+      el.playMode = 'invalid-mode';
+      expect(() => validate(validDoc)).toThrow(ValidationError);
     });
   });
 });

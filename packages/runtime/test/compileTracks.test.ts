@@ -11,16 +11,26 @@ import type { TimelineDef, LayerDef, DisplayElement } from '../src/schema';
 
 describe('WAAPI Track Compiler (compileTracks)', () => {
   describe('Rotation Normalization', () => {
-    it('takes shortest path when rotate is undefined (Flash default)', () => {
-      // 350 to 10 is +20 deg (shortest path)
-      const r1 = normalizeRotation(350, 10);
-      expect(r1.startRot).toBe(350);
-      expect(r1.endRot).toBe(370);
+    it('interpolates absolute values linearly when rotate is undefined (After Effects / Blender semantics)', () => {
+      // 0 to 720 spins twice
+      const r1 = normalizeRotation(0, 720);
+      expect(r1.startRot).toBe(0);
+      expect(r1.endRot).toBe(720);
 
-      // 10 to 350 is -20 deg
-      const r2 = normalizeRotation(10, 350);
-      expect(r2.startRot).toBe(10);
-      expect(r2.endRot).toBe(-10);
+      // 0 to -360 spins once backwards
+      const r2 = normalizeRotation(0, -360);
+      expect(r2.startRot).toBe(0);
+      expect(r2.endRot).toBe(-360);
+
+      // -450 to 720 multi-turn spins
+      const r3 = normalizeRotation(-450, 720);
+      expect(r3.startRot).toBe(-450);
+      expect(r3.endRot).toBe(720);
+
+      // 350 to 10 interpolates directly
+      const r4 = normalizeRotation(350, 10);
+      expect(r4.startRot).toBe(350);
+      expect(r4.endRot).toBe(10);
     });
 
     it('handles explicit CW multi-turn rotation', () => {

@@ -9,6 +9,7 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
+    "puppeteer": "^25.16.0",
     "turbo": "^2.4.4",
     "typescript": "^5.7.3"
   }

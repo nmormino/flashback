@@ -123,4 +123,91 @@ describe('Timeline & playhead reconciliation', () => {
     expect(ctx.currentFrame).toBe(3);
     expect(ctx.isPlaying).toBe(false);
   });
+
+  it('interpolates multi-turn rotation (720 deg and -450 deg) linearly without shortest-path clamp', () => {
+    const multiTurnDoc: AnimDocument = {
+      version: '1.0',
+      stage: { width: 400, height: 400, fps: 24, background: { type: 'solid', color: '#000000' } },
+      library: { symbols: {}, fonts: {}, bitmaps: {}, audio: {} },
+      root: {
+        id: 'main',
+        name: 'Main',
+        frameCount: 25,
+        layers: [
+          {
+            id: 'layer1',
+            name: 'Layer 1',
+            kind: 'normal',
+            keyframes: [
+              {
+                id: 'kf1',
+                index: 0,
+                duration: 12,
+                tween: { type: 'motion', easing: { type: 'linear' } },
+                elements: [
+                  {
+                    id: 'spinEl',
+                    type: 'shape',
+                    paths: [{ d: 'M0 0 L20 20 Z' }],
+                    transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
+                  },
+                ],
+              },
+              {
+                id: 'kf2',
+                index: 12,
+                duration: 12,
+                tween: { type: 'motion', easing: { type: 'linear' } },
+                elements: [
+                  {
+                    id: 'spinEl',
+                    type: 'shape',
+                    paths: [{ d: 'M0 0 L20 20 Z' }],
+                    transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 720 },
+                  },
+                ],
+              },
+              {
+                id: 'kf3',
+                index: 24,
+                duration: 1,
+                elements: [
+                  {
+                    id: 'spinEl',
+                    type: 'shape',
+                    paths: [{ d: 'M0 0 L20 20 Z' }],
+                    transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: -450 },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const pipeline = new TimelinePipeline(multiTurnDoc);
+    pipeline.init();
+
+    // Frame 0: 0 deg
+    pipeline.rootTimeline.reconcileDisplayList(0);
+    expect(pipeline.root._childrenByElementId.get('spinEl')!.rotation).toBe(0);
+
+    // Frame 6 (midway between 0 and 12): should be 360 deg (1 full spin)
+    pipeline.rootTimeline.reconcileDisplayList(6);
+    expect(pipeline.root._childrenByElementId.get('spinEl')!.rotation).toBe(360);
+
+    // Frame 12: should be 720 deg (2 full spins)
+    pipeline.rootTimeline.reconcileDisplayList(12);
+    expect(pipeline.root._childrenByElementId.get('spinEl')!.rotation).toBe(720);
+
+    // Frame 18 (midway between 720 and -450):
+    // 720 + (-450 - 720) * 0.5 = 720 - 585 = 135 deg
+    pipeline.rootTimeline.reconcileDisplayList(18);
+    expect(pipeline.root._childrenByElementId.get('spinEl')!.rotation).toBe(135);
+
+    // Frame 24: should be -450 deg
+    pipeline.rootTimeline.reconcileDisplayList(24);
+    expect(pipeline.root._childrenByElementId.get('spinEl')!.rotation).toBe(-450);
+  });
 });

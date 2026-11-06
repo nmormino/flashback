@@ -2,7 +2,7 @@
  * Hydration helper: compiles `{ __fn: string }` script sources into real
  * JavaScript Function objects using `new Function(...)`.
  */
-import type { AnimDocument } from '@flashback/runtime';
+import { ScriptVM, type AnimDocument } from '@flashback/runtime';
 import { normalizeSource, toFunctionSource } from './script.js';
 import { isScriptSource, type EditorDocument } from './types.js';
 
@@ -12,7 +12,7 @@ import { isScriptSource, type EditorDocument } from './types.js';
 export function compileScript(source: string, path: string = ''): Function {
   const norm = normalizeSource(source, path, true);
   try {
-    return new Function(`return (${toFunctionSource(norm)});`)();
+    return ScriptVM.compile(toFunctionSource(norm), path);
   } catch (err: any) {
     throw new Error(
       path

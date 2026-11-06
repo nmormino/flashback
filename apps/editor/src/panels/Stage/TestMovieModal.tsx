@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { WebAnim } from '@flashback/runtime';
 import '@flashback/runtime';
 import { hydrate } from '@flashback/serializer';
@@ -10,16 +11,39 @@ export const TestMovieModal: React.FC = () => {
   const doc = useEditorStore((s) => s.doc);
   const webAnimRef = useRef<WebAnim | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [currentSize, setCurrentSize] = useState<{ width: number; height: number }>({
+    width: doc.stage.width || 550,
+    height: doc.stage.height || 400,
+  });
 
   useEffect(() => {
     if (!isOpen) return;
     setErrorMsg(null);
+    setCurrentSize({
+      width: doc.stage.width || 550,
+      height: doc.stage.height || 400,
+    });
 
     try {
       const animDoc = hydrate(doc);
-      if (webAnimRef.current) {
-        webAnimRef.current.animation = animDoc;
-        webAnimRef.current.play();
+      const el = webAnimRef.current;
+      if (el) {
+        el.animation = animDoc;
+        el.play();
+
+        const onArtboardChange = (e: any) => {
+          if (e.detail?.artboard) {
+            setCurrentSize({
+              width: e.detail.artboard.width || doc.stage.width || 550,
+              height: e.detail.artboard.height || doc.stage.height || 400,
+            });
+          }
+        };
+
+        el.addEventListener('artboardchange', onArtboardChange);
+        return () => {
+          el.removeEventListener('artboardchange', onArtboardChange);
+        };
       }
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -28,8 +52,8 @@ export const TestMovieModal: React.FC = () => {
 
   if (!isOpen) return null;
 
-  const width = doc.stage.width || 550;
-  const height = doc.stage.height || 400;
+  const width = currentSize.width;
+  const height = currentSize.height;
   const fps = doc.stage.fps || 24;
 
   const handleRewind = () => {
@@ -57,12 +81,12 @@ export const TestMovieModal: React.FC = () => {
     }
   };
 
-  return (
+  const content = (
     <div className={styles.modalOverlay} onClick={() => editorActions.setTestMovieOpen(false)}>
       <div className={styles.modalWindow} onClick={(e) => e.stopPropagation()}>
         <div className={styles.titleBar}>
           <div className={styles.titleText}>
-            <span>Flash Player — {doc.meta.name || 'Untitled'}.swf</span>
+            <span>Flashback Preview — {doc.meta.name || 'Untitled'}</span>
           </div>
           <button
             type="button"
@@ -104,6 +128,7 @@ export const TestMovieModal: React.FC = () => {
                   display: 'block',
                   width: '100%',
                   height: '100%',
+                  pointerEvents: 'auto',
                 }}
               />
             )}
@@ -132,4 +157,6 @@ export const TestMovieModal: React.FC = () => {
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 };

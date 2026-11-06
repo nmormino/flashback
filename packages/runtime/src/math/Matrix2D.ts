@@ -197,6 +197,42 @@ export class Matrix2D {
     return [this.a, this.b, this.c, this.d, this.tx, this.ty];
   }
 
+  public isIdentity(epsilon = 1e-6): boolean {
+    return (
+      Math.abs(this.a - 1) <= epsilon &&
+      Math.abs(this.b) <= epsilon &&
+      Math.abs(this.c) <= epsilon &&
+      Math.abs(this.d - 1) <= epsilon &&
+      Math.abs(this.tx) <= epsilon &&
+      Math.abs(this.ty) <= epsilon
+    );
+  }
+
+  public decompose(): Transform {
+    const x = cleanNumber(this.tx);
+    const y = cleanNumber(this.ty);
+    const det = this.a * this.d - this.b * this.c;
+    const scaleX = Math.sqrt(this.a * this.a + this.b * this.b);
+    const rotationRad = Math.atan2(this.b, this.a);
+    const rotation = cleanNumber((rotationRad * 180) / Math.PI);
+    const sign = det < 0 ? -1 : 1;
+    const scaleY = sign * Math.sqrt(this.c * this.c + this.d * this.d);
+    const skewXRad = Math.atan2(-this.c, this.d) - rotationRad;
+    const skewX = cleanNumber((skewXRad * 180) / Math.PI);
+
+    return {
+      x,
+      y,
+      scaleX: cleanNumber(scaleX),
+      scaleY: cleanNumber(scaleY),
+      rotation,
+      skewX,
+      skewY: 0,
+      originX: 0,
+      originY: 0,
+    };
+  }
+
   public clone(): Matrix2D {
     return new Matrix2D(this.a, this.b, this.c, this.d, this.tx, this.ty);
   }

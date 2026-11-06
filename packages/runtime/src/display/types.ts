@@ -1,4 +1,4 @@
-import type { StageAPI, MovieClipContext } from '../schema';
+import type { StageAPI, MovieClipContext, Artboard, ArtboardTransition } from '../schema';
 import type { DisplayObject } from './DisplayObject';
 
 export interface RendererHooks {
@@ -7,6 +7,7 @@ export interface RendererHooks {
   onVisibleChange?(target: DisplayObject): void;
   onFiltersChange?(target: DisplayObject): void;
   onColorTransformChange?(target: DisplayObject): void;
+  onDefChange?(target: DisplayObject): void;
   onChildAdded?(parent: DisplayObject, child: DisplayObject): void;
   onChildRemoved?(parent: DisplayObject, child: DisplayObject): void;
   onDestroy?(target: DisplayObject): void;
@@ -19,12 +20,21 @@ export class HeadlessStage implements StageAPI {
   public mouseX = 0;
   public mouseY = 0;
   public readonly global: Record<string, unknown> = {};
+  public activeArtboardId?: string;
+  public artboards?: Artboard[];
+  public onGotoArtboard?: (idOrName: string, transition?: ArtboardTransition) => void;
   private keysDown = new Set<string>();
 
   constructor(width = 550, height = 400, fps = 24) {
     this.width = width;
     this.height = height;
     this.fps = fps;
+  }
+
+  public gotoArtboard(idOrName: string, transition?: ArtboardTransition): void {
+    if (this.onGotoArtboard) {
+      this.onGotoArtboard(idOrName, transition);
+    }
   }
 
   public isKeyDown(code: string): boolean {

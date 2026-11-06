@@ -349,4 +349,208 @@ describe('Time-Based Timeline and Unified Scene Graph', () => {
       editorActions.stop();
     });
   });
+
+  describe('4. Draggable Keyframes, Independent Element Tracks, and Nestable Scene Hierarchy', () => {
+    it('drags and repositions keyframe to a new time/frame via editorActions.moveKeyframe', () => {
+      const rectEl: EditorElement = {
+        id: 'drag_kf_rect',
+        type: 'shape',
+        transform: { x: 10, y: 10, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 },
+        paths: [],
+        alpha: 1,
+        visible: true,
+      };
+
+      editorActions.addElement(rectEl);
+      const layerId = getEditorState().doc.root.layers[0].id;
+
+      // Insert keyframe at 1.0s (frame 24)
+      editorActions.insertKeyframe(layerId, 1.0);
+      let layer = getEditorState().doc.root.layers[0];
+      expect(layer.keyframes).toHaveLength(2);
+      expect(layer.keyframes[1].index).toBe(24);
+      expect(layer.keyframes[1].time).toBeCloseTo(1.0, 3);
+
+      // Drag keyframe from 1.0s to 1.75s (frame 42)
+      editorActions.moveKeyframe(layerId, 24, 1.75);
+      layer = getEditorState().doc.root.layers[0];
+      expect(layer.keyframes).toHaveLength(2);
+      expect(layer.keyframes[1].index).toBe(42);
+      expect(layer.keyframes[1].time).toBeCloseTo(1.75, 3);
+      // Keyframes remain sorted
+      expect(layer.keyframes[0].index).toBe(0);
+      expect(layer.keyframes[1].index).toBe(42);
+      expect(layer.keyframes[0].duration).toBe(42);
+
+      // Drag keyframe past the end of the timeline (e.g. 5.0s / 120 frames)
+      editorActions.moveKeyframe(layerId, 42, 5.0);
+      layer = getEditorState().doc.root.layers[0];
+      expect(layer.keyframes[1].index).toBe(120);
+      expect(layer.keyframes[1].time).toBeCloseTo(5.0, 3);
+      // Timeline total frame count and total duration expand to 5.0s
+      expect(getEditorState().doc.root.frameCount).toBe(120);
+      expect(computeTotalTimelineDuration(getEditorState().doc.root, 24)).toBeCloseTo(5.0, 3);
+
+      // Drag keyframe back earlier (e.g. 1.5s / 36 frames) -> total collapses back down to last keyframe
+      editorActions.moveKeyframe(layerId, 120, 1.5);
+      layer = getEditorState().doc.root.layers[0];
+      expect(layer.keyframes[1].index).toBe(36);
+      expect(layer.keyframes[1].time).toBeCloseTo(1.5, 3);
+      expect(getEditorState().doc.root.frameCount).toBe(36);
+      expect(computeTotalTimelineDuration(getEditorState().doc.root, 24)).toBeCloseTo(1.5, 3);
+
+      // Clamps negative time to >= 0
+      editorActions.moveKeyframe(layerId, 0, -2.5);
+      layer = getEditorState().doc.root.layers[0];
+      expect(layer.keyframes[0].time).toBeGreaterThanOrEqual(0);
+      expect(layer.keyframes[0].index).toBeGreaterThanOrEqual(0);
+
+      // Collision avoidance: dragging toward another keyframe avoids occupying exact duplicate index
+      editorActions.moveKeyframe(layerId, 36, 0); // try to collide with keyframe at 0
+      layer = getEditorState().doc.root.layers[0];
+      // Should avoid collision: frame is clamped or nudged
+      expect(layer.keyframes[0].index).not.toBe(layer.keyframes[1].index);
+      expect(layer.keyframes[0].index).toBeLessThan(layer.keyframes[1].index);
+    });
+
+    it('ensures adding a keyframe to Element A does NOT add keyframes to sibling Element B or parent group/folder', () => {
+      // Create a Group/Folder
+      editorActions.addFolder('Characters Group');
+      const folder = getEditorState().doc.root.layers.find((l) => l.name === 'Characters Group')!;
+      expect(folder).toBeDefined();
+
+      // Add Element A under the folder
+      editorActions.selectLayer(folder.id);
+      const elA: EditorElement = {
+        id: 'hero_sprite',
+        type: 'shape',
+        transform: { x: 50, y: 50, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 },
+        paths: [],
+        alpha: 1,
+        visible: true,
+      };
+      editorActions.addElement(elA);
+
+      // Add Element B under the folder
+      editorActions.selectLayer(folder.id);
+      const elB: EditorElement = {
+        id: 'villain_sprite',
+        type: 'shape',
+        transform: { x: 150, y: 50, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 },
+        paths: [],
+        alpha: 1,
+        visible: true,
+      };
+      editorActions.addElement(elB);
+
+      // Verify each element has its own track under the folder
+      const stateBeforeKf = getEditorState();
+      const trackA = stateBeforeKf.doc.root.layers.find((l) =>
+        l.keyframes.some((k) => k.elements.some((e) => e.id === 'hero_sprite'))
+      )!;
+      const trackB = stateBeforeKf.doc.root.layers.find((l) =>
+        l.keyframes.some((k) => k.elements.some((e) => e.id === 'villain_sprite'))
+      )!;
+
+      expect(trackA).toBeDefined();
+      expect(trackB).toBeDefined();
+      expect(trackA.id).not.toBe(trackB.id);
+      expect(trackA.keyframes).toHaveLength(1);
+      expect(trackB.keyframes).toHaveLength(1);
+
+      // Select Element A and insert keyframe at 1.5s
+      editorActions.selectElement('hero_sprite');
+      editorActions.setPlayheadTime(1.5);
+      editorActions.insertKeyframe(undefined, 1.5);
+
+      const stateAfterKf = getEditorState();
+      const updatedTrackA = stateAfterKf.doc.root.layers.find((l) => l.id === trackA.id)!;
+      const updatedTrackB = stateAfterKf.doc.root.layers.find((l) => l.id === trackB.id)!;
+      const updatedFolder = stateAfterKf.doc.root.layers.find((l) => l.id === folder.id)!;
+
+      // Element A has the new keyframe at 1.5s
+      expect(updatedTrackA.keyframes).toHaveLength(2);
+      expect(getKeyframeTime(updatedTrackA.keyframes[1])).toBeCloseTo(1.5, 3);
+
+      // Sibling Element B NEVER received a keyframe! Still has only 1 keyframe!
+      expect(updatedTrackB.keyframes).toHaveLength(1);
+      expect(getKeyframeTime(updatedTrackB.keyframes[0])).toBe(0);
+      expect(updatedTrackB.keyframes.some((k) => Math.abs(getKeyframeTime(k) - 1.5) < 0.05)).toBe(false);
+
+      // Parent Group/Folder NEVER received keyframe diamonds!
+      expect(updatedFolder.keyframes).toHaveLength(1);
+      expect(updatedFolder.keyframes[0].elements).toHaveLength(0);
+
+      // Moving Element A's keyframe does not affect Element B
+      editorActions.moveKeyframe(updatedTrackA.id, 36, 2.0, { elementId: 'hero_sprite' });
+      const trackAAfterMove = getEditorState().doc.root.layers.find((l) => l.id === trackA.id)!;
+      const trackBAfterMove = getEditorState().doc.root.layers.find((l) => l.id === trackB.id)!;
+
+      expect(trackAAfterMove.keyframes[1].time).toBeCloseTo(2.0, 3);
+      expect(trackBAfterMove.keyframes).toHaveLength(1);
+    });
+
+    it('supports multi-level nesting of groups/folders via parentId chain', () => {
+      // Level 1: Root Folder
+      editorActions.addFolder('World');
+      const worldFolder = getEditorState().doc.root.layers.find((l) => l.name === 'World')!;
+      expect(worldFolder).toBeDefined();
+      expect(worldFolder.parentLayerId).toBeUndefined();
+
+      // Level 2: Nested Folder inside World
+      editorActions.selectLayer(worldFolder.id);
+      editorActions.addFolder('Characters');
+      const charsFolder = getEditorState().doc.root.layers.find((l) => l.name === 'Characters')!;
+      expect(charsFolder).toBeDefined();
+      expect(charsFolder.parentLayerId).toBe(worldFolder.id);
+      expect((charsFolder as any).parentId).toBe(worldFolder.id);
+
+      // Level 3: Nested Folder inside Characters
+      editorActions.selectLayer(charsFolder.id);
+      editorActions.addFolder('Enemies');
+      const enemiesFolder = getEditorState().doc.root.layers.find((l) => l.name === 'Enemies')!;
+      expect(enemiesFolder).toBeDefined();
+      expect(enemiesFolder.parentLayerId).toBe(charsFolder.id);
+      expect((enemiesFolder as any).parentId).toBe(charsFolder.id);
+
+      // Level 4: Element Track inside Enemies
+      editorActions.selectLayer(enemiesFolder.id);
+      const goblin: EditorElement = {
+        id: 'goblin_mob',
+        type: 'shape',
+        transform: { x: 300, y: 200, scaleX: 1, scaleY: 1, rotation: 0, skewX: 0, skewY: 0, originX: 0, originY: 0 },
+        paths: [],
+        alpha: 1,
+        visible: true,
+      };
+      editorActions.addElement(goblin);
+
+      const state = getEditorState();
+      const goblinTrack = state.doc.root.layers.find((l) =>
+        l.keyframes.some((k) => k.elements.some((e) => e.id === 'goblin_mob'))
+      )!;
+      expect(goblinTrack).toBeDefined();
+      expect(goblinTrack.parentLayerId).toBe(enemiesFolder.id);
+
+      // Verify the parentId chain from leaf to root:
+      // goblinTrack -> enemiesFolder -> charsFolder -> worldFolder -> root (undefined)
+      let curr = goblinTrack;
+      const ancestry: string[] = [];
+      while (curr.parentLayerId) {
+        ancestry.push(curr.parentLayerId);
+        curr = state.doc.root.layers.find((l) => l.id === curr.parentLayerId)!;
+      }
+      expect(ancestry).toEqual([enemiesFolder.id, charsFolder.id, worldFolder.id]);
+
+      // Reparenting via setLayerParent works seamlessly and prevents circular loops
+      editorActions.setLayerParent(enemiesFolder.id, worldFolder.id);
+      const updatedEnemies = getEditorState().doc.root.layers.find((l) => l.id === enemiesFolder.id)!;
+      expect(updatedEnemies.parentLayerId).toBe(worldFolder.id);
+
+      // Cycle prevention: attempting to set worldFolder's parent to enemiesFolder is ignored
+      editorActions.setLayerParent(worldFolder.id, enemiesFolder.id);
+      const worldAfterCycleAttempt = getEditorState().doc.root.layers.find((l) => l.id === worldFolder.id)!;
+      expect(worldAfterCycleAttempt.parentLayerId).toBeUndefined();
+    });
+  });
 });

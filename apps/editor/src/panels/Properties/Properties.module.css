@@ -296,3 +296,166 @@
   color: #ffffff;
   border-color: var(--mx-accent, #3b82f6);
 }
+
+.alignToolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background-color: var(--mx-bg-canvas, #121316);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-sm);
+  padding: 2px 4px;
+  margin-bottom: 6px;
+}
+
+.alignBtn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--mx-text-muted);
+  border-radius: var(--mx-radius-xs);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.alignBtn:hover {
+  background-color: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+}
+
+/* Star & Polygon Inspector Controls */
+.starTypeBadge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: #60a5fa;
+}
+
+.starPropsSlider {
+  width: 100%;
+  height: 5px;
+  accent-color: var(--mx-accent, #3b82f6);
+  cursor: pointer;
+  margin: 3px 0;
+}
+
+.presetPillsGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.presetPill {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 12px;
+  background: var(--mx-bg-panel);
+  border: 1px solid var(--mx-border-light);
+  color: var(--mx-text-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.presetPill:hover {
+  background: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+  border-color: var(--mx-border);
+}
+
+.presetPill.activePresetPill {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: var(--mx-accent, #3b82f6);
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+/* Custom Vector Path Banner */
+.customPathBanner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  margin: 4px 0 6px 0;
+  border-radius: var(--mx-radius-xs, 4px);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  font-size: 11px;
+}
+
+.customPathTitle {
+  font-weight: 600;
+  color: #f59e0b;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.customPathDesc {
+  color: var(--mx-text-muted, #94a3b8);
+  line-height: 1.35;
+  font-size: 10.5px;
+}
+
+.resetParametricBtn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 4px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  background: var(--mx-bg-panel, #1e293b);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #f59e0b;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.12s ease;
+}
+
+.resetParametricBtn:hover {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.morphBtnGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.morphBtn {
+  flex: 1;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--mx-bg-input, #21252b);
+  border: 1px solid var(--mx-border-light, #3a3f4b);
+  border-radius: 4px;
+  color: var(--mx-text-secondary, #abb2bf);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  transition: all 0.12s ease;
+}
+
+.morphBtn:hover {
+  background: var(--mx-bg-hover, #2c313a);
+  border-color: var(--mx-accent, #3b82f6);
+  color: #ffffff;
+}
