@@ -80,7 +80,13 @@ describe('Element Scripting & Event Execution Pipeline', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    // 3. Type alert('test'); in textarea — auto-saves immediately without clicking Apply
+    // 3. Open code view via </> toggle and type alert('test'); in textarea — auto-saves immediately without clicking Apply
+    const codeToggle = container.querySelector('[data-testid="toggle-code-view-btn"]') as HTMLButtonElement;
+    if (codeToggle) {
+      act(() => {
+        codeToggle.click();
+      });
+    }
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
     expect(textarea).not.toBeNull();
 

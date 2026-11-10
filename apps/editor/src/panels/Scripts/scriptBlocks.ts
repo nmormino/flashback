@@ -3,13 +3,14 @@
  */
 
 export type ScriptBlockCategory =
+  | 'variables'
+  | 'control'
   | 'events'
-  | 'dialogs'
   | 'timeline'
   | 'navigation'
   | 'motion'
-  | 'variables'
   | 'particles'
+  | 'dialogs'
   | 'custom';
 
 export type ScriptBlockType =
@@ -19,6 +20,14 @@ export type ScriptBlockType =
   // Variables
   | 'set_state_var'
   | 'change_state_var'
+  // Control & Logic
+  | 'if_condition'
+  | 'if_else'
+  | 'switch_case'
+  | 'for_each'
+  | 'repeat_times'
+  | 'while_loop'
+  | 'do_while'
   // Dialogs
   | 'alert'
   | 'console_log'
@@ -73,13 +82,6 @@ export interface CategoryMetadata {
 }
 
 export const CATEGORY_METADATA: Record<ScriptBlockCategory, CategoryMetadata> = {
-  events: {
-    id: 'events',
-    name: 'Events',
-    color: '#f59e0b',
-    icon: '⚡',
-    description: 'Custom event bus broadcast and listeners',
-  },
   variables: {
     id: 'variables',
     name: 'State & Variables',
@@ -87,12 +89,19 @@ export const CATEGORY_METADATA: Record<ScriptBlockCategory, CategoryMetadata> = 
     icon: '📦',
     description: 'Read and update reactive state variables',
   },
-  dialogs: {
-    id: 'dialogs',
-    name: 'Dialogs & Logs',
+  control: {
+    id: 'control',
+    name: 'Control & Logic',
+    color: '#0ea5e9',
+    icon: '🔀',
+    description: 'Conditionals, loops, iterations and branching',
+  },
+  events: {
+    id: 'events',
+    name: 'Events',
     color: '#f59e0b',
-    icon: '💬',
-    description: 'Popup alerts and debugging console logs',
+    icon: '⚡',
+    description: 'Custom event bus broadcast and listeners',
   },
   timeline: {
     id: 'timeline',
@@ -104,7 +113,7 @@ export const CATEGORY_METADATA: Record<ScriptBlockCategory, CategoryMetadata> = 
   navigation: {
     id: 'navigation',
     name: 'Navigation & URLs',
-    color: '#8b5cf6',
+    color: '#a855f7',
     icon: '🧭',
     description: 'Switch artboards and open web links',
   },
@@ -122,6 +131,13 @@ export const CATEGORY_METADATA: Record<ScriptBlockCategory, CategoryMetadata> = 
     icon: '🎆',
     description: 'Confetti, splat, sparks, and particle generation',
   },
+  dialogs: {
+    id: 'dialogs',
+    name: 'Dialogs & Logs',
+    color: '#eab308',
+    icon: '💬',
+    description: 'Popup alerts and debugging console logs',
+  },
   custom: {
     id: 'custom',
     name: 'Custom JavaScript',
@@ -132,26 +148,6 @@ export const CATEGORY_METADATA: Record<ScriptBlockCategory, CategoryMetadata> = 
 };
 
 export const BLOCK_CATALOG: BlockCatalogItem[] = [
-  // Events
-  {
-    type: 'emit_custom_event',
-    category: 'events',
-    name: 'Emit Custom Event',
-    summary: 'Broadcast event to other clips and host page',
-    icon: '📡',
-    color: '#f59e0b',
-    defaultParams: { event: 'custom_event', payload: '' },
-  },
-  {
-    type: 'on_custom_event',
-    category: 'events',
-    name: 'Listen for Event',
-    summary: 'Run action when custom event is received',
-    icon: '👂',
-    color: '#f59e0b',
-    defaultParams: { event: 'custom_event', action: 'this.play();' },
-  },
-
   // State Variables
   {
     type: 'set_state_var',
@@ -170,6 +166,100 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
     icon: '➕',
     color: '#8b5cf6',
     defaultParams: { variable: 'score', delta: 1 },
+  },
+
+  // Control & Logic
+  {
+    type: 'if_condition',
+    category: 'control',
+    name: 'If Condition',
+    summary: 'Execute action only if condition is true',
+    icon: '❓',
+    color: '#0ea5e9',
+    defaultParams: { condition: 'this.state.score >= 100', thenAction: 'this.play();' },
+  },
+  {
+    type: 'if_else',
+    category: 'control',
+    name: 'If / Else',
+    summary: 'Branch between two actions based on condition',
+    icon: '🔀',
+    color: '#0ea5e9',
+    defaultParams: {
+      condition: 'this.state.score >= 100',
+      thenAction: 'this.play();',
+      elseAction: 'this.stop();',
+    },
+  },
+  {
+    type: 'switch_case',
+    category: 'control',
+    name: 'Switch / Case',
+    summary: 'Evaluate value against multiple case options',
+    icon: '🗂️',
+    color: '#0ea5e9',
+    defaultParams: {
+      expression: 'this.state.level',
+      case1: '1',
+      action1: 'this.gotoAndPlay(1);',
+      defaultAction: 'this.stop();',
+    },
+  },
+  {
+    type: 'for_each',
+    category: 'control',
+    name: 'For Each Loop',
+    summary: 'Iterate over elements in an array',
+    icon: '🔁',
+    color: '#0ea5e9',
+    defaultParams: { array: '[1, 2, 3]', item: 'item', body: 'console.log(item);' },
+  },
+  {
+    type: 'repeat_times',
+    category: 'control',
+    name: 'Repeat Times',
+    summary: 'Loop and repeat action N times',
+    icon: '🔢',
+    color: '#0ea5e9',
+    defaultParams: { times: 5, indexVar: 'i', body: 'this.spawnClip("Fly", { x: i * 20, y: 50 });' },
+  },
+  {
+    type: 'while_loop',
+    category: 'control',
+    name: 'While Loop',
+    summary: 'Loop while expression evaluates to true',
+    icon: '🔄',
+    color: '#0ea5e9',
+    defaultParams: { condition: 'this.x < 300', body: 'this.x += 10;' },
+  },
+  {
+    type: 'do_while',
+    category: 'control',
+    name: 'Do While Loop',
+    summary: 'Execute once then repeat while condition holds',
+    icon: '🔃',
+    color: '#0ea5e9',
+    defaultParams: { condition: 'this.x < 300', body: 'this.x += 10;' },
+  },
+
+  // Events
+  {
+    type: 'emit_custom_event',
+    category: 'events',
+    name: 'Emit Custom Event',
+    summary: 'Broadcast event to other clips and host page',
+    icon: '📡',
+    color: '#f59e0b',
+    defaultParams: { event: 'custom_event', payload: '' },
+  },
+  {
+    type: 'on_custom_event',
+    category: 'events',
+    name: 'Listen for Event',
+    summary: 'Run action when custom event is received',
+    icon: '👂',
+    color: '#f59e0b',
+    defaultParams: { event: 'custom_event', action: 'this.play();' },
   },
 
   // Dialogs
@@ -559,6 +649,55 @@ export function compileBlocksToJS(blocks: ScriptBlock[]): string {
         statements.push(`this.on('${ev}', () => {\n  ${action}\n});`);
         break;
       }
+      case 'if_condition': {
+        const cond = String(params.condition || 'true').trim();
+        const action = String(params.thenAction || 'this.play();').trim();
+        statements.push(`if (${cond}) {\n  ${action}\n}`);
+        break;
+      }
+      case 'if_else': {
+        const cond = String(params.condition || 'true').trim();
+        const thenAction = String(params.thenAction || 'this.play();').trim();
+        const elseAction = String(params.elseAction || 'this.stop();').trim();
+        statements.push(`if (${cond}) {\n  ${thenAction}\n} else {\n  ${elseAction}\n}`);
+        break;
+      }
+      case 'switch_case': {
+        const expr = String(params.expression || 'val').trim();
+        const case1 = String(params.case1 ?? '1').trim();
+        const action1 = String(params.action1 || '').trim();
+        const defaultAction = String(params.defaultAction || '').trim();
+        statements.push(
+          `switch (${expr}) {\n  case ${case1}:\n    ${action1}\n    break;\n  default:\n    ${defaultAction}\n    break;\n}`
+        );
+        break;
+      }
+      case 'for_each': {
+        const arr = String(params.array || 'items').trim();
+        const it = String(params.item || 'item').trim();
+        const body = String(params.body || 'console.log(item);').trim();
+        statements.push(`for (const ${it} of ${arr}) {\n  ${body}\n}`);
+        break;
+      }
+      case 'repeat_times': {
+        const count = Number(params.times) || 5;
+        const indexVar = String(params.indexVar || 'i').trim();
+        const body = String(params.body || '').trim();
+        statements.push(`for (let ${indexVar} = 0; ${indexVar} < ${count}; ${indexVar}++) {\n  ${body}\n}`);
+        break;
+      }
+      case 'while_loop': {
+        const cond = String(params.condition || 'true').trim();
+        const body = String(params.body || '').trim();
+        statements.push(`while (${cond}) {\n  ${body}\n}`);
+        break;
+      }
+      case 'do_while': {
+        const cond = String(params.condition || 'true').trim();
+        const body = String(params.body || '').trim();
+        statements.push(`do {\n  ${body}\n} while (${cond});`);
+        break;
+      }
       case 'spawn_clip': {
         const clipName = String(params.clipName || '').replace(/'/g, "\\'");
         const x = Number(params.x) || 0;
@@ -667,6 +806,110 @@ export function parseJSIntoBlocks(code: string): ScriptBlock[] {
           x: xMatch ? Number(xMatch[1]) : 0,
           y: yMatch ? Number(yMatch[1]) : 0,
           particleCount: countMatch ? Number(countMatch[1]) : 50,
+        })
+      );
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Control: if_else (if (cond) { ... } else { ... })
+    match = remaining.match(/^if\s*\(([\s\S]*?)\)\s*\{([\s\S]*?)\}\s*else\s*\{([\s\S]*?)\};?/i);
+    if (match) {
+      blocks.push(
+        createBlock('if_else', {
+          condition: match[1].trim(),
+          thenAction: match[2].trim(),
+          elseAction: match[3].trim(),
+        })
+      );
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Control: if_condition (if (cond) { ... })
+    match = remaining.match(/^if\s*\(([\s\S]*?)\)\s*\{([\s\S]*?)\};?/i);
+    if (match) {
+      blocks.push(
+        createBlock('if_condition', {
+          condition: match[1].trim(),
+          thenAction: match[2].trim(),
+        })
+      );
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Control: do_while (do { ... } while (cond);)
+    match = remaining.match(/^do\s*\{([\s\S]*?)\}\s*while\s*\(([\s\S]*?)\);?/i);
+    if (match) {
+      blocks.push(
+        createBlock('do_while', {
+          body: match[1].trim(),
+          condition: match[2].trim(),
+        })
+      );
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Control: while_loop (while (cond) { ... })
+    match = remaining.match(/^while\s*\(([\s\S]*?)\)\s*\{([\s\S]*?)\};?/i);
+    if (match) {
+      blocks.push(
+        createBlock('while_loop', {
+          condition: match[1].trim(),
+          body: match[2].trim(),
+        })
+      );
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Control: repeat_times (for (let i = 0; i < N; i++) { ... })
+    match = remaining.match(
+      /^for\s*\(\s*(?:let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*0;\s*\1\s*<\s*(\d+);\s*\1\s*\+\+\s*\)\s*\{([\s\S]*?)\};?/i
+    );
+    if (match) {
+      blocks.push(
+        createBlock('repeat_times', {
+          indexVar: match[1],
+          times: Number(match[2]),
+          body: match[3].trim(),
+        })
+      );
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Control: for_each (for (const it of arr) { ... })
+    match = remaining.match(
+      /^for\s*\(\s*(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s+of\s+([^\)]+)\)\s*\{([\s\S]*?)\};?/i
+    );
+    if (match) {
+      blocks.push(
+        createBlock('for_each', {
+          item: match[1],
+          array: match[2].trim(),
+          body: match[3].trim(),
+        })
+      );
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Control: switch_case (switch (expr) { ... })
+    match = remaining.match(/^switch\s*\(([\s\S]*?)\)\s*\{([\s\S]*?)\};?/i);
+    if (match) {
+      const expr = match[1].trim();
+      const body = match[2];
+      const caseMatch = body.match(/case\s+([^:]+):([\s\S]*?)(?:break;|$)/i);
+      const defaultMatch = body.match(/default:([\s\S]*?)(?:break;|$)/i);
+      blocks.push(
+        createBlock('switch_case', {
+          expression: expr,
+          case1: caseMatch ? caseMatch[1].trim() : '1',
+          action1: caseMatch ? caseMatch[2].trim() : 'this.gotoAndPlay(1);',
+          defaultAction: defaultMatch ? defaultMatch[1].trim() : 'this.stop();',
         })
       );
       remaining = remaining.slice(match[0].length);

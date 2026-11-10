@@ -9,6 +9,7 @@ import {
 } from '../src/state/editorStore';
 import { StateVariables } from '../src/panels/StateVariables/StateVariables';
 import { Properties } from '../src/panels/Properties/Properties';
+import { Scripts } from '../src/panels/Scripts/Scripts';
 import { MenuBar } from '../src/layout/MenuBar';
 import {
   compileBlocksToJS,
@@ -315,6 +316,174 @@ describe('Editor State & Variables, Custom Events, and Script Blocks', () => {
       expect(blocks[5].type).toBe('emit_particles');
       expect(blocks[5].params.preset).toBe('splat');
       expect(blocks[5].params.particleCount).toBe(40);
+    });
+
+    it('compiles control flow blocks (if, if/else, switch, foreach, repeat, while, do/while) to JavaScript', () => {
+      const ifBlock = createBlock('if_condition', {
+        condition: 'this.state.score >= 100',
+        thenAction: "this.gotoAndPlay('win');",
+      });
+      const ifElseBlock = createBlock('if_else', {
+        condition: 'this.state.lives > 0',
+        thenAction: 'this.play();',
+        elseAction: "this.gotoAndStop('gameover');",
+      });
+      const switchBlock = createBlock('switch_case', {
+        expression: 'this.state.level',
+        case1: '1',
+        action1: 'this.play();',
+        defaultAction: 'this.stop();',
+      });
+      const forEachBlock = createBlock('for_each', {
+        item: 'fly',
+        array: 'this.flies',
+        body: 'fly.x += 5;',
+      });
+      const repeatBlock = createBlock('repeat_times', {
+        times: 3,
+        indexVar: 'i',
+        body: "this.spawnClip('Fly', { x: i * 30, y: 100 });",
+      });
+      const whileBlock = createBlock('while_loop', {
+        condition: 'this.x < 200',
+        body: 'this.x += 10;',
+      });
+      const doWhileBlock = createBlock('do_while', {
+        condition: 'this.y < 150',
+        body: 'this.y += 5;',
+      });
+
+      const js = compileBlocksToJS([
+        ifBlock,
+        ifElseBlock,
+        switchBlock,
+        forEachBlock,
+        repeatBlock,
+        whileBlock,
+        doWhileBlock,
+      ]);
+
+      expect(js).toContain("if (this.state.score >= 100) {\n  this.gotoAndPlay('win');\n}");
+      expect(js).toContain("if (this.state.lives > 0) {\n  this.play();\n} else {\n  this.gotoAndStop('gameover');\n}");
+      expect(js).toContain('switch (this.state.level) {');
+      expect(js).toContain('for (const fly of this.flies) {\n  fly.x += 5;\n}');
+      expect(js).toContain("for (let i = 0; i < 3; i++) {\n  this.spawnClip('Fly', { x: i * 30, y: 100 });\n}");
+      expect(js).toContain('while (this.x < 200) {\n  this.x += 10;\n}');
+      expect(js).toContain('do {\n  this.y += 5;\n} while (this.y < 150);');
+    });
+
+    it('parses control flow statements back into visual blocks', () => {
+      const code = `
+        if (this.state.score >= 50) {
+          this.play();
+        } else {
+          this.stop();
+        }
+        if (this.state.lives <= 0) {
+          this.gotoAndStop(10);
+        }
+        for (const fly of swarm) {
+          fly.alpha = 0.5;
+        }
+        for (let i = 0; i < 4; i++) {
+          this.x += 10;
+        }
+        while (this.alpha < 1) {
+          this.alpha += 0.1;
+        }
+        do {
+          this.rotation += 5;
+        } while (this.rotation < 180);
+      `;
+
+      const blocks = parseJSIntoBlocks(code);
+      expect(blocks).toHaveLength(6);
+      expect(blocks[0].type).toBe('if_else');
+      expect(blocks[0].params.condition).toBe('this.state.score >= 50');
+      expect(blocks[0].params.thenAction).toBe('this.play();');
+      expect(blocks[0].params.elseAction).toBe('this.stop();');
+
+      expect(blocks[1].type).toBe('if_condition');
+      expect(blocks[1].params.condition).toBe('this.state.lives <= 0');
+      expect(blocks[1].params.thenAction).toBe('this.gotoAndStop(10);');
+
+      expect(blocks[2].type).toBe('for_each');
+      expect(blocks[2].params.item).toBe('fly');
+      expect(blocks[2].params.array).toBe('swarm');
+      expect(blocks[2].params.body).toBe('fly.alpha = 0.5;');
+
+      expect(blocks[3].type).toBe('repeat_times');
+      expect(blocks[3].params.indexVar).toBe('i');
+      expect(blocks[3].params.times).toBe(4);
+
+      expect(blocks[4].type).toBe('while_loop');
+      expect(blocks[4].params.condition).toBe('this.alpha < 1');
+
+      expect(blocks[5].type).toBe('do_while');
+      expect(blocks[5].params.condition).toBe('this.rotation < 180');
+    });
+  });
+
+  describe('Scripts Panel UI (Variables View & Code Toggle)', () => {
+    it('displays State & Variables section in Scripts palette and inserts quick variable blocks', async () => {
+      editorActions.addStateVariable({
+        name: 'score',
+        type: 'number',
+        defaultValue: 10,
+        isPublic: true,
+      });
+
+      await act(async () => {
+        root.render(<Scripts />);
+      });
+
+      const varSection = container.querySelector('[data-testid="scripts-variables-section"]');
+      expect(varSection).not.toBeNull();
+      expect(varSection?.textContent).toContain('score');
+      expect(varSection?.textContent).toContain('= 10');
+
+      // Click "+1" quick action pill
+      const plusOneBtn = Array.from(varSection!.querySelectorAll('button')).find(
+        (b) => b.textContent === '+1'
+      );
+      expect(plusOneBtn).toBeDefined();
+
+      await act(async () => {
+        plusOneBtn!.click();
+      });
+
+      // Verify that a block was added into the block stack
+      expect(container.textContent).toContain('Change:');
+    });
+
+    it('hides code view by default and toggles view via </> button', async () => {
+      await act(async () => {
+        root.render(<Scripts />);
+      });
+
+      // Code view column must be hidden by default
+      expect(container.querySelector('[data-testid="scripts-code-column"]')).toBeNull();
+
+      // Find </> toggle button
+      const toggleBtn = container.querySelector('[data-testid="toggle-code-view-btn"]') as HTMLButtonElement;
+      expect(toggleBtn).not.toBeNull();
+      expect(toggleBtn.textContent).toContain('</>');
+      expect(toggleBtn.textContent).toContain('View Code');
+
+      // Click to open code view
+      await act(async () => {
+        toggleBtn.click();
+      });
+
+      expect(container.querySelector('[data-testid="scripts-code-column"]')).not.toBeNull();
+      expect(toggleBtn.textContent).toContain('Hide Code');
+
+      // Click to hide again
+      await act(async () => {
+        toggleBtn.click();
+      });
+
+      expect(container.querySelector('[data-testid="scripts-code-column"]')).toBeNull();
     });
   });
 });

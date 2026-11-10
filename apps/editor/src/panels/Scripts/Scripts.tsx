@@ -91,6 +91,7 @@ export const Scripts: React.FC = () => {
   const [codeDraft, setCodeDraft] = useState<string>('');
   const [blocks, setBlocks] = useState<ScriptBlock[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<ScriptBlockCategory | 'all'>('all');
+  const [isCodeViewOpen, setIsCodeViewOpen] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; isError: boolean } | null>(null);
 
   // Drag and drop block reordering state
@@ -347,19 +348,29 @@ export const Scripts: React.FC = () => {
     return `🖱️ When [${name}] -> ${selectedEvent}`;
   };
 
+  const SCRIPT_CATEGORIES: ScriptBlockCategory[] = [
+    'variables',
+    'control',
+    'events',
+    'timeline',
+    'navigation',
+    'motion',
+    'particles',
+    'dialogs',
+    'custom',
+  ];
+
   // Filter block catalog by category
   const filteredCatalog =
     selectedCategory === 'all'
       ? BLOCK_CATALOG
       : BLOCK_CATALOG.filter((b) => b.category === selectedCategory);
 
-  const categoryGroups = (['dialogs', 'timeline', 'navigation', 'motion', 'custom'] as ScriptBlockCategory[])
-    .map((catKey) => ({
-      category: catKey,
-      meta: CATEGORY_METADATA[catKey],
-      items: filteredCatalog.filter((b) => b.category === catKey),
-    }))
-    .filter((g) => g.items.length > 0);
+  const categoryGroups = SCRIPT_CATEGORIES.map((catKey) => ({
+    category: catKey,
+    meta: CATEGORY_METADATA[catKey],
+    items: filteredCatalog.filter((b) => b.category === catKey),
+  })).filter((g) => g.items.length > 0);
 
   return (
     <div className={styles.actionsContainer}>
@@ -390,6 +401,16 @@ export const Scripts: React.FC = () => {
           </div>
 
           <div className={styles.toolbarActions}>
+            <button
+              type="button"
+              className={`${styles.codeToggleBtn} ${isCodeViewOpen ? styles.codeToggleBtnActive : ''}`}
+              onClick={() => setIsCodeViewOpen(!isCodeViewOpen)}
+              title={isCodeViewOpen ? 'Hide JavaScript Code (</>)' : 'Show JavaScript Code (</>)'}
+              data-testid="toggle-code-view-btn"
+            >
+              <span className={styles.codeIconTag}>&lt;/&gt;</span>
+              <span>{isCodeViewOpen ? 'Hide Code' : 'View Code'}</span>
+            </button>
             <button
               type="button"
               className={styles.secondaryBtn}
@@ -428,23 +449,102 @@ export const Scripts: React.FC = () => {
               >
                 All
               </button>
-              {(['dialogs', 'timeline', 'navigation', 'motion', 'custom'] as ScriptBlockCategory[]).map(
-                (cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    className={`${styles.categoryTab} ${
-                      selectedCategory === cat ? styles.categoryTabActive : ''
-                    }`}
-                    onClick={() => setSelectedCategory(cat)}
-                  >
-                    {CATEGORY_METADATA[cat].icon} {CATEGORY_METADATA[cat].name.split(' ')[0]}
-                  </button>
-                )
-              )}
+              {SCRIPT_CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  className={`${styles.categoryTab} ${
+                    selectedCategory === cat ? styles.categoryTabActive : ''
+                  }`}
+                  onClick={() => setSelectedCategory(cat)}
+                >
+                  {CATEGORY_METADATA[cat].icon} {CATEGORY_METADATA[cat].name.split(' ')[0]}
+                </button>
+              ))}
             </div>
 
             <div className={styles.paletteList}>
+              {/* Accessible State Variables Section */}
+              {(selectedCategory === 'all' || selectedCategory === 'variables') && (
+                <div className={styles.variablesSection} data-testid="scripts-variables-section">
+                  <div className={styles.variablesSectionHeader}>
+                    <div className={styles.variablesSectionTitle}>
+                      <span>📦</span>
+                      <span>State & Variables</span>
+                      <span className={styles.varCountBadge}>
+                        {(doc.stateVariables || []).length}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.manageVarsBtn}
+                      onClick={() => editorActions.setStateVariablesOpen(true)}
+                      title="Open floating State & Variables window"
+                      data-testid="scripts-open-state-window-btn"
+                    >
+                      Manage ↗
+                    </button>
+                  </div>
+
+                  {(doc.stateVariables || []).length === 0 ? (
+                    <div className={styles.emptyVarsNotice}>
+                      <span>No shared variables defined yet.</span>
+                      <button
+                        type="button"
+                        className={styles.quickAddVarBtn}
+                        onClick={() => {
+                          editorActions.addStateVariable({
+                            name: 'score',
+                            type: 'number',
+                            defaultValue: 0,
+                            isPublic: true,
+                          });
+                        }}
+                      >
+                        + Create "score" Variable
+                      </button>
+                    </div>
+                  ) : (
+                    <div className={styles.varPillList}>
+                      {doc.stateVariables!.map((v) => {
+                        const currentVal = doc.state?.[v.name] ?? v.defaultValue;
+                        return (
+                          <div key={v.id} className={styles.varPillCard} title={`this.state.${v.name}`}>
+                            <div className={styles.varPillTop}>
+                              <span className={styles.varPillName}>{v.name}</span>
+                              <span className={styles.varPillType}>{v.type}</span>
+                            </div>
+                            <div className={styles.varPillBottom}>
+                              <span className={styles.varPillValue}>= {String(currentVal)}</span>
+                              <div className={styles.varPillActions}>
+                                <button
+                                  type="button"
+                                  className={styles.varActionMiniBtn}
+                                  onClick={() => handleAddBlock('set_state_var', { variable: v.name, value: String(currentVal) })}
+                                  title={`Insert "this.state.${v.name} = ..."`}
+                                >
+                                  Set
+                                </button>
+                                {v.type === 'number' && (
+                                  <button
+                                    type="button"
+                                    className={styles.varActionMiniBtn}
+                                    onClick={() => handleAddBlock('change_state_var', { variable: v.name, delta: 1 })}
+                                    title={`Insert "this.state.${v.name} += 1"`}
+                                  >
+                                    +1
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Prominent Custom JS Block Action */}
               <button
                 type="button"
@@ -1096,6 +1196,255 @@ export const Scripts: React.FC = () => {
                             </>
                           )}
 
+                          {block.type === 'if_condition' && (
+                            <>
+                              <span className={styles.paramLabel}>if (</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ width: 140 }}
+                                value={block.params.condition ?? 'this.state.score >= 100'}
+                                placeholder="condition"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'condition', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>) then:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ flex: 1 }}
+                                value={block.params.thenAction ?? 'this.play();'}
+                                placeholder="action"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'thenAction', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'if_else' && (
+                            <>
+                              <span className={styles.paramLabel}>if (</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ width: 130 }}
+                                value={block.params.condition ?? 'this.state.score >= 100'}
+                                placeholder="condition"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'condition', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>) then:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ width: 110 }}
+                                value={block.params.thenAction ?? 'this.play();'}
+                                placeholder="then action"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'thenAction', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>else:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ flex: 1 }}
+                                value={block.params.elseAction ?? 'this.stop();'}
+                                placeholder="else action"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'elseAction', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'switch_case' && (
+                            <>
+                              <span className={styles.paramLabel}>switch (</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ width: 110 }}
+                                value={block.params.expression ?? 'this.state.level'}
+                                placeholder="expression"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'expression', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>) case</span>
+                              <input
+                                type="text"
+                                className={styles.paramInput}
+                                style={{ width: 50 }}
+                                value={block.params.case1 ?? '1'}
+                                placeholder="val"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'case1', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ width: 110 }}
+                                value={block.params.action1 ?? 'this.gotoAndPlay(1);'}
+                                placeholder="case action"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'action1', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>default:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ flex: 1 }}
+                                value={block.params.defaultAction ?? 'this.stop();'}
+                                placeholder="default action"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'defaultAction', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'for_each' && (
+                            <>
+                              <span className={styles.paramLabel}>for (const</span>
+                              <input
+                                type="text"
+                                className={styles.paramInput}
+                                style={{ width: 65 }}
+                                value={block.params.item ?? 'item'}
+                                placeholder="item"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'item', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>of</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ width: 100 }}
+                                value={block.params.array ?? '[1, 2, 3]'}
+                                placeholder="array / items"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'array', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>) do:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ flex: 1 }}
+                                value={block.params.body ?? 'console.log(item);'}
+                                placeholder="loop body"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'body', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'repeat_times' && (
+                            <>
+                              <span className={styles.paramLabel}>repeat</span>
+                              <input
+                                type="number"
+                                min={1}
+                                className={styles.paramNumberInput}
+                                style={{ width: 55 }}
+                                value={block.params.times ?? 5}
+                                onChange={(e) =>
+                                  handleUpdateParam(
+                                    block.id,
+                                    'times',
+                                    parseInt(e.target.value, 10) || 1
+                                  )
+                                }
+                              />
+                              <span className={styles.paramLabel}>times (idx:</span>
+                              <input
+                                type="text"
+                                className={styles.paramInput}
+                                style={{ width: 45 }}
+                                value={block.params.indexVar ?? 'i'}
+                                placeholder="i"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'indexVar', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>) do:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ flex: 1 }}
+                                value={block.params.body ?? 'this.spawnClip("Fly", { x: i * 20, y: 50 });'}
+                                placeholder="loop body"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'body', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'while_loop' && (
+                            <>
+                              <span className={styles.paramLabel}>while (</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ width: 130 }}
+                                value={block.params.condition ?? 'this.x < 300'}
+                                placeholder="condition"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'condition', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>) do:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ flex: 1 }}
+                                value={block.params.body ?? 'this.x += 10;'}
+                                placeholder="loop body"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'body', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'do_while' && (
+                            <>
+                              <span className={styles.paramLabel}>do:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ flex: 1 }}
+                                value={block.params.body ?? 'this.x += 10;'}
+                                placeholder="loop body"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'body', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>while (</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ width: 130 }}
+                                value={block.params.condition ?? 'this.x < 300'}
+                                placeholder="condition"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'condition', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>);</span>
+                            </>
+                          )}
+
                           {block.type === 'custom_js' && (
                             <input
                               type="text"
@@ -1116,39 +1465,41 @@ export const Scripts: React.FC = () => {
             </div>
           </div>
 
-          {/* Column 3: Live Code Editor (Right) */}
-          <div className={styles.codeColumn}>
-            <div className={styles.codeColumnHeader}>
-              <span className={styles.syncBadge}>
-                <span>✓</span>
-                <span>Synced with Blocks</span>
-              </span>
-              <span className={styles.statusContext}>JavaScript (ESM)</span>
-            </div>
-
-            <div className={styles.codeEditorContainer}>
-              <div className={styles.lineNumbers} ref={lineNumbersRef}>
-                {lineNumbers.map((num) => (
-                  <div key={num} className={styles.lineNumber}>
-                    {num}
-                  </div>
-                ))}
+          {/* Column 3: Live Code Editor (Right) - Toggleable with </> */}
+          {isCodeViewOpen && (
+            <div className={styles.codeColumn} data-testid="scripts-code-column">
+              <div className={styles.codeColumnHeader}>
+                <span className={styles.syncBadge}>
+                  <span>✓</span>
+                  <span>Synced with Blocks</span>
+                </span>
+                <span className={styles.statusContext}>JavaScript (ESM)</span>
               </div>
 
-              <textarea
-                ref={textareaRef}
-                className={styles.codeTextarea}
-                value={codeDraft}
-                placeholder={getPlaceholderText()}
-                onChange={(e) => handleCodeChange(e.target.value)}
-                onBlur={handleBlur}
-                onScroll={handleScroll}
-                spellCheck={false}
-                autoCapitalize="none"
-                autoComplete="off"
-              />
+              <div className={styles.codeEditorContainer}>
+                <div className={styles.lineNumbers} ref={lineNumbersRef}>
+                  {lineNumbers.map((num) => (
+                    <div key={num} className={styles.lineNumber}>
+                      {num}
+                    </div>
+                  ))}
+                </div>
+
+                <textarea
+                  ref={textareaRef}
+                  className={styles.codeTextarea}
+                  value={codeDraft}
+                  placeholder={getPlaceholderText()}
+                  onChange={(e) => handleCodeChange(e.target.value)}
+                  onBlur={handleBlur}
+                  onScroll={handleScroll}
+                  spellCheck={false}
+                  autoCapitalize="none"
+                  autoComplete="off"
+                />
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Status / feedback footer */}

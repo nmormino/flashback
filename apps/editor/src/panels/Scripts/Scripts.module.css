@@ -846,3 +846,194 @@
   word-break: break-all;
   line-height: 1.3;
 }
+
+/* ========================================================================= */
+/* Code View Toggle & Script Tab State Variables Banner                     */
+/* ========================================================================= */
+
+.codeToggleBtn {
+  background-color: var(--mx-bg-input, #1e2025);
+  border: 1px solid var(--mx-border-light, #2e3035);
+  border-radius: var(--mx-radius-sm, 4px);
+  color: var(--mx-text-muted, #9ca3af);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.codeToggleBtn:hover {
+  background-color: var(--mx-bg-input-hover, #282a30);
+  color: var(--mx-text-main, #f3f4f6);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.codeToggleBtnActive {
+  background-color: rgba(59, 130, 246, 0.15);
+  border-color: var(--mx-accent, #3b82f6);
+  color: #60a5fa;
+}
+
+.codeIconTag {
+  font-family: var(--mx-font-mono, monospace);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.variablesSection {
+  background-color: #17181d;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.variablesSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.variablesSectionTitle {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #c4b5fd;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.varCountBadge {
+  background-color: rgba(139, 92, 246, 0.25);
+  color: #d8b4fe;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 9px;
+}
+
+.manageVarsBtn {
+  background: transparent;
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 4px;
+  color: #c4b5fd;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.manageVarsBtn:hover {
+  background-color: rgba(139, 92, 246, 0.2);
+  color: #fff;
+}
+
+.emptyVarsNotice {
+  font-size: 10px;
+  color: var(--mx-text-muted, #9ca3af);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.quickAddVarBtn {
+  background-color: rgba(139, 92, 246, 0.15);
+  border: 1px dashed #8b5cf6;
+  border-radius: 4px;
+  color: #c4b5fd;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+
+.quickAddVarBtn:hover {
+  background-color: rgba(139, 92, 246, 0.3);
+  color: #fff;
+}
+
+.varPillList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.varPillCard {
+  background-color: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 4px;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.varPillTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.varPillName {
+  font-size: 11px;
+  font-weight: 700;
+  color: #e2e8f0;
+  font-family: var(--mx-font-mono, monospace);
+}
+
+.varPillType {
+  font-size: 9px;
+  font-weight: 600;
+  color: #a78bfa;
+  text-transform: uppercase;
+}
+
+.varPillBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.varPillValue {
+  font-size: 10px;
+  color: var(--mx-text-muted, #9ca3af);
+  font-family: var(--mx-font-mono, monospace);
+}
+
+.varPillActions {
+  display: flex;
+  gap: 4px;
+}
+
+.varActionMiniBtn {
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  color: #f1f5f9;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.varActionMiniBtn:hover {
+  background-color: var(--mx-accent, #3b82f6);
+  border-color: var(--mx-accent, #3b82f6);
+  color: #fff;
+}
