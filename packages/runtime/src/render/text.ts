@@ -62,9 +62,31 @@ export interface TextRenderOptions {
   library?: Library;
   binding?: TextVariableBinding;
   localeText?: string;
+  state?: Record<string, any>;
   onChange?: (value: string) => void;
   onFocus?: () => void;
   onBlur?: () => void;
+}
+
+/**
+ * Resolves template tokens {variableName} inside a text string using reactive state and variable bindings.
+ */
+export function resolveInterpolatedText(
+  rawText: string,
+  state?: Record<string, any>,
+  binding?: TextVariableBinding
+): string {
+  if (!rawText || typeof rawText !== 'string' || !rawText.includes('{')) return rawText ?? '';
+  return rawText.replace(/\{([a-zA-Z0-9_$.]+)\}/g, (match, key) => {
+    if (state && key in state && state[key] !== undefined) {
+      return String(state[key]);
+    }
+    const val = binding?.get(key);
+    if (val !== undefined && val !== null) {
+      return String(val);
+    }
+    return match;
+  });
 }
 
 const ALLOWED_TAGS = new Set(['B', 'I', 'U', 'BR', 'P', 'SPAN', 'FONT', 'A']);
@@ -278,12 +300,17 @@ export function renderText(doc: Document, el: TextElement, opts: TextRenderOptio
   if (el.textDecoration !== undefined) s.textDecoration = el.textDecoration;
   if (el.letterSpacing !== undefined) s.letterSpacing = `${el.letterSpacing}px`;
 
+  const rawText = el.text || '';
   const initial =
     opts.localeText !== undefined
       ? opts.localeText
+      : el.stateBinding && opts.state && opts.state[el.stateBinding] !== undefined
+      ? String(opts.state[el.stateBinding])
+      : el.variable && opts.state && opts.state[el.variable] !== undefined
+      ? String(opts.state[el.variable])
       : el.variable && opts.binding && opts.binding.get(el.variable) !== undefined
       ? String(opts.binding.get(el.variable))
-      : el.text;
+      : resolveInterpolatedText(rawText, opts.state, opts.binding);
   setTextContent(node, el, initial, opts.library);
 
   if (el.mode === 'input') {

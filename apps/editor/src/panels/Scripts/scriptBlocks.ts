@@ -8,9 +8,17 @@ export type ScriptBlockCategory =
   | 'timeline'
   | 'navigation'
   | 'motion'
+  | 'variables'
+  | 'particles'
   | 'custom';
 
 export type ScriptBlockType =
+  // Events
+  | 'emit_custom_event'
+  | 'on_custom_event'
+  // Variables
+  | 'set_state_var'
+  | 'change_state_var'
   // Dialogs
   | 'alert'
   | 'console_log'
@@ -25,7 +33,7 @@ export type ScriptBlockType =
   // Navigation
   | 'goto_artboard'
   | 'open_url'
-  // Motion
+  // Motion & Spawning
   | 'move_by'
   | 'set_position'
   | 'rotate_by'
@@ -34,6 +42,9 @@ export type ScriptBlockType =
   | 'set_opacity'
   | 'toggle_visible'
   | 'set_visible'
+  | 'spawn_clip'
+  // Particles
+  | 'emit_particles'
   // Custom
   | 'custom_js';
 
@@ -67,7 +78,14 @@ export const CATEGORY_METADATA: Record<ScriptBlockCategory, CategoryMetadata> = 
     name: 'Events',
     color: '#f59e0b',
     icon: '⚡',
-    description: 'Hat block triggers and playback entrypoints',
+    description: 'Custom event bus broadcast and listeners',
+  },
+  variables: {
+    id: 'variables',
+    name: 'State & Variables',
+    color: '#8b5cf6',
+    icon: '📦',
+    description: 'Read and update reactive state variables',
   },
   dialogs: {
     id: 'dialogs',
@@ -95,18 +113,65 @@ export const CATEGORY_METADATA: Record<ScriptBlockCategory, CategoryMetadata> = 
     name: 'Motion & Transform',
     color: '#10b981',
     icon: '✨',
-    description: 'Move, rotate, scale, alpha, and visibility',
+    description: 'Move, rotate, scale, alpha, and spawn clips',
+  },
+  particles: {
+    id: 'particles',
+    name: 'Particles & Effects',
+    color: '#ec4899',
+    icon: '🎆',
+    description: 'Confetti, splat, sparks, and particle generation',
   },
   custom: {
     id: 'custom',
     name: 'Custom JavaScript',
-    color: '#ec4899',
+    color: '#6366f1',
     icon: '⚙️',
     description: 'Inline raw JavaScript override blocks',
   },
 };
 
 export const BLOCK_CATALOG: BlockCatalogItem[] = [
+  // Events
+  {
+    type: 'emit_custom_event',
+    category: 'events',
+    name: 'Emit Custom Event',
+    summary: 'Broadcast event to other clips and host page',
+    icon: '📡',
+    color: '#f59e0b',
+    defaultParams: { event: 'custom_event', payload: '' },
+  },
+  {
+    type: 'on_custom_event',
+    category: 'events',
+    name: 'Listen for Event',
+    summary: 'Run action when custom event is received',
+    icon: '👂',
+    color: '#f59e0b',
+    defaultParams: { event: 'custom_event', action: 'this.play();' },
+  },
+
+  // State Variables
+  {
+    type: 'set_state_var',
+    category: 'variables',
+    name: 'Set State Variable',
+    summary: 'Assign value to shared state variable',
+    icon: '📦',
+    color: '#8b5cf6',
+    defaultParams: { variable: 'score', value: '10' },
+  },
+  {
+    type: 'change_state_var',
+    category: 'variables',
+    name: 'Change State Variable',
+    summary: 'Increment/decrement numeric state variable',
+    icon: '➕',
+    color: '#8b5cf6',
+    defaultParams: { variable: 'score', delta: 1 },
+  },
+
   // Dialogs
   {
     type: 'alert',
@@ -285,6 +350,26 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
     color: '#10b981',
     defaultParams: { visible: true },
   },
+  {
+    type: 'spawn_clip',
+    category: 'motion',
+    name: 'Spawn Clip',
+    summary: 'Dynamically instantiate clip from library',
+    icon: '🐣',
+    color: '#10b981',
+    defaultParams: { clipName: '', x: 0, y: 0 },
+  },
+
+  // Particles
+  {
+    type: 'emit_particles',
+    category: 'particles',
+    name: 'Emit Particles',
+    summary: 'Trigger particle generator with preset',
+    icon: '🎆',
+    color: '#ec4899',
+    defaultParams: { preset: 'splat', x: 0, y: 0, particleCount: 50 },
+  },
 
   // Custom
   {
@@ -443,6 +528,52 @@ export function compileBlocksToJS(blocks: ScriptBlock[]): string {
         statements.push(`this.visible = ${visible};`);
         break;
       }
+      case 'set_state_var': {
+        const varName = String(params.variable || 'score').trim() || 'score';
+        const rawVal = params.value ?? '0';
+        const isNum = !isNaN(Number(rawVal)) && String(rawVal).trim() !== '';
+        const isBool = rawVal === 'true' || rawVal === 'false';
+        const valStr = isNum || isBool ? String(rawVal).trim() : `'${String(rawVal).replace(/'/g, "\\'")}'`;
+        statements.push(`this.state.${varName} = ${valStr};`);
+        break;
+      }
+      case 'change_state_var': {
+        const varName = String(params.variable || 'score').trim() || 'score';
+        const delta = Number(params.delta) || 1;
+        statements.push(`this.state.${varName} += ${delta};`);
+        break;
+      }
+      case 'emit_custom_event': {
+        const ev = String(params.event || '').replace(/'/g, "\\'");
+        const payload = String(params.payload ?? '').trim();
+        if (payload) {
+          statements.push(`this.emit('${ev}', ${payload});`);
+        } else {
+          statements.push(`this.emit('${ev}');`);
+        }
+        break;
+      }
+      case 'on_custom_event': {
+        const ev = String(params.event || '').replace(/'/g, "\\'");
+        const action = String(params.action || 'this.play();').trim();
+        statements.push(`this.on('${ev}', () => {\n  ${action}\n});`);
+        break;
+      }
+      case 'spawn_clip': {
+        const clipName = String(params.clipName || '').replace(/'/g, "\\'");
+        const x = Number(params.x) || 0;
+        const y = Number(params.y) || 0;
+        statements.push(`this.spawnClip('${clipName}', { x: ${x}, y: ${y} });`);
+        break;
+      }
+      case 'emit_particles': {
+        const preset = String(params.preset || 'splat').replace(/'/g, "\\'");
+        const x = Number(params.x) || 0;
+        const y = Number(params.y) || 0;
+        const count = Number(params.particleCount) || 50;
+        statements.push(`this.emitParticles({ preset: '${preset}', x: ${x}, y: ${y}, particleCount: ${count} });`);
+        break;
+      }
       case 'custom_js': {
         const code = String(params.code ?? '').trim();
         if (code) {
@@ -471,6 +602,76 @@ export function parseJSIntoBlocks(code: string): ScriptBlock[] {
     if (!remaining) break;
 
     let match: RegExpMatchArray | null = null;
+
+    // State Variables: change_state_var (this.state.x += delta;)
+    match = remaining.match(/^(?:this\.)?state\.([a-zA-Z0-9_$]+)\s*\+=\s*(-?\d+(?:\.\d+)?);?/i);
+    if (match) {
+      blocks.push(createBlock('change_state_var', { variable: match[1], delta: Number(match[2]) }));
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // State Variables: set_state_var (this.state.x = val;)
+    match = remaining.match(
+      /^(?:this\.)?state\.([a-zA-Z0-9_$]+)\s*=\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`|(-?\d+(?:\.\d+)?|true|false));?/i
+    );
+    if (match) {
+      const val = match[2] ?? match[3] ?? match[4] ?? match[5];
+      blocks.push(createBlock('set_state_var', { variable: match[1], value: val }));
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Events: on_custom_event (this.on('event', () => { ... }))
+    match = remaining.match(
+      /^(?:this\.)?on\s*\(\s*(['"`])([^'"]+)\1\s*,\s*(?:\([^\)]*\)\s*=>|function\s*\([^\)]*\))\s*\{\s*([\s\S]*?)\s*\}\s*\);?/i
+    );
+    if (match) {
+      blocks.push(createBlock('on_custom_event', { event: match[2], action: match[3].trim() }));
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Events: emit_custom_event (this.emit('event', payload);)
+    match = remaining.match(/^(?:this\.)?emit\s*\(\s*(['"`])([^'"]+)\1(?:\s*,\s*([\s\S]*?))?\s*\);?/i);
+    if (match) {
+      blocks.push(createBlock('emit_custom_event', { event: match[2], payload: match[3] ? match[3].trim() : '' }));
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Spawning: spawn_clip (this.spawnClip('Clip', { x, y });)
+    match = remaining.match(
+      /^(?:this\.)?spawnClip\s*\(\s*(['"`])([^'"]*)\1(?:\s*,\s*\{\s*(?:x:\s*(-?\d+(?:\.\d+)?))?(?:,?\s*y:\s*(-?\d+(?:\.\d+)?))?\s*\}\s*)?\);?/i
+    );
+    if (match) {
+      const clipName = match[2];
+      const x = match[3] !== undefined ? Number(match[3]) : 0;
+      const y = match[4] !== undefined ? Number(match[4]) : 0;
+      blocks.push(createBlock('spawn_clip', { clipName, x, y }));
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
+
+    // Particles: emit_particles (this.emitParticles({ preset: 'splat', ... });)
+    match = remaining.match(/^(?:this\.)?emitParticles\s*\(\s*\{([\s\S]*?)\}\s*\);?/i);
+    if (match) {
+      const body = match[1];
+      const presetMatch = body.match(/preset:\s*(['"`])([^'"]+)\1/);
+      const xMatch = body.match(/x:\s*(-?\d+(?:\.\d+)?)/);
+      const yMatch = body.match(/y:\s*(-?\d+(?:\.\d+)?)/);
+      const countMatch = body.match(/(?:particleCount|count):\s*(\d+)/);
+      blocks.push(
+        createBlock('emit_particles', {
+          preset: presetMatch ? presetMatch[2] : 'splat',
+          x: xMatch ? Number(xMatch[1]) : 0,
+          y: yMatch ? Number(yMatch[1]) : 0,
+          particleCount: countMatch ? Number(countMatch[1]) : 50,
+        })
+      );
+      remaining = remaining.slice(match[0].length);
+      continue;
+    }
 
     // 1. wait_play: setTimeout(() => { this.play(); }, N);
     match = remaining.match(

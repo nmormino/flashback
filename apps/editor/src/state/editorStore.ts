@@ -30,6 +30,8 @@ import type {
   RectCornerTypes,
   RectConfig,
   OvalConfig,
+  StateVariable,
+  StateVariableType,
 } from '@flashback/runtime';
 import {
   serialize,
@@ -139,6 +141,8 @@ export interface EditorState {
   libraryPosition: { x: number; y: number };
   isLocalizationOpen: boolean;
   localizationPosition: { x: number; y: number };
+  isStateVariablesOpen: boolean;
+  stateVariablesPosition: { x: number; y: number };
   starConfig: { points: number; pointRatio: number; cornerRadius?: number };
   rectConfig: { cornerRadius: number | RectCornerRadius; cornerType: CornerType | RectCornerTypes };
   ovalConfig: { innerRadiusRatio: number; startAngle: number; endAngle: number };
@@ -303,6 +307,11 @@ export function createInitialState(initialDoc: EditorDocument = createDefaultDoc
     localizationPosition: {
       x: typeof window !== 'undefined' ? Math.max(20, Math.round(window.innerWidth / 2 - 320)) : 260,
       y: 70,
+    },
+    isStateVariablesOpen: false,
+    stateVariablesPosition: {
+      x: typeof window !== 'undefined' ? Math.max(20, Math.round(window.innerWidth / 2 - 280)) : 220,
+      y: 80,
     },
     starConfig: { points: 5, pointRatio: 0.5, cornerRadius: 0 },
     rectConfig: { cornerRadius: 0, cornerType: 'round' },
@@ -1229,6 +1238,106 @@ export const editorActions = {
 
   setLocalizationPosition(pos: { x: number; y: number }): void {
     state = { ...state, localizationPosition: pos };
+    notify();
+  },
+
+  setStateVariablesOpen(open: boolean): void {
+    state = { ...state, isStateVariablesOpen: open };
+    notify();
+  },
+
+  toggleStateVariables(): void {
+    state = { ...state, isStateVariablesOpen: !state.isStateVariablesOpen };
+    notify();
+  },
+
+  setStateVariablesPosition(pos: { x: number; y: number }): void {
+    state = { ...state, stateVariablesPosition: pos };
+    notify();
+  },
+
+  addStateVariable(variable: {
+    name: string;
+    type: StateVariableType;
+    defaultValue: any;
+    isPublic?: boolean;
+    description?: string;
+  }): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    if (!doc.stateVariables) {
+      doc.stateVariables = [];
+    }
+    const cleanName = variable.name.trim().replace(/[^a-zA-Z0-9_$]/g, '_') || 'myVar';
+    const newVar: StateVariable = {
+      id: `var_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: cleanName,
+      type: variable.type || 'number',
+      defaultValue: variable.defaultValue ?? 0,
+      isPublic: variable.isPublic ?? true,
+      description: variable.description,
+    };
+    doc.stateVariables.push(newVar);
+    if (!doc.state) {
+      doc.state = {};
+    }
+    doc.state[cleanName] = newVar.defaultValue;
+    state = { ...state, doc };
+    notify();
+  },
+
+  updateStateVariable(id: string, updates: Partial<StateVariable>): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    if (!doc.stateVariables) return;
+    const v = doc.stateVariables.find((it) => it.id === id);
+    if (!v) return;
+
+    const oldName = v.name;
+    Object.assign(v, updates);
+    if (updates.name && updates.name !== oldName) {
+      v.name = updates.name.trim().replace(/[^a-zA-Z0-9_$]/g, '_');
+      if (doc.state && oldName in doc.state) {
+        doc.state[v.name] = doc.state[oldName];
+        delete doc.state[oldName];
+      }
+    }
+    if (updates.defaultValue !== undefined && doc.state) {
+      doc.state[v.name] = updates.defaultValue;
+    }
+
+    state = { ...state, doc };
+    notify();
+  },
+
+  deleteStateVariable(id: string): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    if (!doc.stateVariables) return;
+    const idx = doc.stateVariables.findIndex((it) => it.id === id);
+    if (idx === -1) return;
+    const [removed] = doc.stateVariables.splice(idx, 1);
+    if (doc.state && removed && removed.name in doc.state) {
+      delete doc.state[removed.name];
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  setTextStateBinding(elementId: string, stateBinding?: string | null): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const activeTl = getActiveTimeline(doc, state.isolationStack);
+    for (const layer of activeTl.layers) {
+      for (const kf of layer.keyframes) {
+        const el = kf.elements.find((it) => it.id === elementId);
+        if (el && el.type === 'text') {
+          (el as TextElement).stateBinding = stateBinding || undefined;
+          (el as TextElement).variable = stateBinding || undefined;
+        }
+      }
+    }
+    state = { ...state, doc };
     notify();
   },
 

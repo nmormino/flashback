@@ -10,7 +10,7 @@ import { colorTransformToCSS, colorTransformToSVGFilter } from './colorTransform
 import { renderShape } from './shape';
 import { renderBitmap } from './bitmap';
 import { renderVideo } from './video';
-import { renderText, setTextContent, resolveI18nText, type TextVariableBinding } from './text';
+import { renderText, setTextContent, resolveI18nText, resolveInterpolatedText, type TextVariableBinding } from './text';
 
 export interface DomRendererOptions {
   /** Used to index element definitions by id (shapes/text/bitmaps) and resolve assets. */
@@ -185,8 +185,9 @@ export class DomRenderer implements RendererHooks {
     }
   }
 
-  /** Push current variable values into bound dynamic/input text fields. */
+  /** Push current variable and reactive state values into bound dynamic/input text fields. */
   public syncTextVariables(): void {
+    const rootState = this.mounted instanceof MovieClip ? this.mounted.state : undefined;
     for (const [obj, rec] of this.nodes) {
       const def = rec.def;
       if (def?.type !== 'text') continue;
@@ -197,9 +198,18 @@ export class DomRenderer implements RendererHooks {
       if (def.i18nKey) {
         textVal = resolveI18nText(this.opts.doc, this.locale, def.i18nKey);
       }
+      if (textVal === undefined && def.stateBinding && rootState && rootState[def.stateBinding] !== undefined) {
+        textVal = String(rootState[def.stateBinding]);
+      }
+      if (textVal === undefined && def.variable && rootState && rootState[def.variable] !== undefined) {
+        textVal = String(rootState[def.variable]);
+      }
       if (textVal === undefined && def.variable) {
         const v = this.bindingFor(obj).get(def.variable);
         if (v !== undefined) textVal = String(v);
+      }
+      if (textVal === undefined && def.text && def.text.includes('{')) {
+        textVal = resolveInterpolatedText(def.text, rootState, this.bindingFor(obj));
       }
       if (textVal !== undefined) {
         setTextContent(content, def, textVal, this.library);
@@ -580,10 +590,12 @@ export class DomRenderer implements RendererHooks {
     if (def.i18nKey) {
       localeText = resolveI18nText(this.opts.doc, this.locale, def.i18nKey);
     }
+    const rootState = this.mounted instanceof MovieClip ? this.mounted.state : undefined;
     return renderText(this.doc, def, {
       library: this.library,
       binding: def.variable ? this.bindingFor(obj) : undefined,
       localeText,
+      state: rootState,
       onChange: (v) => obj.emit('onChange', v),
       onFocus: () => obj.emit('onFocus'),
       onBlur: () => obj.emit('onBlur'),

@@ -27,6 +27,9 @@ import { Matrix2D } from '../math/Matrix2D';
 import { evaluateEasing } from './easing';
 import { normalizeRotation } from './compileTracks';
 import { ScriptVM } from '../script/ScriptVM';
+import { StateStore } from '../state/stateStore';
+import { EventBus } from '../events/eventBus';
+import { ParticleEngine } from '../particles/particleEngine';
 import * as flubberModule from 'flubber';
 
 const flubberInterpolate: typeof flubberModule.interpolate =
@@ -903,6 +906,10 @@ export class TimelinePipeline {
   public errorHandler: ScriptErrorHandler;
   public reducedMotion: ReducedMotionMode = 'auto';
   public posterFrame: number = 1;
+  public stateStore: StateStore;
+  public eventBus: EventBus;
+  public particleEngine: ParticleEngine;
+  public onStateChange?: (key: string, value: any) => void;
 
   private initialized = false;
 
@@ -925,6 +932,17 @@ export class TimelinePipeline {
         console.error(`[Flashback Script Error] ${script} on "${clip.name}":`, err);
       });
 
+    this.stateStore = new StateStore(doc.stateVariables, doc.state);
+    this.stateStore.subscribe((key, val) => {
+      this.onStateChange?.(key, val);
+    });
+
+    this.eventBus = new EventBus();
+    this.particleEngine = new ParticleEngine({
+      stageWidth: doc.stage.width,
+      stageHeight: doc.stage.height,
+    });
+
     const activeArtboard =
       doc.artboards && doc.artboards.length > 0
         ? doc.artboards.find((a) => a.id === doc.activeArtboardId) || doc.artboards[0]
@@ -934,6 +952,9 @@ export class TimelinePipeline {
     this.root = new MovieClip('root', rootTimelineDef);
     this.root.library = doc.library;
     this.root.vars.__locale = doc.i18n?.defaultLocale || 'en';
+    this.root._stateStore = this.stateStore;
+    this.root._eventBus = this.eventBus;
+    this.root._particleEngine = this.particleEngine;
     this.rootTimeline = new Timeline(this.root, rootTimelineDef, doc.library, this);
   }
 
@@ -959,6 +980,9 @@ export class TimelinePipeline {
     this.root = new MovieClip('root', found.root);
     this.root.library = this.doc.library;
     this.root.vars.__locale = this.doc.i18n?.defaultLocale || 'en';
+    this.root._stateStore = this.stateStore;
+    this.root._eventBus = this.eventBus;
+    this.root._particleEngine = this.particleEngine;
     this.rootTimeline = new Timeline(this.root, found.root, this.doc.library, this);
     this.initialized = false;
     this.init();

@@ -1568,7 +1568,7 @@ export const Properties: React.FC = () => {
 
   const allElementSectionIds = [
     'element-identity',
-    ...(isText && textEl ? ['text-typography', 'text-i18n'] : []),
+    ...(isText && textEl ? ['text-typography', 'text-state', 'text-i18n'] : []),
     ...(selectedEl.type === 'bitmap' ? ['bitmap-media'] : []),
     ...(selectedEl.type === 'video' ? ['video-media'] : []),
     'layout-alignment',
@@ -1583,7 +1583,7 @@ export const Properties: React.FC = () => {
 
   const elementCategoryCounts: Record<string, number> = {
     identity: 1,
-    text: isText && textEl ? 2 : 0,
+    text: isText && textEl ? 3 : 0,
     media: selectedEl.type === 'bitmap' || selectedEl.type === 'video' ? 1 : 0,
     layout: 1,
     transform: 1,
@@ -2892,6 +2892,64 @@ export const Properties: React.FC = () => {
               })}
             </div>
           )}
+        </AccordionSection>
+      )}
+
+      {/* State & Dynamic Variable Binding for Text Elements */}
+      {isText && textEl && (
+        <AccordionSection
+          id="text-state"
+          category="text"
+          activeCategory={effectiveElementCategory}
+          title="Variable & State Binding"
+          icon="⚡"
+          summary={
+            textEl.stateBinding
+              ? `Bound: ${textEl.stateBinding}`
+              : textEl.variable
+              ? `Variable: ${textEl.variable}`
+              : 'Unbound'
+          }
+          collapsed={!isSectionExpanded('text-state')}
+          onToggle={() => toggleSection('text-state')}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--mx-text-muted)' }}>Reactive State Variable</span>
+            <button
+              type="button"
+              className={styles.presetPill}
+              style={{ fontSize: 10, padding: '1px 6px', height: 'auto' }}
+              onClick={() => editorActions.setStateVariablesOpen(true)}
+              title="Open floating State & Variables Table"
+            >
+              Open State Window ↗
+            </button>
+          </div>
+
+          <div className={styles.fieldRow}>
+            <span className={styles.fieldLabel}>Binding:</span>
+            <select
+              className={styles.categoryDropdown}
+              style={{ flex: 1, width: '100%' }}
+              value={textEl.stateBinding || textEl.variable || ''}
+              onChange={(e) => {
+                const val = e.target.value.trim();
+                editorActions.setTextStateBinding(textEl.id, val || null);
+              }}
+              data-testid="text-state-binding-select"
+            >
+              <option value="">-- None (Static Text) --</option>
+              {(doc.stateVariables || []).map((v) => (
+                <option key={v.name} value={v.name}>
+                  {v.name} ({v.type})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ fontSize: 10.5, color: 'var(--mx-text-muted)', lineHeight: 1.4, marginTop: 4 }}>
+            💡 You can also use inline template tokens inside your text like <code style={{ color: 'var(--mx-accent, #3b82f6)' }}>Score: {'{'}score{'}'}</code>. Both direct state bindings and inline tokens update automatically at runtime.
+          </div>
         </AccordionSection>
       )}
 

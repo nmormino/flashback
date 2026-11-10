@@ -886,6 +886,216 @@ export const Scripts: React.FC = () => {
                             </>
                           )}
 
+                          {block.type === 'set_state_var' && (
+                            <>
+                              <span className={styles.paramLabel}>Set state:</span>
+                              <input
+                                type="text"
+                                list="state-var-list"
+                                className={styles.paramInput}
+                                style={{ width: 100 }}
+                                value={block.params.variable ?? 'score'}
+                                placeholder="variable"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'variable', e.target.value)
+                                }
+                              />
+                              <datalist id="state-var-list">
+                                {(doc.stateVariables || []).map((v) => (
+                                  <option key={v.name} value={v.name} />
+                                ))}
+                              </datalist>
+                              <span className={styles.paramLabel}>=</span>
+                              <input
+                                type="text"
+                                className={styles.paramInput}
+                                style={{ width: 90 }}
+                                value={block.params.value ?? ''}
+                                placeholder="value"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'value', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'change_state_var' && (
+                            <>
+                              <span className={styles.paramLabel}>Change:</span>
+                              <input
+                                type="text"
+                                list="state-var-list"
+                                className={styles.paramInput}
+                                style={{ width: 100 }}
+                                value={block.params.variable ?? 'score'}
+                                placeholder="variable"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'variable', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>by:</span>
+                              <input
+                                type="number"
+                                className={styles.paramNumberInput}
+                                value={block.params.delta ?? 1}
+                                onChange={(e) =>
+                                  handleUpdateParam(
+                                    block.id,
+                                    'delta',
+                                    parseFloat(e.target.value) || 0
+                                  )
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'emit_custom_event' && (
+                            <>
+                              <span className={styles.paramLabel}>Emit:</span>
+                              <input
+                                type="text"
+                                className={styles.paramInput}
+                                style={{ width: 120 }}
+                                value={block.params.event ?? ''}
+                                placeholder="event_name"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'event', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>data:</span>
+                              <input
+                                type="text"
+                                className={styles.paramInput}
+                                style={{ width: 100 }}
+                                value={block.params.payload ?? ''}
+                                placeholder="payload (opt)"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'payload', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'on_custom_event' && (
+                            <>
+                              <span className={styles.paramLabel}>When:</span>
+                              <input
+                                type="text"
+                                className={styles.paramInput}
+                                style={{ width: 110 }}
+                                value={block.params.event ?? ''}
+                                placeholder="event_name"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'event', e.target.value)
+                                }
+                              />
+                              <span className={styles.paramLabel}>do:</span>
+                              <input
+                                type="text"
+                                className={styles.paramCodeInput}
+                                style={{ flex: 1 }}
+                                value={block.params.action ?? 'this.play();'}
+                                placeholder="code"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'action', e.target.value)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'spawn_clip' && (
+                            <>
+                              <span className={styles.paramLabel}>Spawn clip:</span>
+                              <input
+                                type="text"
+                                list="symbol-clip-list"
+                                className={styles.paramInput}
+                                style={{ width: 110 }}
+                                value={block.params.clipName ?? ''}
+                                placeholder="Clip name"
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'clipName', e.target.value)
+                                }
+                              />
+                              <datalist id="symbol-clip-list">
+                                {Object.keys(doc.library?.symbols || {}).map((name) => (
+                                  <option key={name} value={name} />
+                                ))}
+                              </datalist>
+                              <span className={styles.paramLabel}>at X:</span>
+                              <input
+                                type="number"
+                                className={styles.paramNumberInput}
+                                value={block.params.x ?? 0}
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'x', parseFloat(e.target.value) || 0)
+                                }
+                              />
+                              <span className={styles.paramLabel}>Y:</span>
+                              <input
+                                type="number"
+                                className={styles.paramNumberInput}
+                                value={block.params.y ?? 0}
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'y', parseFloat(e.target.value) || 0)
+                                }
+                              />
+                            </>
+                          )}
+
+                          {block.type === 'emit_particles' && (
+                            <>
+                              <span className={styles.paramLabel}>Preset:</span>
+                              <select
+                                className={styles.paramSelect}
+                                value={block.params.preset ?? 'splat'}
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'preset', e.target.value)
+                                }
+                              >
+                                <option value="splat">Splat (Bug/Impact)</option>
+                                <option value="burst">Burst (Circle)</option>
+                                <option value="confetti">Confetti (Celebration)</option>
+                                <option value="sparks">Sparks (Electric)</option>
+                                <option value="spray">Spray (Upward)</option>
+                                <option value="stream">Stream (Continuous)</option>
+                              </select>
+                              <span className={styles.paramLabel}>X:</span>
+                              <input
+                                type="number"
+                                className={styles.paramNumberInput}
+                                value={block.params.x ?? 0}
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'x', parseFloat(e.target.value) || 0)
+                                }
+                              />
+                              <span className={styles.paramLabel}>Y:</span>
+                              <input
+                                type="number"
+                                className={styles.paramNumberInput}
+                                value={block.params.y ?? 0}
+                                onChange={(e) =>
+                                  handleUpdateParam(block.id, 'y', parseFloat(e.target.value) || 0)
+                                }
+                              />
+                              <span className={styles.paramLabel}>Count:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={200}
+                                className={styles.paramNumberInput}
+                                value={block.params.particleCount ?? 50}
+                                onChange={(e) =>
+                                  handleUpdateParam(
+                                    block.id,
+                                    'particleCount',
+                                    parseInt(e.target.value, 10) || 50
+                                  )
+                                }
+                              />
+                            </>
+                          )}
+
                           {block.type === 'custom_js' && (
                             <input
                               type="text"

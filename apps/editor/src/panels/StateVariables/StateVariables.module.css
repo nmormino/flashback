@@ -1,0 +1,325 @@
+.statePanel {
+  position: fixed;
+  width: 440px;
+  max-width: calc(100vw - 40px);
+  max-height: 85vh;
+  background-color: var(--mx-bg-panel, #1e293b);
+  border: 1px solid var(--mx-border-default, #334155);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: var(--mx-text-primary, #f8fafc);
+  user-select: none;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: var(--mx-bg-header, #0f172a);
+  border-bottom: 1px solid var(--mx-border-default, #334155);
+  cursor: grab;
+}
+
+.panelHeader:active {
+  cursor: grabbing;
+}
+
+.panelHeaderTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mx-text-subtle, #94a3b8);
+}
+
+.headerIcon {
+  color: #38bdf8;
+}
+
+.closeWindowBtn {
+  background: none;
+  border: none;
+  padding: 4px;
+  color: var(--mx-text-subtle, #94a3b8);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.closeWindowBtn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.toolbar {
+  padding: 8px 12px;
+  background-color: var(--mx-bg-surface, #1e293b);
+  border-bottom: 1px solid var(--mx-border-subtle, #334155);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.searchBox {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 8px;
+  color: var(--mx-text-subtle, #94a3b8);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 5px 8px 5px 26px;
+  background-color: var(--mx-bg-input, #0f172a);
+  border: 1px solid var(--mx-border-default, #334155);
+  border-radius: 4px;
+  color: #f8fafc;
+  font-size: 11px;
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: #38bdf8;
+}
+
+.addBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background-color: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.addBtn:hover {
+  background-color: #1d4ed8;
+}
+
+.addForm {
+  padding: 10px 12px;
+  background-color: rgba(15, 23, 42, 0.7);
+  border-bottom: 1px solid var(--mx-border-default, #334155);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.formRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.inputField {
+  flex: 1;
+  padding: 5px 8px;
+  background-color: var(--mx-bg-input, #0f172a);
+  border: 1px solid var(--mx-border-default, #334155);
+  border-radius: 4px;
+  color: #f8fafc;
+  font-size: 11px;
+}
+
+.inputField:focus {
+  outline: none;
+  border-color: #38bdf8;
+}
+
+.typeSelect {
+  padding: 5px 8px;
+  background-color: var(--mx-bg-input, #0f172a);
+  border: 1px solid var(--mx-border-default, #334155);
+  border-radius: 4px;
+  color: #f8fafc;
+  font-size: 11px;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--mx-text-subtle, #94a3b8);
+  cursor: pointer;
+}
+
+.variableList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+  min-height: 140px;
+  max-height: 320px;
+}
+
+.emptyState {
+  padding: 24px;
+  text-align: center;
+  color: var(--mx-text-subtle, #94a3b8);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.varCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+  transition: background-color 0.1s ease;
+}
+
+.varCard:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.varLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.varTypeBadge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background-color: #334155;
+  color: #94a3b8;
+}
+
+.typeNumber { background-color: #0369a1; color: #bae6fd; }
+.typeString { background-color: #047857; color: #a7f3d0; }
+.typeBoolean { background-color: #7c2d12; color: #fed7aa; }
+.typeJson { background-color: #6b21a8; color: #f3e8ff; }
+
+.varName {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.publicPill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 10px;
+  background-color: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  cursor: pointer;
+}
+
+.privatePill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 10px;
+  background-color: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  cursor: pointer;
+}
+
+.boundCountBadge {
+  font-size: 9px;
+  padding: 2px 5px;
+  border-radius: 10px;
+  background-color: #334155;
+  color: #38bdf8;
+}
+
+.varRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.varValInput {
+  width: 90px;
+  padding: 3px 6px;
+  font-size: 11px;
+  background-color: var(--mx-bg-input, #0f172a);
+  border: 1px solid var(--mx-border-default, #334155);
+  border-radius: 4px;
+  color: #f8fafc;
+  font-family: monospace;
+}
+
+.deleteBtn {
+  background: none;
+  border: none;
+  color: #ef4444;
+  padding: 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.deleteBtn:hover {
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.footerAccordion {
+  border-top: 1px solid var(--mx-border-default, #334155);
+  background-color: #0f172a;
+}
+
+.accordionToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+.accordionToggle:hover {
+  color: #f8fafc;
+}
+
+.codeSnippetBox {
+  padding: 8px 12px 12px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #38bdf8;
+  background-color: #020617;
+  border-top: 1px solid rgba(51, 65, 85, 0.3);
+  line-height: 1.4;
+  overflow-x: auto;
+}

@@ -69,6 +69,10 @@ export const RESERVED_API_KEYS = new Set<string>([
   'removeMovieClip',
   'swapDepths',
   'getNextHighestDepth',
+  'spawnClip',
+
+  // Particle Generation
+  'emitParticles',
 
   // Interaction & Flags
   'startDrag',
@@ -86,8 +90,11 @@ export const RESERVED_API_KEYS = new Set<string>([
   'clearTimer',
   'clearAllTimers',
 
-  // Variables & Internals
+  // Variables, State & Internals
   'vars',
+  'state',
+  'getState',
+  'setState',
   'destroy',
   '_parent',
   '_root',
@@ -127,6 +134,7 @@ const READONLY_API_PROPERTIES = new Set<string>([
   'children',
   'numChildren',
   'vars',
+  'state',
 ]);
 
 /**
@@ -233,6 +241,12 @@ export function createContextProxy<T extends MovieClip = MovieClip>(target: T): 
         return t.vars[prop];
       }
 
+      // 6b. Shared document/game state variables
+      const targetState = (t as any).state;
+      if (targetState && prop in targetState) {
+        return targetState[prop];
+      }
+
       // 7. Fallback
       return Reflect.get(t, prop, receiver);
     },
@@ -290,6 +304,13 @@ export function createContextProxy<T extends MovieClip = MovieClip>(target: T): 
       const child = (t as any).getChildRaw ? (t as any).getChildRaw(prop) : null;
       if (child && 'text' in child) {
         (child as any).text = String(value);
+      }
+
+      // Check shared state variables on root/target
+      const targetState = (t as any).state;
+      if (targetState && prop in targetState) {
+        targetState[prop] = value;
+        return true;
       }
 
       // Store in timeline-scoped variables

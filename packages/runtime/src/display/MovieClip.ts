@@ -13,14 +13,43 @@ import type {
   Library,
   PlayMode,
   ArtboardTransition,
+  SpawnClipOptions,
+  ParticleEmitterOptions,
 } from '../schema';
 import { DisplayObject } from './DisplayObject';
 import { createContextProxy } from './contextProxy';
+import { StateStore } from '../state/stateStore';
+import { EventBus } from '../events/eventBus';
+import { ParticleEngine } from '../particles/particleEngine';
 
 export interface TimelineController {
   seek(frameRef: FrameRef, play: boolean): void;
   getCurrentLabel(): string | null;
 }
+
+const INSTANCE_LIFECYCLE_EVENTS = new Set<string>([
+  'onLoad',
+  'onUnload',
+  'onEnterFrame',
+  'onPress',
+  'onRelease',
+  'onClick',
+  'onReleaseOutside',
+  'onRollOver',
+  'onRollOut',
+  'onDragOver',
+  'onDragOut',
+  'onMouseMove',
+  'onPointerDown',
+  'onPointerUp',
+  'onPointerEnter',
+  'onPointerLeave',
+  'onKeyDown',
+  'onKeyUp',
+  'onChange',
+  'onFocus',
+  'onBlur',
+]);
 
 export class MovieClip extends DisplayObject implements MovieClipAPI {
   public timeline?: TimelineDef;
@@ -37,6 +66,10 @@ export class MovieClip extends DisplayObject implements MovieClipAPI {
   public buttonMode = false;
   public enabled = true;
   public vars: Record<string, unknown> = {};
+
+  public _stateStore?: StateStore;
+  public _eventBus?: EventBus;
+  public _particleEngine?: ParticleEngine;
 
   public _children: DisplayObject[] = [];
   public _childrenByName = new Map<InstanceName, DisplayObject>();
@@ -509,6 +542,143 @@ export class MovieClip extends DisplayObject implements MovieClipAPI {
       }
     }
     this._timers.clear();
+  }
+
+  // --- Shared State & Variables ---
+
+  public get state(): Record<string, any> {
+    return this.findStateStore().proxy;
+  }
+
+  public getState(key?: string): any {
+    return this.findStateStore().get(key);
+  }
+
+  public setState(keyOrObject: string | Record<string, any>, value?: any): void {
+    this.findStateStore().set(keyOrObject, value);
+  }
+
+  public findStateStore(): StateStore {
+    let curr: DisplayObject | null = this;
+    while (curr) {
+      if (curr instanceof MovieClip && curr._stateStore) {
+        return curr._stateStore;
+      }
+      curr = curr._parent;
+    }
+    // Fallback: create on this clip
+    if (!this._stateStore) {
+      this._stateStore = new StateStore();
+    }
+    return this._stateStore;
+  }
+
+  // --- Custom Events ---
+
+  public findEventBus(): EventBus {
+    let curr: DisplayObject | null = this;
+    while (curr) {
+      if (curr instanceof MovieClip && curr._eventBus) {
+        return curr._eventBus;
+      }
+      curr = curr._parent;
+    }
+    if (!this._eventBus) {
+      this._eventBus = new EventBus();
+    }
+    return this._eventBus;
+  }
+
+  public override emit(eventName: string, payload?: any): void {
+    // 1. Dispatch on local display object listeners
+    super.emit(eventName as any, payload);
+
+    // 2. Broadcast custom events (not local instance lifecycle events) on the shared event bus
+    if (!INSTANCE_LIFECYCLE_EVENTS.has(eventName)) {
+      const bus = this.findEventBus();
+      bus.emit(eventName, payload);
+    }
+  }
+
+  public override on(eventName: string, handler: (payload?: any) => void): () => void {
+    if (INSTANCE_LIFECYCLE_EVENTS.has(eventName)) {
+      super.on(eventName as any, handler);
+      return () => {
+        super.off(eventName as any, handler);
+      };
+    }
+
+    super.on(eventName as any, handler);
+    const bus = this.findEventBus();
+    const unsubBus = bus.on(eventName, handler);
+    return () => {
+      super.off(eventName as any, handler);
+      unsubBus();
+    };
+  }
+
+  public override off(eventName: string, handler?: (payload?: any) => void): void {
+    super.off(eventName as any, handler);
+    if (!INSTANCE_LIFECYCLE_EVENTS.has(eventName)) {
+      const bus = this.findEventBus();
+      bus.off(eventName, handler);
+    }
+  }
+
+  // --- Dynamic Clip Spawning ---
+
+  public spawnClip(symbolIdOrName: string, options: SpawnClipOptions = {}): MovieClipContext {
+    const parentTarget = options.parent
+      ? ((options.parent as any)._target || options.parent)
+      : this;
+    const containerClip = parentTarget instanceof MovieClip ? parentTarget : this;
+
+    const instanceName =
+      options.name ||
+      `spawn_${symbolIdOrName}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const depth = options.depth ?? containerClip.getNextHighestDepth();
+
+    const initData: Record<string, any> = { ...options };
+    delete initData.parent;
+    delete initData.name;
+    delete initData.depth;
+    delete initData.onClick;
+
+    if (options.scale !== undefined) {
+      initData.scaleX = options.scale;
+      initData.scaleY = options.scale;
+      delete initData.scale;
+    }
+
+    const spawned = containerClip.attachMovie(symbolIdOrName, instanceName, depth, initData);
+
+    if (options.onClick) {
+      spawned.on('onClick', () => options.onClick!(spawned));
+      spawned.on('click', () => options.onClick!(spawned));
+    }
+
+    return spawned;
+  }
+
+  // --- Particle Generation ---
+
+  public findParticleEngine(): ParticleEngine {
+    let curr: DisplayObject | null = this;
+    while (curr) {
+      if (curr instanceof MovieClip && curr._particleEngine) {
+        return curr._particleEngine;
+      }
+      curr = curr._parent;
+    }
+    if (!this._particleEngine) {
+      this._particleEngine = new ParticleEngine();
+    }
+    return this._particleEngine;
+  }
+
+  public emitParticles(options: ParticleEmitterOptions = {}): void {
+    const engine = this.findParticleEngine();
+    engine.emit(options);
   }
 
   // --- Lifecycle & Destruction ---

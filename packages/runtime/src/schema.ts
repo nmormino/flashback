@@ -65,6 +65,57 @@ export interface Artboard {
 
 export type ReducedMotionMode = 'auto' | 'full' | 'stop-motion' | 'fixed';
 
+export type StateVariableType = 'number' | 'string' | 'boolean' | 'json';
+
+export interface StateVariable {
+  id: ID;
+  name: string;
+  type: StateVariableType;
+  defaultValue: any;
+  /** Whether this variable is public and can be passed in as a prop on <web-anim state={{...}} />. */
+  isPublic?: boolean;
+  description?: string;
+}
+
+export type ParticlePreset = 'burst' | 'confetti' | 'spray' | 'stream' | 'splat' | 'sparks';
+
+export interface ParticleEmitterOptions {
+  preset?: ParticlePreset;
+  /** Stage X coordinate, or 0-1 normalized if using normalized coordinates */
+  x?: number;
+  /** Stage Y coordinate, or 0-1 normalized if using normalized coordinates */
+  y?: number;
+  count?: number;
+  spread?: number;
+  angle?: number;
+  velocity?: number;
+  decay?: number;
+  gravity?: number;
+  ticks?: number;
+  colors?: string[];
+  shapes?: Array<'square' | 'circle' | 'star'>;
+  scalar?: number;
+  origin?: { x: number; y: number };
+  disableForReducedMotion?: boolean;
+  [key: string]: any;
+}
+
+export interface SpawnClipOptions {
+  x?: number;
+  y?: number;
+  scale?: number;
+  scaleX?: number;
+  scaleY?: number;
+  rotation?: number;
+  alpha?: number;
+  name?: InstanceName;
+  parent?: any;
+  layerId?: ID;
+  depth?: number;
+  onClick?: (instance: MovieClipContext) => void;
+  [key: string]: any;
+}
+
 export interface AnimDocument {
   version: typeof SCHEMA_VERSION;
   meta: DocumentMeta;
@@ -78,6 +129,10 @@ export interface AnimDocument {
   activeArtboardId?: ID;
   /** Optional internationalization dictionary for multi-language text rendering. */
   i18n?: I18nDef;
+  /** Document-level shared state variable definitions. */
+  stateVariables?: StateVariable[];
+  /** Document-level state dictionary (overrides / initial values). */
+  state?: Record<string, any>;
   /** Runs once before frame 1 of root. `this` = root MovieClipAPI. */
   onInit?: ScriptFn<MovieClipContext>;
   /** Scripts dictionary mapped by element identifier/instance name. */
@@ -477,8 +532,10 @@ export interface TextElement extends ElementBase {
   letterSpacing?: number;
   /** Text aligned to an undulating or arbitrary path. */
   pathConfig?: TextPathConfig;
-  /** Dynamic/Input text: bind to a variable on the parent timeline (Flash "Var:"). */
+  /** Dynamic/Input text: bind to a variable on the parent timeline (Flash "Var:") or document state. */
   variable?: string;
+  /** Explicit document state variable binding (e.g. "score"). */
+  stateBinding?: string;
   /** Optional i18n translation dictionary key. */
   i18nKey?: string;
   events?: Pick<InstanceEvents, 'onChange' | 'onFocus' | 'onBlur'>;
@@ -739,6 +796,24 @@ export interface MovieClipAPI extends DisplayObjectAPI {
 
   /** Timeline-scoped variables (`var score = 0` on a frame lives here). */
   readonly vars: Record<string, unknown>;
+
+  /** Shared reactive document/game state. */
+  readonly state: Record<string, any>;
+  getState(key?: string): any;
+  setState(keyOrObject: string | Record<string, any>, value?: any): void;
+
+  /** Broadcast a custom event across clips, artboards, and to the host <web-anim>. */
+  emit(eventName: string, payload?: any): void;
+  /** Listen for a custom event. Returns an unsubscribe function. */
+  on(eventName: string, handler: (payload?: any) => void): () => void;
+  /** Remove a custom event listener. */
+  off(eventName: string, handler?: (payload?: any) => void): void;
+
+  /** Dynamically spawn an instance of a library Clip at runtime. */
+  spawnClip(symbolIdOrName: string, options?: SpawnClipOptions): MovieClipContext;
+
+  /** Trigger a particle animation effect (burst, confetti, splat, sparks, spray, stream). */
+  emitParticles(options?: ParticleEmitterOptions): void;
 }
 
 export interface SoundHandle {
@@ -759,6 +834,13 @@ export interface StageAPI {
   gotoArtboard?(idOrName: string, transition?: ArtboardTransition): void;
   readonly activeArtboardId?: string;
   readonly artboards?: Artboard[];
+  readonly state?: Record<string, any>;
+  getState?(key?: string): any;
+  setState?(keyOrObject: string | Record<string, any>, value?: any): void;
+  emit?(eventName: string, payload?: any): void;
+  on?(eventName: string, handler: (payload?: any) => void): () => void;
+  off?(eventName: string, handler?: (payload?: any) => void): void;
+  emitParticles?(options?: ParticleEmitterOptions): void;
 }
 
 /**

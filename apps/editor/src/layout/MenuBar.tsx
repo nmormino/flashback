@@ -29,6 +29,7 @@ export const MenuBar: React.FC = () => {
   const isolationStack = useEditorStore((s) => s.isolationStack);
   const isLibraryOpen = useEditorStore((s) => s.isLibraryOpen);
   const isLocalizationOpen = useEditorStore((s) => s.isLocalizationOpen);
+  const isStateVariablesOpen = useEditorStore((s) => s.isStateVariablesOpen);
 
   const activeTl = getActiveTimeline(doc, isolationStack);
   const fps = doc.stage.fps || 24;
@@ -154,6 +155,11 @@ export const MenuBar: React.FC = () => {
           label: isLocalizationOpen ? '✓ Strings & Localization Window' : 'Strings & Localization Window',
           shortcut: 'Ctrl+Shift+L',
           action: () => editorActions.toggleLocalization(),
+        },
+        {
+          label: isStateVariablesOpen ? '✓ State & Variables Window' : 'State & Variables Window',
+          shortcut: 'Ctrl+Shift+V',
+          action: () => editorActions.toggleStateVariables(),
         },
         { separator: true, label: '' },
         {

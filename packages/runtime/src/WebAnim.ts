@@ -5,6 +5,7 @@ import type {
   ReducedMotionMode,
   Artboard,
   ArtboardTransition,
+  ParticleEmitterOptions,
 } from './schema';
 import { TimelinePipeline, Timeline } from './player/Timeline';
 import { Ticker } from './player/Ticker';
@@ -92,6 +93,7 @@ export class WebAnim extends HTMLElementBase {
     'locale',
     'strings',
     'translations',
+    'state',
   ];
 
   private _animation: AnimDocument | null = null;
@@ -100,12 +102,14 @@ export class WebAnim extends HTMLElementBase {
   private _ticker: Ticker | null = null;
   private _containerEl: HTMLElement | null = null;
   private _viewportEl: HTMLElement | null = null;
+  private _particleCanvas: HTMLCanvasElement | null = null;
   private _resizeObserver: ResizeObserver | null = null;
   private _onResize: (() => void) | null = null;
   private _srcLoadingPromise: Promise<AnimDocument | null> | null = null;
   private _reducedMotion: ReducedMotionMode = 'auto';
   private _posterFrame = 1;
   private _locale = 'en';
+  private _initialState?: Record<string, any>;
 
   constructor() {
     super();
@@ -186,6 +190,15 @@ export class WebAnim extends HTMLElementBase {
           this.setTextStrings(parsed);
         } catch (err) {
           console.warn(`[web-anim] Failed to parse ${name} attribute JSON:`, err);
+        }
+      }
+    } else if (name === 'state') {
+      if (newValue) {
+        try {
+          const parsed = JSON.parse(newValue);
+          this.setState(parsed);
+        } catch (err) {
+          console.warn('[web-anim] Failed to parse state attribute JSON:', err);
         }
       }
     }
@@ -378,6 +391,121 @@ export class WebAnim extends HTMLElementBase {
     // Sync DomRenderer and emit stringschange event
     this._renderer?.syncTextVariables();
     this.dispatchEvent(new CustomEvent('stringschange', { detail: { strings, locale: targetLocale } }));
+  }
+
+  /**
+   * Shared reactive document/game state.
+   * Can be assigned as an object or JSON string from the host page.
+   *
+   * Example:
+   *   document.querySelector('web-anim').state = { score: 1000 };
+   */
+  public get state(): Record<string, any> {
+    return this.getState();
+  }
+
+  public set state(val: Record<string, any> | string) {
+    if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val);
+        this.setState(parsed);
+      } catch (err) {
+        console.warn('[web-anim] Failed to parse state property JSON:', err);
+      }
+    } else if (val && typeof val === 'object') {
+      this.setState(val);
+    }
+  }
+
+  public getState(key?: string): any {
+    if (this._pipeline) {
+      return this._pipeline.root.getState(key);
+    }
+    if (key) return this._initialState?.[key];
+    return { ...(this._initialState || {}) };
+  }
+
+  public setState(keyOrObject: string | Record<string, any>, value?: any): void {
+    if (typeof keyOrObject === 'string') {
+      if (!this._initialState) this._initialState = {};
+      this._initialState[keyOrObject] = value;
+    } else if (keyOrObject && typeof keyOrObject === 'object') {
+      if (!this._initialState) this._initialState = {};
+      Object.assign(this._initialState, keyOrObject);
+    }
+
+    if (this._pipeline) {
+      if (typeof keyOrObject === 'string') {
+        this._pipeline.stateStore.setPublicState({ [keyOrObject]: value });
+      } else {
+        this._pipeline.stateStore.setPublicState(keyOrObject);
+      }
+      this._renderer?.syncTextVariables();
+    }
+  }
+
+  /**
+   * Broadcast an event into the animation and to any registered listeners.
+   *
+   * Example:
+   *   anim.emit('tumbleweed', { speed: 2 });
+   */
+  public emit(eventName: string, payload?: any): void {
+    if (this._pipeline) {
+      this._pipeline.root.emit(eventName, payload);
+    } else {
+      this.dispatchEvent(
+        new CustomEvent('web-anim-event', {
+          detail: { name: eventName, payload },
+          bubbles: true,
+          composed: true,
+        })
+      );
+      this.dispatchEvent(
+        new CustomEvent(eventName, {
+          detail: payload,
+          bubbles: true,
+          composed: true,
+        })
+      );
+    }
+  }
+
+  /**
+   * Listen for events emitted by the animation.
+   *
+   * Example:
+   *   const unsub = anim.on('scoreChange', (val) => console.log('Score:', val));
+   */
+  public on(eventName: string, handler: (payload?: any) => void): () => void {
+    if (this._pipeline) {
+      return this._pipeline.eventBus.on(eventName, handler);
+    }
+    const domListener = (e: Event) => {
+      handler((e as CustomEvent).detail);
+    };
+    this.addEventListener(eventName, domListener);
+    return () => {
+      this.removeEventListener(eventName, domListener);
+    };
+  }
+
+  public off(eventName: string, handler?: (payload?: any) => void): void {
+    if (this._pipeline) {
+      this._pipeline.eventBus.off(eventName, handler);
+    }
+  }
+
+  /**
+   * Trigger particle animation effects (burst, confetti, splat, sparks, spray, stream).
+   *
+   * Example:
+   *   anim.emitParticles({ preset: 'splat', x: 200, y: 150 });
+   */
+  public emitParticles(options: ParticleEmitterOptions = {}): void {
+    if (this._pipeline) {
+      this._pipeline.particleEngine.emit(options);
+    }
   }
 
   public get src(): string | null {
@@ -669,12 +797,47 @@ export class WebAnim extends HTMLElementBase {
       posterFrame: this._posterFrame,
     });
     this._pipeline.onGotoArtboard = (id, tr) => this.gotoArtboard(id, tr);
+    this._pipeline.eventBus.attachHost(this);
+    this._pipeline.onStateChange = () => {
+      this._renderer?.syncTextVariables();
+    };
+
+    // Apply any initial state or state attribute passed as props
+    if (this._initialState) {
+      this._pipeline.stateStore.setPublicState(this._initialState);
+    }
+    const stateAttr = this.getAttribute('state');
+    if (stateAttr) {
+      try {
+        this._pipeline.stateStore.setPublicState(JSON.parse(stateAttr));
+      } catch {
+        /* ignore invalid initial JSON */
+      }
+    }
+
     this._pipeline.init();
     this._pipeline.root.vars.__locale = this._locale;
 
     // 2. Create DomRenderer inside the ShadowRoot
     this._renderer = new DomRenderer(this._viewportEl, { doc, locale: this._locale });
     this._renderer.attach(this._pipeline.root);
+
+    // Particle overlay canvas
+    if (typeof document !== 'undefined') {
+      const particleCanvas = document.createElement('canvas');
+      particleCanvas.className = 'stage-particle-canvas';
+      particleCanvas.style.position = 'absolute';
+      particleCanvas.style.left = '0';
+      particleCanvas.style.top = '0';
+      particleCanvas.style.width = '100%';
+      particleCanvas.style.height = '100%';
+      particleCanvas.style.pointerEvents = 'none';
+      particleCanvas.style.zIndex = '9999';
+      this._viewportEl.appendChild(particleCanvas);
+      this._particleCanvas = particleCanvas;
+      this._pipeline.particleEngine.attachCanvas(particleCanvas);
+      this._pipeline.particleEngine.setStageDimensions(width, height);
+    }
 
     // Apply any initial strings or translations attributes passed as props
     const stringsAttr = this.getAttribute('strings');
