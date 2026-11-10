@@ -9,6 +9,7 @@ import {
   Circle as CircleIcon,
   Star as StarIcon,
   Hand as HandIcon,
+  Pencil as PencilIcon,
   ArrowLeftRight,
   Image as ImageIcon,
   Video as VideoIcon,
@@ -23,6 +24,7 @@ import {
   type EditorTool,
 } from '../../state/editorStore';
 import { GradientPicker } from '../../ui/GradientPicker';
+import { PencilOptionsModal } from './PencilOptionsModal';
 import styles from './Tools.module.css';
 import dialogStyles from '../../dialogs/Dialog.module.css';
 
@@ -38,12 +40,15 @@ export const Tools: React.FC = () => {
   const fillColor = useEditorStore((s) => s.fillColor);
   const activeFill = useEditorStore((s) => s.activeFill);
   const strokeColor = useEditorStore((s) => s.strokeColor);
+  const activeStroke = useEditorStore((s) => s.activeStroke);
+  const strokeWidth = useEditorStore((s) => s.strokeWidth);
   const selectedElementIds = useEditorStore((s) => s.selectedElementIds);
   const doc = useEditorStore((s) => s.doc);
   const currentFrame = useEditorStore((s) => s.currentFrame);
   const isolationStack = useEditorStore((s) => s.isolationStack);
 
   const [isFillPickerOpen, setIsFillPickerOpen] = useState(false);
+  const [isStrokePickerOpen, setIsStrokePickerOpen] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [imageUrl, setImageUrl] = useState('https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=480&q=80');
@@ -53,6 +58,7 @@ export const Tools: React.FC = () => {
   const [videoWidth, setVideoWidth] = useState(320);
   const [videoHeight, setVideoHeight] = useState(180);
   const fillSwatchRef = useRef<HTMLDivElement>(null);
+  const strokeSwatchRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -118,6 +124,12 @@ export const Tools: React.FC = () => {
       icon: <PenTool size={17} strokeWidth={1.9} />,
     },
     {
+      id: 'pencil',
+      label: 'Pencil Tool',
+      shortcut: 'N',
+      icon: <PencilIcon size={17} strokeWidth={2} />,
+    },
+    {
       id: 'text',
       label: 'Text Tool',
       shortcut: 'T',
@@ -149,12 +161,6 @@ export const Tools: React.FC = () => {
     },
   ];
 
-  const handleSwapColors = () => {
-    const prevFill = activeFill?.type === 'solid' ? activeFill.color : fillColor;
-    editorActions.setFillColor(strokeColor);
-    editorActions.setStrokeColor(prevFill);
-  };
-
   const handleFillChange = (newFill: Fill) => {
     editorActions.setActiveFill(newFill);
 
@@ -173,7 +179,9 @@ export const Tools: React.FC = () => {
               editorActions.updateElementProps(el.id, { paths: newPaths });
             } else if (el.type === 'text') {
               const primaryColor =
-                newFill.type === 'solid'
+                newFill.type === 'none'
+                  ? 'transparent'
+                  : newFill.type === 'solid'
                   ? newFill.color
                   : newFill.type === 'linearGradient' || newFill.type === 'radialGradient'
                   ? newFill.stops[0]?.color || '#ffffff'
@@ -189,7 +197,59 @@ export const Tools: React.FC = () => {
     }
   };
 
+  const handleStrokeChange = (newStroke: Fill) => {
+    editorActions.setActiveStroke(newStroke);
+
+    if (selectedElementIds.length > 0) {
+      const activeTl = getActiveTimeline(doc, isolationStack);
+      for (const layer of activeTl.layers) {
+        const kf = findKeyframeAt(layer, currentFrame);
+        if (!kf) continue;
+        for (const el of kf.elements) {
+          if (selectedElementIds.includes(el.id)) {
+            if (el.type === 'shape') {
+              const shape = el as ShapeElement;
+              const newPaths = shape.paths.map((p, idx) =>
+                idx === 0
+                  ? {
+                      ...p,
+                      stroke: {
+                        fill: newStroke,
+                        width: p.stroke?.width ?? (strokeWidth || 1),
+                        cap: p.stroke?.cap ?? 'round',
+                        join: p.stroke?.join ?? 'round',
+                        dash: p.stroke?.dash,
+                      },
+                    }
+                  : p
+              );
+              editorActions.updateElementProps(el.id, { paths: newPaths });
+            } else if (el.type === 'text') {
+              const textEl = el as TextElement;
+              editorActions.updateElementProps(el.id, {
+                stroke: {
+                  fill: newStroke,
+                  width: textEl.stroke?.width ?? (strokeWidth || 1),
+                  cap: textEl.stroke?.cap ?? 'round',
+                  join: textEl.stroke?.join ?? 'round',
+                },
+              });
+            }
+          }
+        }
+      }
+    }
+  };
+
+  const handleSwapColors = () => {
+    const prevFill: Fill = activeFill ?? { type: 'solid', color: fillColor };
+    const prevStroke: Fill = activeStroke ?? { type: 'solid', color: strokeColor };
+    handleFillChange(prevStroke);
+    handleStrokeChange(prevFill);
+  };
+
   const fillCss = activeFill ? fillToCSS(activeFill) : fillColor;
+  const strokeCss = activeStroke ? fillToCSS(activeStroke) : strokeColor;
 
   return (
     <div
@@ -199,17 +259,56 @@ export const Tools: React.FC = () => {
       <div className={styles.panelHeader}>Tools</div>
 
       <div className={styles.toolGrid}>
-        {tools.map((t) => (
-          <button
-            key={t.id}
-            className={`${styles.toolBtn} ${activeTool === t.id ? styles.active : ''}`}
-            onClick={() => editorActions.setActiveTool(t.id)}
-            title={`${t.label} (${t.shortcut})`}
-            type="button"
-          >
-            {t.icon}
-          </button>
-        ))}
+        {tools.map((t) => {
+          const isActive = activeTool === t.id;
+          return (
+            <div key={t.id} style={{ position: 'relative' }}>
+              <button
+                className={`${styles.toolBtn} ${isActive ? styles.active : ''}`}
+                onClick={() => editorActions.setActiveTool(t.id)}
+                onDoubleClick={() => {
+                  if (t.id === 'pencil') {
+                    editorActions.setPencilOptionsOpen(true);
+                  }
+                }}
+                title={
+                  t.id === 'pencil'
+                    ? `${t.label} (${t.shortcut})\nDouble-click to open Pencil Tool Options`
+                    : `${t.label} (${t.shortcut})`
+                }
+                type="button"
+                data-testid={`tool-btn-${t.id}`}
+              >
+                {t.icon}
+              </button>
+              {t.id === 'pencil' && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    editorActions.setPencilOptionsOpen(true);
+                  }}
+                  title="Pencil Tool Options"
+                  style={{
+                    position: 'absolute',
+                    bottom: 2,
+                    right: 2,
+                    width: 7,
+                    height: 7,
+                    borderLeft: '4px solid transparent',
+                    borderBottom: '4px solid var(--mx-text-muted, #94a3b8)',
+                    background: 'transparent',
+                    borderTop: 'none',
+                    borderRight: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
+                  }}
+                  data-testid="pencil-options-trigger"
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <div className={styles.separator} />
@@ -248,27 +347,40 @@ export const Tools: React.FC = () => {
         <div className={styles.sectionLabel}>Colors</div>
 
         <div className={styles.swatchesContainer}>
-          {/* Stroke Swatch */}
+          {/* Stroke (Border) Swatch */}
           <div
-            className={styles.strokeSwatch}
-            style={{ backgroundColor: strokeColor }}
-            title={`Stroke: ${strokeColor}`}
-          >
-            <input
-              type="color"
-              className={styles.hiddenColorInput}
-              value={strokeColor.length === 7 ? strokeColor : '#000000'}
-              onChange={(e) => editorActions.setStrokeColor(e.target.value)}
-            />
-          </div>
+            ref={strokeSwatchRef}
+            data-testid="tools-stroke-swatch"
+            className={`${styles.strokeSwatch} ${activeStroke?.type === 'none' ? styles.noneFillSwatch : ''}`}
+            style={{ background: activeStroke?.type === 'none' ? undefined : strokeCss }}
+            title="Click to edit Border / Stroke & Gradient"
+            onClick={() => {
+              setIsStrokePickerOpen(!isStrokePickerOpen);
+              setIsFillPickerOpen(false);
+            }}
+          />
 
-          {/* Fill Swatch */}
+          {isStrokePickerOpen && (
+            <GradientPicker
+              fill={activeStroke ?? { type: 'solid', color: strokeColor }}
+              onChange={handleStrokeChange}
+              onClose={() => setIsStrokePickerOpen(false)}
+              anchorRef={strokeSwatchRef}
+              title="Border / Stroke & Gradient"
+            />
+          )}
+
+          {/* Fill (Body) Swatch */}
           <div
             ref={fillSwatchRef}
-            className={styles.fillSwatch}
-            style={{ background: fillCss }}
+            data-testid="tools-fill-swatch"
+            className={`${styles.fillSwatch} ${activeFill?.type === 'none' ? styles.noneFillSwatch : ''}`}
+            style={{ background: activeFill?.type === 'none' ? undefined : fillCss }}
             title="Click to edit Fill / Gradient"
-            onClick={() => setIsFillPickerOpen(!isFillPickerOpen)}
+            onClick={() => {
+              setIsFillPickerOpen(!isFillPickerOpen);
+              setIsStrokePickerOpen(false);
+            }}
           />
 
           {isFillPickerOpen && (
@@ -282,14 +394,31 @@ export const Tools: React.FC = () => {
           )}
         </div>
 
-        <button
-          type="button"
-          className={styles.swapBtn}
-          onClick={handleSwapColors}
-          title="Swap Stroke & Fill (X)"
-        >
-          <ArrowLeftRight size={13} />
-        </button>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <button
+            type="button"
+            className={styles.swapBtn}
+            onClick={handleSwapColors}
+            title="Swap Stroke & Fill (X)"
+          >
+            <ArrowLeftRight size={13} />
+          </button>
+          <button
+            type="button"
+            data-testid="tools-none-fill-btn"
+            className={styles.swapBtn}
+            onClick={() => {
+              if (isStrokePickerOpen) {
+                handleStrokeChange({ type: 'none' });
+              } else {
+                handleFillChange({ type: 'none' });
+              }
+            }}
+            title="Set Fill or Active Picker to None / Transparent (/)"
+          >
+            <span style={{ fontSize: 13, fontWeight: 'bold', color: '#ef4444', lineHeight: 1 }}>⃠</span>
+          </button>
+        </div>
       </div>
 
       {/* Hidden File Input for Image Upload */}
@@ -547,6 +676,8 @@ export const Tools: React.FC = () => {
           </div>,
           document.body
         )}
+
+      <PencilOptionsModal />
     </div>
   );
 };

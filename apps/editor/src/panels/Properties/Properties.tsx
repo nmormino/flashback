@@ -10,6 +10,9 @@ import type {
   LayoutPin,
   StageBreakpoint,
   ReducedMotionMode,
+  CornerType,
+  RectCornerRadius,
+  RectCornerTypes,
 } from '@flashback/runtime';
 import { fillToCSS } from '@flashback/runtime';
 import {
@@ -36,9 +39,92 @@ import { LayerFiltersManager } from '../Layers/Layers';
 import { GradientPicker } from '../../ui/GradientPicker';
 import { getElementBounds, scaleSvgPathD, elementLocalToStage } from '../Stage/Stage';
 import { NumberField } from '../../ui/NumberField';
-import { STAR_PRESETS } from '../../utils/shapeGenerators';
+import {
+  STAR_PRESETS,
+  normalizeCornerRadii,
+  isUniformCornerRadius,
+  getUniformCornerRadius,
+  normalizeCornerTypes,
+  isUniformCornerType,
+  getUniformCornerType,
+} from '../../utils/shapeGenerators';
+import { isPathClosed, parseSvgPath, getAnchorPointType } from '../../utils/bezier';
 import { getWeightLabel, STANDARD_WEIGHTS } from '../../utils/fontParser';
 import styles from './Properties.module.css';
+
+interface AccordionSectionProps {
+  id: string;
+  category: string;
+  activeCategory: string;
+  title: string;
+  icon?: React.ReactNode;
+  badge?: string;
+  summary?: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  testId?: string;
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}
+
+const AccordionSection: React.FC<AccordionSectionProps> = ({
+  id,
+  category,
+  activeCategory,
+  title,
+  icon,
+  badge,
+  summary,
+  collapsed,
+  onToggle,
+  testId,
+  style,
+  children,
+}) => {
+  const isHidden = activeCategory !== 'all' && activeCategory !== category;
+
+  return (
+    <div
+      id={id}
+      className={`${styles.propSection} ${collapsed ? styles.collapsedSection : ''} ${isHidden ? styles.hiddenSection : ''}`}
+      data-testid={testId}
+      style={{
+        ...style,
+        display: isHidden ? 'none' : undefined,
+      }}
+    >
+      <div
+        className={styles.accordionHeader}
+        onClick={onToggle}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        aria-expanded={!collapsed}
+      >
+        <div className={styles.accordionTitleArea}>
+          <span className={styles.accordionChevron}>{collapsed ? '▸' : '▾'}</span>
+          {icon && <span style={{ display: 'inline-flex', alignItems: 'center' }}>{icon}</span>}
+          <span>{title}</span>
+          {badge && <span className={styles.typeBadge}>{badge}</span>}
+        </div>
+        <div className={styles.accordionRightArea}>
+          {summary && <span className={styles.accordionSummaryPill}>{summary}</span>}
+        </div>
+      </div>
+      <div
+        className={styles.accordionBody}
+        style={{ display: collapsed ? 'none' : 'flex' }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+};
 
 export const Properties: React.FC = () => {
   const doc = useEditorStore((s) => s.doc);
@@ -51,13 +137,32 @@ export const Properties: React.FC = () => {
   const textSelection = useEditorStore((s) => s.textSelection);
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId);
   const previewLocale = useEditorStore((s) => s.previewLocale);
+  const activeTool = useEditorStore((s) => s.activeTool);
+  const defaultRectConfig = useEditorStore((s) => s.rectConfig);
+  const defaultStarConfig = useEditorStore((s) => s.starConfig);
+  const defaultOvalConfig = useEditorStore((s) => s.ovalConfig);
+  const pencilConfig = useEditorStore((s) => s.pencilConfig);
+  const subselectedAnchor = useEditorStore((s) => s.subselectedAnchor);
+
+  const [viewMode, setViewMode] = useState<'tabs' | 'accordion' | 'dropdown'>('tabs');
+  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+  const toggleSection = (id: string) =>
+    setExpandedSections((prev) => ({ ...prev, [id]: !(prev[id] ?? true) }));
+  const isSectionExpanded = (id: string) => expandedSections[id] ?? true;
 
   const [shapeGradientOpen, setShapeGradientOpen] = useState(false);
+  const [shapeStrokeGradientOpen, setShapeStrokeGradientOpen] = useState(false);
   const [textGradientOpen, setTextGradientOpen] = useState(false);
+  const [textStrokeGradientOpen, setTextStrokeGradientOpen] = useState(false);
   const [stageGradientOpen, setStageGradientOpen] = useState(false);
   const [lockAspectRatio, setLockAspectRatio] = useState(false);
+  const [unlinkRectCorners, setUnlinkRectCorners] = useState(false);
   const shapeFillRef = useRef<HTMLDivElement>(null);
+  const shapeStrokeRef = useRef<HTMLDivElement>(null);
   const textFillRef = useRef<HTMLDivElement>(null);
+  const textStrokeRef = useRef<HTMLDivElement>(null);
   const stageFillRef = useRef<HTMLDivElement>(null);
 
   const activeTl = getActiveTimeline(doc, isolationStack);
@@ -114,17 +219,359 @@ export const Properties: React.FC = () => {
       { name: 'Accent Blue', color: '#1d4ed8' },
     ];
 
+    const stageCategories = [
+      { id: 'all', name: 'All Categories', icon: '📑' },
+      ...(activeTool === 'rect' || activeTool === 'polygon' || activeTool === 'oval' || activeTool === 'pencil'
+        ? [{ id: 'tools', name: 'Tool Defaults', icon: '🛠️' }]
+        : []),
+      ...(selectedLayer
+        ? [{ id: 'layer', name: selectedLayer.kind === 'folder' ? 'Folder' : 'Layer', icon: selectedLayer.kind === 'folder' ? '📁' : '📄' }]
+        : []),
+      { id: 'stage', name: 'Stage & Canvas', icon: '🎬' },
+      { id: 'layout', name: 'Breakpoints', icon: '📱' },
+      { id: 'accessibility', name: 'Accessibility', icon: '♿' },
+      { id: 'i18n', name: 'Localization', icon: '🌐' },
+    ];
+
+    const allStageSectionIds = [
+      ...(activeTool === 'rect' ? ['tool-rect-defaults'] : []),
+      ...(activeTool === 'polygon' ? ['tool-polygon-defaults'] : []),
+      ...(activeTool === 'oval' ? ['tool-oval-defaults'] : []),
+      ...(activeTool === 'pencil' ? ['tool-pencil-defaults'] : []),
+      ...(selectedLayer ? ['layer-properties'] : []),
+      'stage-dimensions',
+      'stage-fps',
+      'stage-background',
+      'stage-breakpoints',
+      'stage-reduced-motion',
+      'stage-i18n',
+    ];
+
+    const stageCategoryCounts: Record<string, number> = {
+      tools:
+        (activeTool === 'rect' ? 1 : 0) +
+        (activeTool === 'polygon' ? 1 : 0) +
+        (activeTool === 'oval' ? 1 : 0) +
+        (activeTool === 'pencil' ? 1 : 0),
+      layer: selectedLayer ? 1 : 0,
+      stage: 3,
+      layout: 1,
+      accessibility: 1,
+      i18n: 1,
+    };
+
+    const effectiveStageCategory = stageCategories.some((c) => c.id === activeCategory)
+      ? activeCategory
+      : 'all';
+
+    const areAllStageCollapsed =
+      allStageSectionIds.length > 0 &&
+      allStageSectionIds.every((id) => expandedSections[id] === false);
+
+    const handleToggleAllStage = () => {
+      if (areAllStageCollapsed) {
+        setExpandedSections({});
+      } else {
+        const nextMap: Record<string, boolean> = {};
+        allStageSectionIds.forEach((id) => {
+          nextMap[id] = false;
+        });
+        setExpandedSections(nextMap);
+      }
+    };
+
     return (
-      <div className={styles.propertiesContainer}>
+      <div className={`${styles.propertiesRoot} ${styles.propertiesContainer}`}>
+        <div className={styles.propertiesHeader}>
+          <div className={styles.headerLeft}>
+            <div className={styles.targetChip} title="Stage & Layers">
+              <span>🎬 Stage & Layers</span>
+            </div>
+            <select
+              data-testid="properties-category-dropdown"
+              className={styles.categoryDropdown}
+              value={effectiveStageCategory}
+              onChange={(e) => setActiveCategory(e.target.value)}
+              aria-label="Filter Properties Category"
+            >
+              {stageCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className={styles.headerRight}>
+            <div className={styles.viewModeGroup}>
+              <button
+                type="button"
+                className={`${styles.viewModeBtn} ${viewMode === 'tabs' ? styles.viewModeBtnActive : ''}`}
+                onClick={() => setViewMode('tabs')}
+                title="Vertical Tabs View"
+              >
+                📑 Tabs
+              </button>
+              <button
+                type="button"
+                className={`${styles.viewModeBtn} ${viewMode === 'accordion' ? styles.viewModeBtnActive : ''}`}
+                onClick={() => setViewMode('accordion')}
+                title="Accordion Stack View"
+              >
+                ▾ Accordion
+              </button>
+              <button
+                type="button"
+                className={`${styles.viewModeBtn} ${viewMode === 'dropdown' ? styles.viewModeBtnActive : ''}`}
+                onClick={() => setViewMode('dropdown')}
+                title="Form Only View"
+              >
+                ▾ Form Only
+              </button>
+            </div>
+            <button
+              type="button"
+              className={styles.toggleAllBtn}
+              onClick={handleToggleAllStage}
+              title={areAllStageCollapsed ? 'Expand all sections' : 'Collapse all sections'}
+            >
+              {areAllStageCollapsed ? '▸ Expand All' : '▾ Collapse All'}
+            </button>
+          </div>
+        </div>
+
+        <div className={styles.propertiesBody}>
+          {viewMode === 'tabs' && (
+            <div className={styles.verticalTabsRail}>
+              {stageCategories.map((c) => {
+                const isActive = effectiveStageCategory === c.id;
+                const count = c.id === 'all' ? allStageSectionIds.length : (stageCategoryCounts[c.id] ?? 0);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`${styles.verticalTabBtn} ${isActive ? styles.activeTab : ''}`}
+                    onClick={() => setActiveCategory(c.id)}
+                    title={c.name}
+                  >
+                    <div className={styles.verticalTabLabelArea}>
+                      <span>{c.icon}</span>
+                      <span>{c.name}</span>
+                    </div>
+                    <span className={styles.tabCountBadge}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className={styles.propertiesContentArea}>
+        {/* Active Shape Tool Defaults (Rectangle / Polygon / Oval) */}
+        {activeTool === 'rect' && (
+          <AccordionSection
+            id="tool-rect-defaults"
+            category="tools"
+            activeCategory={effectiveStageCategory}
+            title="Rectangle Tool Options"
+            icon="▢"
+            badge="Live Corners"
+            summary={`r=${getUniformCornerRadius(defaultRectConfig.cornerRadius)}px`}
+            collapsed={!isSectionExpanded('tool-rect-defaults')}
+            onToggle={() => toggleSection('tool-rect-defaults')}
+            testId="tool-rect-defaults-section"
+          >
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Radius:</span>
+              <NumberField
+                value={getUniformCornerRadius(defaultRectConfig.cornerRadius)}
+                onChange={(val) => editorActions.setRectConfig({ cornerRadius: val })}
+                onCommit={(val) => editorActions.setRectConfig({ cornerRadius: val })}
+                unit="px"
+                min={0}
+                max={200}
+                step={1}
+                shiftStep={5}
+                altStep={0.5}
+                inputWidth={50}
+                ariaLabel="Default rectangle corner radius"
+                data-testid="tool-rect-corner-radius-input"
+              />
+            </div>
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Corner Style:</span>
+              <div className={styles.morphBtnGroup}>
+                {(['round', 'inverted', 'chamfer'] as CornerType[]).map((ct) => (
+                  <button
+                    key={ct}
+                    type="button"
+                    className={`${styles.morphBtn} ${defaultRectConfig.cornerType === ct ? styles.activePresetPill : ''}`}
+                    onClick={() => editorActions.setRectConfig({ cornerType: ct })}
+                  >
+                    {ct === 'round' ? '╭ Round' : ct === 'inverted' ? '╯ Inverted' : '╱ Chamfer'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </AccordionSection>
+        )}
+
+        {activeTool === 'polygon' && (
+          <AccordionSection
+            id="tool-polygon-defaults"
+            category="tools"
+            activeCategory={effectiveStageCategory}
+            title="Polygon & Star Tool Options"
+            icon="⭐"
+            summary={`${defaultStarConfig.points} pts, ${Math.round(defaultStarConfig.pointRatio * 100)}%`}
+            collapsed={!isSectionExpanded('tool-polygon-defaults')}
+            onToggle={() => toggleSection('tool-polygon-defaults')}
+            testId="tool-polygon-defaults-section"
+          >
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Points:</span>
+              <NumberField
+                value={defaultStarConfig.points}
+                onChange={(val) => editorActions.setStarConfig({ points: val })}
+                onCommit={(val) => editorActions.setStarConfig({ points: val })}
+                min={3}
+                max={64}
+                step={1}
+                inputWidth={50}
+                ariaLabel="Default star points"
+              />
+            </div>
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Intrusion:</span>
+              <NumberField
+                value={Math.round(defaultStarConfig.pointRatio * 100)}
+                onChange={(val) => editorActions.setStarConfig({ pointRatio: val / 100 })}
+                onCommit={(val) => editorActions.setStarConfig({ pointRatio: val / 100 })}
+                unit="%"
+                min={5}
+                max={300}
+                step={1}
+                inputWidth={50}
+                ariaLabel="Default star ratio"
+              />
+            </div>
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Corner Radius:</span>
+              <NumberField
+                value={defaultStarConfig.cornerRadius ?? 0}
+                onChange={(val) => editorActions.setStarConfig({ cornerRadius: val })}
+                onCommit={(val) => editorActions.setStarConfig({ cornerRadius: val })}
+                unit="px"
+                min={0}
+                max={100}
+                step={1}
+                inputWidth={50}
+                ariaLabel="Default polygon corner radius"
+              />
+            </div>
+          </AccordionSection>
+        )}
+
+        {activeTool === 'oval' && (
+          <AccordionSection
+            id="tool-oval-defaults"
+            category="tools"
+            activeCategory={effectiveStageCategory}
+            title="Oval Tool Options"
+            icon="◯"
+            badge="Pie & Donut"
+            summary={`Hole: ${Math.round((defaultOvalConfig.innerRadiusRatio ?? 0) * 100)}%`}
+            collapsed={!isSectionExpanded('tool-oval-defaults')}
+            onToggle={() => toggleSection('tool-oval-defaults')}
+            testId="tool-oval-defaults-section"
+          >
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Inner Hole:</span>
+              <NumberField
+                value={Math.round((defaultOvalConfig.innerRadiusRatio ?? 0) * 100)}
+                onChange={(val) => editorActions.setOvalConfig({ innerRadiusRatio: val / 100 })}
+                onCommit={(val) => editorActions.setOvalConfig({ innerRadiusRatio: val / 100 })}
+                unit="%"
+                min={0}
+                max={90}
+                step={1}
+                inputWidth={50}
+                ariaLabel="Default donut inner radius ratio"
+              />
+            </div>
+          </AccordionSection>
+        )}
+
+        {activeTool === 'pencil' && (
+          <AccordionSection
+            id="tool-pencil-defaults"
+            category="tools"
+            activeCategory={effectiveStageCategory}
+            title="Pencil Tool Options"
+            icon="✏️"
+            badge="Smoothing"
+            summary={`Smooth: ${pencilConfig?.smoothness ?? 50}%`}
+            collapsed={!isSectionExpanded('tool-pencil-defaults')}
+            onToggle={() => toggleSection('tool-pencil-defaults')}
+            testId="tool-pencil-defaults-section"
+          >
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Smoothness:</span>
+              <NumberField
+                value={pencilConfig?.smoothness ?? 50}
+                onChange={(val) => editorActions.setPencilConfig({ smoothness: val })}
+                onCommit={(val) => editorActions.setPencilConfig({ smoothness: val })}
+                unit="%"
+                min={0}
+                max={100}
+                step={1}
+                inputWidth={50}
+                ariaLabel="Pencil curve smoothness"
+                data-testid="pencil-smoothness-input"
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+              <button
+                type="button"
+                className={styles.morphBtn}
+                style={{ flex: 1, fontSize: 10, padding: '3px 4px' }}
+                onClick={() => editorActions.setPencilConfig({ smoothness: 10 })}
+                data-testid="pencil-smoothness-10"
+              >
+                Accurate (10%)
+              </button>
+              <button
+                type="button"
+                className={styles.morphBtn}
+                style={{ flex: 1, fontSize: 10, padding: '3px 4px' }}
+                onClick={() => editorActions.setPencilConfig({ smoothness: 50 })}
+                data-testid="pencil-smoothness-50"
+              >
+                Balanced (50%)
+              </button>
+              <button
+                type="button"
+                className={styles.morphBtn}
+                style={{ flex: 1, fontSize: 10, padding: '3px 4px' }}
+                onClick={() => editorActions.setPencilConfig({ smoothness: 85 })}
+                data-testid="pencil-smoothness-85"
+              >
+                Smooth (85%)
+              </button>
+            </div>
+          </AccordionSection>
+        )}
+
         {/* Layer / Folder Header & Group Motion Section */}
         {selectedLayer && (
-          <div className={styles.propSection}>
-            <div className={styles.sectionTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span>{selectedLayer.kind === 'folder' ? `📁 Folder: ${selectedLayer.name}` : `Layer: ${selectedLayer.name}`}</span>
-              {selectedLayer.kind === 'folder' && (
-                <span style={{ fontSize: 10, color: '#a855f7', fontWeight: 600 }}>Group Transform</span>
-              )}
-            </div>
+          <AccordionSection
+            id="layer-properties"
+            category="layer"
+            activeCategory={effectiveStageCategory}
+            title={selectedLayer.kind === 'folder' ? `Folder: ${selectedLayer.name}` : `Layer: ${selectedLayer.name}`}
+            icon={selectedLayer.kind === 'folder' ? '📁' : '📄'}
+            badge={selectedLayer.kind === 'folder' ? 'Group Transform' : undefined}
+            collapsed={!isSectionExpanded('layer-properties')}
+            onToggle={() => toggleSection('layer-properties')}
+          >
 
             {selectedLayer.kind === 'folder' && (() => {
               const currentKf = findKeyframeAtTime(selectedLayer, currentTime, fps) ?? findKeyframeAt(selectedLayer, currentFrame);
@@ -282,12 +729,20 @@ export const Properties: React.FC = () => {
             })()}
 
             <LayerFiltersManager layer={selectedLayer} />
-          </div>
+          </AccordionSection>
         )}
 
         {/* Document Dimensions */}
-        <div className={styles.propSection}>
-          <div className={styles.sectionTitle}>Document Dimensions</div>
+        <AccordionSection
+          id="stage-dimensions"
+          category="stage"
+          activeCategory={effectiveStageCategory}
+          title="Document Dimensions"
+          icon="🎬"
+          summary={`${width}×${height}px`}
+          collapsed={!isSectionExpanded('stage-dimensions')}
+          onToggle={() => toggleSection('stage-dimensions')}
+        >
           <div className={styles.fieldRow}>
             <NumberField
               label="W:"
@@ -331,11 +786,19 @@ export const Properties: React.FC = () => {
               Square
             </button>
           </div>
-        </div>
+        </AccordionSection>
 
         {/* Playback & Target FPS */}
-        <div className={styles.propSection}>
-          <div className={styles.sectionTitle}>Playback Framerate</div>
+        <AccordionSection
+          id="stage-fps"
+          category="stage"
+          activeCategory={effectiveStageCategory}
+          title="Playback Framerate"
+          icon="⏱️"
+          summary={`${fps} FPS`}
+          collapsed={!isSectionExpanded('stage-fps')}
+          onToggle={() => toggleSection('stage-fps')}
+        >
           <div className={styles.fieldRow}>
             <NumberField
               label="FPS:"
@@ -374,11 +837,19 @@ export const Properties: React.FC = () => {
           <div className={styles.helperNote}>
             Runs at smooth 60fps WAAPI in browser
           </div>
-        </div>
+        </AccordionSection>
 
         {/* Background Color & Alpha */}
-        <div className={styles.propSection}>
-          <div className={styles.sectionTitle}>Stage Background</div>
+        <AccordionSection
+          id="stage-background"
+          category="stage"
+          activeCategory={effectiveStageCategory}
+          title="Stage Background"
+          icon="🎨"
+          summary={isTransparent ? 'Transparent' : solidColor}
+          collapsed={!isSectionExpanded('stage-background')}
+          onToggle={() => toggleSection('stage-background')}
+        >
           <div className={styles.swatchesRow}>
             {/* Transparent option button */}
             <button
@@ -417,7 +888,13 @@ export const Properties: React.FC = () => {
                 height: 20,
                 borderRadius: 3,
                 border: '1px solid var(--mx-border, #333842)',
-                background: bg ? fillToCSS(bg) : '#ffffff',
+                background: isTransparent ? undefined : bg ? fillToCSS(bg) : '#ffffff',
+                backgroundImage: isTransparent
+                  ? 'linear-gradient(45deg, #cbd5e1 25%, transparent 25%), linear-gradient(-45deg, #cbd5e1 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #cbd5e1 75%), linear-gradient(-45deg, transparent 75%, #cbd5e1 75%), linear-gradient(to top left, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px))'
+                  : undefined,
+                backgroundSize: isTransparent ? '6px 6px, 6px 6px, 6px 6px, 6px 6px, 100% 100%' : undefined,
+                backgroundPosition: isTransparent ? '0 0, 0 3px, 3px -3px, -3px 0px, 0 0' : undefined,
+                backgroundColor: isTransparent ? '#ffffff' : undefined,
                 cursor: 'pointer',
               }}
               onClick={() => setStageGradientOpen(!stageGradientOpen)}
@@ -452,18 +929,20 @@ export const Properties: React.FC = () => {
               placeholder="#ffffff"
             />
           </div>
-        </div>
+        </AccordionSection>
 
         {/* Responsive Breakpoints Section */}
-        <div className={styles.propSection}>
-          <div className={styles.sectionTitle}>
-            <span>Responsive Breakpoints</span>
-            {doc.stage.breakpoints?.length ? (
-              <span style={{ fontSize: 10, color: 'var(--mx-accent, #3b82f6)' }}>
-                {doc.stage.breakpoints.length} active
-              </span>
-            ) : null}
-          </div>
+        <AccordionSection
+          id="stage-breakpoints"
+          category="layout"
+          activeCategory={effectiveStageCategory}
+          title="Responsive Breakpoints"
+          icon="📱"
+          badge={doc.stage.breakpoints?.length ? `${doc.stage.breakpoints.length} active` : undefined}
+          summary={doc.stage.breakpoints?.length ? `${doc.stage.breakpoints.length} defined` : 'None'}
+          collapsed={!isSectionExpanded('stage-breakpoints')}
+          onToggle={() => toggleSection('stage-breakpoints')}
+        >
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {doc.stage.breakpoints && doc.stage.breakpoints.length > 0 ? (
@@ -580,11 +1059,19 @@ export const Properties: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </AccordionSection>
 
         {/* Accessibility: Reduced Motion */}
-        <div className={styles.propSection}>
-          <div className={styles.sectionTitle}>Accessibility (Reduced Motion)</div>
+        <AccordionSection
+          id="stage-reduced-motion"
+          category="accessibility"
+          activeCategory={effectiveStageCategory}
+          title="Accessibility (Reduced Motion)"
+          icon="♿"
+          summary={doc.stage.reducedMotion?.mode ? `Mode: ${doc.stage.reducedMotion.mode}` : 'Auto'}
+          collapsed={!isSectionExpanded('stage-reduced-motion')}
+          onToggle={() => toggleSection('stage-reduced-motion')}
+        >
           <div className={styles.fieldRow}>
             <span className={styles.fieldLabel}>Mode:</span>
             <select
@@ -651,16 +1138,19 @@ export const Properties: React.FC = () => {
               />
             </div>
           )}
-        </div>
+        </AccordionSection>
 
         {/* Internationalization (i18n) Stage Dictionary */}
-        <div className={styles.propSection}>
-          <div className={styles.sectionTitle}>
-            <span>i18n Localization</span>
-            <span style={{ fontSize: 10, color: 'var(--mx-text-muted)' }}>
-              Active: {previewLocale || doc.i18n?.defaultLocale || 'en'}
-            </span>
-          </div>
+        <AccordionSection
+          id="stage-i18n"
+          category="i18n"
+          activeCategory={effectiveStageCategory}
+          title="i18n Localization"
+          icon="🌐"
+          summary={`Active: ${previewLocale || doc.i18n?.defaultLocale || 'en'}`}
+          collapsed={!isSectionExpanded('stage-i18n')}
+          onToggle={() => toggleSection('stage-i18n')}
+        >
 
           <div className={styles.fieldRow}>
             <span className={styles.fieldLabel}>Default:</span>
@@ -740,6 +1230,8 @@ export const Properties: React.FC = () => {
             >
               + Add Locale
             </button>
+          </div>
+        </AccordionSection>
           </div>
         </div>
       </div>
@@ -915,32 +1407,46 @@ export const Properties: React.FC = () => {
   const shapeEl = isShape ? (selectedEl as ShapeElement) : null;
   const isStarOrPolygon =
     isShape &&
-    (Boolean((shapeEl as any)?.starConfig) || Boolean(shapeEl?.id.startsWith('poly_')));
+    (Boolean((shapeEl as any)?.starConfig) ||
+      Boolean(shapeEl?.id.startsWith('poly_')) ||
+      (shapeEl as any)?.shapeType === 'star');
+  const isRectangle =
+    isShape &&
+    !isStarOrPolygon &&
+    (Boolean(shapeEl?.rectConfig) ||
+      Boolean(shapeEl?.id.startsWith('rect_')) ||
+      (shapeEl as any)?.shapeType === 'rectangle');
+  const isOval =
+    isShape &&
+    !isStarOrPolygon &&
+    !isRectangle &&
+    (Boolean(shapeEl?.ovalConfig) ||
+      Boolean(shapeEl?.id.startsWith('oval_')) ||
+      (shapeEl as any)?.shapeType === 'circle');
   const isCustomizedPath = Boolean((shapeEl as any)?.isCustomizedPath);
-  const starConfig = (shapeEl as any)?.starConfig || { points: 5, pointRatio: 0.5 };
+  const starConfig = (shapeEl as any)?.starConfig || { points: 5, pointRatio: 0.5, cornerRadius: 0 };
   const starPts = starConfig.points ?? 5;
   const starRatio = starConfig.pointRatio ?? 0.5;
+  const starCornerRadius =
+    shapeEl?.pathCornerRadius !== undefined && shapeEl.pathCornerRadius > 0
+      ? shapeEl.pathCornerRadius
+      : (starConfig.cornerRadius ?? 0);
   const currentPath = shapeEl?.paths[0];
   const shapeFill: Fill =
     currentPath?.fill ?? { type: 'solid', color: '#3b82f6' };
-  const currentFill =
-    shapeFill.type === 'solid'
-      ? shapeFill.color
-      : shapeFill.type === 'linearGradient' || shapeFill.type === 'radialGradient'
-      ? shapeFill.stops[0]?.color ?? '#3b82f6'
-      : '#3b82f6';
-  const currentStroke =
-    currentPath?.stroke?.fill && currentPath.stroke.fill.type === 'solid'
-      ? (currentPath.stroke.fill as { color: string }).color
-      : '#000000';
+  const shapeStrokeFill: Fill =
+    currentPath?.stroke?.fill ?? { type: 'solid', color: '#000000' };
   const currentStrokeWidth = currentPath?.stroke?.width ?? 0;
 
   const handleUpdateShapeFill = (fillOrColor: Fill | string) => {
     if (!shapeEl || !currentPath) return;
     const newFill: Fill =
       typeof fillOrColor === 'string'
-        ? { type: 'solid' as const, color: fillOrColor }
+        ? fillOrColor === 'transparent' || fillOrColor === 'none'
+          ? { type: 'none' }
+          : { type: 'solid' as const, color: fillOrColor }
         : fillOrColor;
+    editorActions.setActiveFill(newFill);
     const newPaths = shapeEl.paths.map((p, idx) => {
       if (idx === 0) {
         return {
@@ -953,15 +1459,22 @@ export const Properties: React.FC = () => {
     editorActions.updateElementProps(shapeEl.id, { paths: newPaths });
   };
 
-  const handleUpdateShapeStroke = (color: string) => {
+  const handleUpdateShapeStroke = (fillOrColor: Fill | string) => {
     if (!shapeEl || !currentPath) return;
+    const newStrokeFill: Fill =
+      typeof fillOrColor === 'string'
+        ? fillOrColor === 'transparent' || fillOrColor === 'none'
+          ? { type: 'none' }
+          : { type: 'solid' as const, color: fillOrColor }
+        : fillOrColor;
+    editorActions.setActiveStroke(newStrokeFill);
     const newPaths = shapeEl.paths.map((p, idx) => {
       if (idx === 0) {
         return {
           ...p,
           stroke: {
-            fill: { type: 'solid' as const, color },
-            width: p.stroke?.width ?? 1,
+            fill: newStrokeFill,
+            width: p.stroke?.width !== undefined ? p.stroke.width : 1,
             cap: p.stroke?.cap ?? 'round',
             join: p.stroke?.join ?? 'round',
             dash: p.stroke?.dash,
@@ -997,13 +1510,209 @@ export const Properties: React.FC = () => {
   const isText = selectedEl.type === 'text';
   const textEl = isText ? (selectedEl as TextElement) : null;
 
+  const owningLayer = activeTl.layers.find((l) =>
+    l.keyframes.some((k) => k.elements.some((e) => e.id === selectedEl.id))
+  );
+  const currentKf = owningLayer
+    ? findKeyframeAtTime(owningLayer, currentTime, fps) ?? findKeyframeAt(owningLayer, currentFrame)
+    : null;
+  const hasTween = currentKf?.tween?.type === 'motion';
+
+  const targetChipText = (() => {
+    if (selectedEl.type === 'shape') {
+      const shapeKind = isRectangle
+        ? 'Rectangle'
+        : isStarOrPolygon
+        ? 'Star/Polygon'
+        : isOval
+        ? 'Oval'
+        : 'Shape';
+      return `❖ ${shapeKind}: ${selectedEl.id}`;
+    }
+    if (selectedEl.type === 'text') {
+      const textSnippet = (selectedEl as TextElement).text || '';
+      const truncated = textSnippet.length > 12 ? textSnippet.slice(0, 12) + '…' : textSnippet;
+      return `T Text: "${truncated || selectedEl.id}"`;
+    }
+    if (selectedEl.type === 'bitmap') {
+      return `🖼 Image: ${selectedEl.id}`;
+    }
+    if (selectedEl.type === 'video') {
+      return `🎥 Video: ${selectedEl.id}`;
+    }
+    if (selectedEl.type === 'instance') {
+      const inst = selectedEl as SymbolInstance;
+      const sym = doc.library.symbols[inst.symbolId];
+      return `❖ Instance: ${sym?.name || selectedEl.id}`;
+    }
+    return `❖ Element: ${(selectedEl as any).id}`;
+  })();
+
+  const elementCategories = [
+    { id: 'all', name: 'All Categories', icon: '📑' },
+    { id: 'identity', name: 'Identity', icon: '🪪' },
+    ...(isText ? [{ id: 'text', name: 'Typography', icon: 'T' }] : []),
+    ...(selectedEl.type === 'bitmap' || selectedEl.type === 'video'
+      ? [{ id: 'media', name: 'Media', icon: '🖼️' }]
+      : []),
+    { id: 'layout', name: 'Align & Layout', icon: '📐' },
+    { id: 'transform', name: 'Transform', icon: '⤢' },
+    ...(owningLayer ? [{ id: 'animation', name: 'Animation', icon: '⚡' }] : []),
+    ...(isShape
+      ? [
+          { id: 'style', name: 'Fill & Stroke', icon: '🎨' },
+          { id: 'shape', name: 'Shape Controls', icon: '▢' },
+        ]
+      : []),
+  ];
+
+  const allElementSectionIds = [
+    'element-identity',
+    ...(isText && textEl ? ['text-typography', 'text-i18n'] : []),
+    ...(selectedEl.type === 'bitmap' ? ['bitmap-media'] : []),
+    ...(selectedEl.type === 'video' ? ['video-media'] : []),
+    'layout-alignment',
+    'element-transform',
+    ...(owningLayer ? ['tween-motion'] : []),
+    ...(isShape && shapeEl ? ['fill-stroke'] : []),
+    ...(isRectangle && shapeEl ? ['rectangle-corners'] : []),
+    ...(isOval && shapeEl ? ['oval-parametric'] : []),
+    ...(isStarOrPolygon && shapeEl ? ['star-polygon'] : []),
+    ...(isShape && shapeEl && !(isRectangle && !isCustomizedPath) ? ['vector-corners'] : []),
+  ];
+
+  const elementCategoryCounts: Record<string, number> = {
+    identity: 1,
+    text: isText && textEl ? 2 : 0,
+    media: selectedEl.type === 'bitmap' || selectedEl.type === 'video' ? 1 : 0,
+    layout: 1,
+    transform: 1,
+    animation: owningLayer ? 1 : 0,
+    style: isShape && shapeEl ? 1 : 0,
+    shape:
+      (isRectangle && shapeEl ? 1 : 0) +
+      (isOval && shapeEl ? 1 : 0) +
+      (isStarOrPolygon && shapeEl ? 1 : 0) +
+      (isShape && shapeEl && !(isRectangle && !isCustomizedPath) ? 1 : 0),
+  };
+
+  const effectiveElementCategory = elementCategories.some((c) => c.id === activeCategory)
+    ? activeCategory
+    : 'all';
+
+  const areAllElementCollapsed =
+    allElementSectionIds.length > 0 &&
+    allElementSectionIds.every((id) => expandedSections[id] === false);
+
+  const handleToggleAllElement = () => {
+    if (areAllElementCollapsed) {
+      setExpandedSections({});
+    } else {
+      const nextMap: Record<string, boolean> = {};
+      allElementSectionIds.forEach((id) => {
+        nextMap[id] = false;
+      });
+      setExpandedSections(nextMap);
+    }
+  };
+
   return (
-    <div className={styles.propertiesContainer}>
-      {/* Element Identity */}
-      <div className={styles.propSection}>
-        <div className={styles.sectionTitle}>
-          Element <span className={styles.typeBadge}>{selectedEl.type === 'instance' ? 'Component Instance' : selectedEl.type}</span>
+    <div className={`${styles.propertiesRoot} ${styles.propertiesContainer}`}>
+      <div className={styles.propertiesHeader}>
+        <div className={styles.headerLeft}>
+          <div className={styles.targetChip} title={targetChipText}>
+            <span>{targetChipText}</span>
+          </div>
+          <select
+            data-testid="properties-category-dropdown"
+            className={styles.categoryDropdown}
+            value={effectiveElementCategory}
+            onChange={(e) => setActiveCategory(e.target.value)}
+            aria-label="Filter Properties Category"
+          >
+            {elementCategories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
+        <div className={styles.headerRight}>
+          <div className={styles.viewModeGroup}>
+            <button
+              type="button"
+              className={`${styles.viewModeBtn} ${viewMode === 'tabs' ? styles.viewModeBtnActive : ''}`}
+              onClick={() => setViewMode('tabs')}
+              title="Vertical Tabs View"
+            >
+              📑 Tabs
+            </button>
+            <button
+              type="button"
+              className={`${styles.viewModeBtn} ${viewMode === 'accordion' ? styles.viewModeBtnActive : ''}`}
+              onClick={() => setViewMode('accordion')}
+              title="Accordion Stack View"
+            >
+              ▾ Accordion
+            </button>
+            <button
+              type="button"
+              className={`${styles.viewModeBtn} ${viewMode === 'dropdown' ? styles.viewModeBtnActive : ''}`}
+              onClick={() => setViewMode('dropdown')}
+              title="Form Only View"
+            >
+              ▾ Form Only
+            </button>
+          </div>
+          <button
+            type="button"
+            className={styles.toggleAllBtn}
+            onClick={handleToggleAllElement}
+            title={areAllElementCollapsed ? 'Expand all sections' : 'Collapse all sections'}
+          >
+            {areAllElementCollapsed ? '▸ Expand All' : '▾ Collapse All'}
+          </button>
+        </div>
+      </div>
+
+      <div className={styles.propertiesBody}>
+        {viewMode === 'tabs' && (
+          <div className={styles.verticalTabsRail}>
+            {elementCategories.map((c) => {
+              const isActive = effectiveElementCategory === c.id;
+              const count = c.id === 'all' ? allElementSectionIds.length : (elementCategoryCounts[c.id] ?? 0);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`${styles.verticalTabBtn} ${isActive ? styles.activeTab : ''}`}
+                  onClick={() => setActiveCategory(c.id)}
+                  title={c.name}
+                >
+                  <div className={styles.verticalTabLabelArea}>
+                    <span>{c.icon}</span>
+                    <span>{c.name}</span>
+                  </div>
+                  <span className={styles.tabCountBadge}>{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className={styles.propertiesContentArea}>
+      {/* Element Identity */}
+      <AccordionSection
+        id="element-identity"
+        category="identity"
+        activeCategory={effectiveElementCategory}
+        title="Element Identity"
+        icon="🪪"
+        badge={selectedEl.type === 'instance' ? 'Component Instance' : selectedEl.type}
+        summary={`ID: ${selectedEl.id}`}
+        collapsed={!isSectionExpanded('element-identity')}
+        onToggle={() => toggleSection('element-identity')}
+      >
 
         {/* Element ID editable field for cross-keyframe matching & shape morphing */}
         <div className={styles.fieldRow}>
@@ -1137,7 +1846,7 @@ export const Properties: React.FC = () => {
             />
           </div>
         )}
-      </div>
+      </AccordionSection>
 
       {/* Rich Typography Controls for Text Elements */}
       {isText && textEl && (() => {
@@ -1191,10 +1900,20 @@ export const Properties: React.FC = () => {
               : activeFont.style === 'italic' || activeFont.style === 'all')
           : true;
 
+        const textTypeBadge = (textEl.textType || (textEl.pathConfig?.pathData ? 'path' : textEl.multiline ? 'area' : 'point')).toUpperCase();
         return (
-          <div className={styles.propSection}>
-            <div className={styles.sectionTitle}>
-              <span>Typography</span>
+          <AccordionSection
+            id="text-typography"
+            category="text"
+            activeCategory={effectiveElementCategory}
+            title="Typography & Text Type"
+            icon="T"
+            badge={textTypeBadge}
+            summary={`${activeFont?.family || 'System Font'} ${textEl.fontSize || 16}px`}
+            collapsed={!isSectionExpanded('text-typography')}
+            onToggle={() => toggleSection('text-typography')}
+          >
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
               <button
                 type="button"
                 className={styles.addFontSmallBtn}
@@ -1504,200 +2223,603 @@ export const Properties: React.FC = () => {
               </div>
             </div>
 
-            {/* Text Wrapping & Box Dimensions */}
-            <div className={styles.fieldRow}>
-              <span className={styles.fieldLabel}>Wrap Text:</span>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11 }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(textEl.multiline)}
-                  onChange={(e) =>
-                    editorActions.updateElementProps(textEl.id, { multiline: e.target.checked })
-                  }
-                />
-                <span>Soft wrap text to box</span>
-              </label>
-            </div>
-
-            <div className={styles.fieldRow}>
-              <span className={styles.fieldLabel}>Box Size:</span>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 1 }}>
-                <input
-                  type="number"
-                  min="20"
-                  max="2000"
-                  className={styles.textInput}
-                  style={{ width: '56px' }}
-                  value={Math.round(textEl.width || 120)}
-                  onChange={(e) => {
-                    const w = parseInt(e.target.value, 10) || 120;
-                    editorActions.updateElementProps(textEl.id, { width: w });
-                  }}
-                  title="Box Width (px) - text wraps at this boundary"
-                />
-                <span style={{ color: 'var(--mx-text-muted)' }}>×</span>
-                <input
-                  type="number"
-                  min="15"
-                  max="2000"
-                  className={styles.textInput}
-                  style={{ width: '56px' }}
-                  value={Math.round(textEl.height || 32)}
-                  onChange={(e) => {
-                    const h = parseInt(e.target.value, 10) || 32;
-                    editorActions.updateElementProps(textEl.id, { height: h });
-                  }}
-                  title="Box Height (px)"
-                />
-              </div>
-            </div>
-
-            {/* Text Aligned to Path Animation (<textPath>) */}
-            <div className={styles.fieldRow} style={{ marginTop: 8 }}>
-              <span className={styles.fieldLabel}>Text Path:</span>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
-                <input
-                  type="text"
-                  className={styles.textInput}
-                  placeholder="e.g. M 0 30 Q 100 0 200 30"
-                  value={textEl.pathConfig?.pathData || ''}
-                  onChange={(e) => {
-                    const pData = e.target.value.trim();
-                    if (pData) {
-                      editorActions.updateElementProps(textEl.id, {
-                        pathConfig: {
-                          ...textEl.pathConfig,
-                          pathData: pData,
-                          startOffset: textEl.pathConfig?.startOffset ?? 0,
-                        },
-                      });
-                    } else {
-                      editorActions.updateElementProps(textEl.id, { pathConfig: undefined });
-                    }
-                  }}
-                  title="SVG Path data 'd' for text to follow along"
-                />
-
-                {textEl.pathConfig?.pathData && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 10, color: 'var(--mx-text-muted)', width: 38 }}>
-                      Offset:
-                    </span>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      className={styles.rangeSlider}
-                      value={textEl.pathConfig.startOffset ?? 0}
-                      onChange={(e) => {
-                        const off = parseInt(e.target.value, 10) || 0;
-                        editorActions.updateElementProps(textEl.id, {
-                          pathConfig: {
-                            ...textEl.pathConfig!,
-                            startOffset: off,
-                          },
-                        });
-                      }}
-                    />
-                    <span style={{ fontSize: 11, minWidth: 32, fontFamily: 'var(--mx-font-mono)' }}>
-                      {textEl.pathConfig.startOffset ?? 0}%
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Text Fill / Gradient */}
+            {/* Text Type Selection, Dimensions, and Type on Path */}
             {(() => {
-              const textFill: Fill =
-                textEl.fill ??
-                (textEl.color ? { type: 'solid', color: textEl.color } : { type: 'solid', color: '#ffffff' });
-              const textFillCSS = fillToCSS(textFill);
+              const currentTextType: 'point' | 'area' | 'path' =
+                textEl.textType || (textEl.pathConfig?.pathData ? 'path' : textEl.multiline ? 'area' : 'point');
+
+              // Find available shapes on current keyframe for quick attachment
+              const availableShapes: Array<{ id: string; name: string; pathData: string }> = [];
+              for (const layer of activeTl.layers) {
+                const kf = findKeyframeAtTime(layer, currentTime, fps) ?? findKeyframeAt(layer, currentFrame);
+                if (!kf) continue;
+                for (const el of kf.elements) {
+                  if (el.type === 'shape') {
+                    const sh = el as ShapeElement;
+                    const d = sh.paths?.[0]?.d;
+                    if (d) {
+                      availableShapes.push({ id: sh.id, name: layer.name || sh.id, pathData: d });
+                    }
+                  }
+                }
+              }
 
               return (
-                <div className={styles.fieldRow} style={{ position: 'relative' }}>
-                  <span className={styles.fieldLabel}>Text Fill:</span>
-                  <div ref={textFillRef} style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                  <div className={styles.fieldRow}>
+                    <span className={styles.fieldLabel}>Text Type:</span>
+                    <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                      <button
+                        type="button"
+                        className={`${styles.alignBtn} ${currentTextType === 'point' ? styles.active : ''}`}
+                        style={{ flex: 1, fontSize: 11, padding: '3px 6px' }}
+                        onClick={() => editorActions.convertTextType(textEl.id, 'point')}
+                        title="Point Text: Single line / no bounding box. Expands automatically."
+                        data-testid="text-type-point-btn"
+                      >
+                        <span data-testid="text-type-point" style={{ display: 'none' }} />
+                        T Point
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.alignBtn} ${currentTextType === 'area' ? styles.active : ''}`}
+                        style={{ flex: 1, fontSize: 11, padding: '3px 6px' }}
+                        onClick={() => editorActions.convertTextType(textEl.id, 'area')}
+                        title="Area Text: Bounded text box with soft wrapping."
+                        data-testid="text-type-area-btn"
+                      >
+                        <span data-testid="text-type-area" style={{ display: 'none' }} />
+                        ▱ Area
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.alignBtn} ${currentTextType === 'path' ? styles.active : ''}`}
+                        style={{ flex: 1, fontSize: 11, padding: '3px 6px' }}
+                        onClick={() => editorActions.convertTextType(textEl.id, 'path')}
+                        title="Type on Path: Aligns and renders text along an SVG vector curve."
+                        data-testid="text-type-path-btn"
+                      >
+                        <span data-testid="text-type-path" style={{ display: 'none' }} />
+                        〰 On Path
+                      </button>
+                    </div>
+                  </div>
+
+                  {currentTextType === 'point' && (
                     <div
                       style={{
-                        width: 24,
-                        height: 20,
-                        borderRadius: 3,
-                        border: '1px solid var(--mx-border, #333842)',
-                        background: textFillCSS,
-                        cursor: 'pointer',
+                        padding: '6px 8px',
+                        borderRadius: 4,
+                        backgroundColor: 'var(--mx-bg-subtle, rgba(255,255,255,0.04))',
+                        fontSize: 11,
+                        color: 'var(--mx-text-muted)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
                       }}
-                      onClick={() => setTextGradientOpen(!textGradientOpen)}
-                      title="Click to edit text color / gradient"
-                    />
-                    <button
-                      type="button"
-                      className={styles.addFontSmallBtn}
-                      onClick={() => setTextGradientOpen(!textGradientOpen)}
                     >
-                      {textFill.type === 'linearGradient'
-                        ? 'Linear Gradient'
-                        : textFill.type === 'radialGradient'
-                        ? 'Radial Gradient'
-                        : textEl.color || '#ffffff'} ▾
-                    </button>
-                  </div>
-                  {textGradientOpen && (
-                    <GradientPicker
-                      fill={textFill}
-                      onChange={(newFill) => {
-                        const primaryColor =
-                          newFill.type === 'solid'
-                            ? newFill.color
-                            : newFill.type === 'linearGradient' || newFill.type === 'radialGradient'
-                            ? newFill.stops[0]?.color || '#ffffff'
-                            : '#ffffff';
-                        editorActions.updateElementProps(textEl.id, {
-                          fill: newFill,
-                          color: primaryColor,
-                        });
-                      }}
-                      onClose={() => setTextGradientOpen(false)}
-                      anchorRef={textFillRef}
-                      title="Text Color & Gradient"
-                    />
+                      <span>Point Text (no bounding box constraint)</span>
+                      <button
+                        type="button"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--mx-accent, #3b82f6)',
+                          cursor: 'pointer',
+                          fontSize: 11,
+                          padding: 0,
+                        }}
+                        onClick={() => editorActions.convertTextType(textEl.id, 'area')}
+                      >
+                        Convert to Box →
+                      </button>
+                    </div>
+                  )}
+
+                  {currentTextType === 'area' && (
+                    <>
+                      <div className={styles.fieldRow}>
+                        <span className={styles.fieldLabel}>Wrap Text:</span>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11 }}>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(textEl.multiline)}
+                            onChange={(e) =>
+                              editorActions.updateElementProps(textEl.id, { multiline: e.target.checked })
+                            }
+                          />
+                          <span>Soft wrap text to box</span>
+                        </label>
+                      </div>
+
+                      <div className={styles.fieldRow}>
+                        <span className={styles.fieldLabel}>Box Size:</span>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 1 }}>
+                          <input
+                            type="number"
+                            min="20"
+                            max="2000"
+                            className={styles.textInput}
+                            style={{ width: '56px' }}
+                            value={Math.round(textEl.width || 120)}
+                            onChange={(e) => {
+                              const w = parseInt(e.target.value, 10) || 120;
+                              editorActions.updateElementProps(textEl.id, { width: w });
+                            }}
+                            title="Box Width (px) - text wraps at this boundary"
+                          />
+                          <span style={{ color: 'var(--mx-text-muted)' }}>×</span>
+                          <input
+                            type="number"
+                            min="15"
+                            max="2000"
+                            className={styles.textInput}
+                            style={{ width: '56px' }}
+                            value={Math.round(textEl.height || 32)}
+                            onChange={(e) => {
+                              const h = parseInt(e.target.value, 10) || 32;
+                              editorActions.updateElementProps(textEl.id, { height: h });
+                            }}
+                            title="Box Height (px)"
+                          />
+                          <button
+                            type="button"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--mx-accent, #3b82f6)',
+                              cursor: 'pointer',
+                              fontSize: 11,
+                              marginLeft: 'auto',
+                            }}
+                            onClick={() => editorActions.convertTextType(textEl.id, 'point')}
+                            title="Convert bounded text box back to unconstrained point text"
+                          >
+                            To Point
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {currentTextType === 'path' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div className={styles.fieldRow}>
+                        <span className={styles.fieldLabel}>Map to Shape:</span>
+                        <select
+                          className={styles.selectInput}
+                          style={{ flex: 1, fontSize: 11 }}
+                          value={textEl.pathConfig?.pathId || ''}
+                          data-testid="text-path-select"
+                          disabled={availableShapes.length === 0}
+                          onChange={(e) => {
+                            const selectedShape = availableShapes.find((s) => s.id === e.target.value);
+                            if (selectedShape) {
+                              editorActions.attachTextToPath(
+                                textEl.id,
+                                selectedShape.pathData,
+                                selectedShape.id,
+                                textEl.pathConfig?.startOffset ?? 0
+                              );
+                            }
+                          }}
+                        >
+                          <option value="">{availableShapes.length > 0 ? '-- Choose Shape from Board --' : '-- No vector shapes on board --'}</option>
+                          {availableShapes.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} ({s.id})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className={styles.fieldRow}>
+                        <span className={styles.fieldLabel}>Presets:</span>
+                        <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                          <button
+                            type="button"
+                            className={styles.alignBtn}
+                            style={{ flex: 1, fontSize: 10, padding: '2px 4px' }}
+                            onClick={() =>
+                              editorActions.attachTextToPath(
+                                textEl.id,
+                                'M 0 40 Q 100 0 200 40 T 400 40',
+                                undefined,
+                                textEl.pathConfig?.startOffset ?? 0
+                              )
+                            }
+                            title="Wave Path"
+                          >
+                            Wave
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.alignBtn}
+                            style={{ flex: 1, fontSize: 10, padding: '2px 4px' }}
+                            onClick={() =>
+                              editorActions.attachTextToPath(
+                                textEl.id,
+                                'M 0 100 A 100 100 0 0 1 200 100',
+                                undefined,
+                                textEl.pathConfig?.startOffset ?? 0
+                              )
+                            }
+                            title="Arc Curve"
+                          >
+                            Arc
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.alignBtn}
+                            style={{ flex: 1, fontSize: 10, padding: '2px 4px' }}
+                            onClick={() =>
+                              editorActions.attachTextToPath(
+                                textEl.id,
+                                'M 100 0 A 100 100 0 1 0 100 200 A 100 100 0 1 0 100 0',
+                                undefined,
+                                textEl.pathConfig?.startOffset ?? 0
+                              )
+                            }
+                            title="Circle Path"
+                          >
+                            Circle
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className={styles.fieldRow}>
+                        <span className={styles.fieldLabel}>Path Data:</span>
+                        <input
+                          type="text"
+                          className={styles.textInput}
+                          placeholder="M 0 30 Q 100 0 200 30"
+                          value={textEl.pathConfig?.pathData || ''}
+                          onChange={(e) => {
+                            const pData = e.target.value.trim();
+                            if (pData) {
+                              editorActions.attachTextToPath(
+                                textEl.id,
+                                pData,
+                                textEl.pathConfig?.pathId,
+                                textEl.pathConfig?.startOffset ?? 0
+                              );
+                            } else {
+                              editorActions.detachTextFromPath(textEl.id);
+                            }
+                          }}
+                          title="SVG Path 'd' attribute string"
+                        />
+                      </div>
+
+                      <div className={styles.fieldRow}>
+                        <span className={styles.fieldLabel}>Start Offset:</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            className={styles.rangeSlider}
+                            style={{ flex: 1 }}
+                            value={textEl.pathConfig?.startOffset ?? 0}
+                            data-testid="text-start-offset-slider"
+                            onChange={(e) => {
+                              const off = parseInt(e.target.value, 10) || 0;
+                              editorActions.updateElementProps(textEl.id, {
+                                pathConfig: {
+                                  ...textEl.pathConfig!,
+                                  startOffset: off,
+                                },
+                              });
+                            }}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            className={styles.textInput}
+                            style={{ width: '45px' }}
+                            value={textEl.pathConfig?.startOffset ?? 0}
+                            data-testid="text-start-offset-input"
+                            onChange={(e) => {
+                              const off = parseInt(e.target.value, 10) || 0;
+                              editorActions.updateElementProps(textEl.id, {
+                                pathConfig: {
+                                  ...textEl.pathConfig!,
+                                  startOffset: off,
+                                },
+                              });
+                            }}
+                          />
+                          <span style={{ fontSize: 11, minWidth: 16, fontFamily: 'var(--mx-font-mono)' }}>
+                            %
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 2 }}>
+                        <button
+                          type="button"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--mx-accent, #3b82f6)',
+                            cursor: 'pointer',
+                            fontSize: 11,
+                          }}
+                          onClick={() => editorActions.detachTextFromPath(textEl.id)}
+                          title="Detach text from path and revert to standard text"
+                        >
+                          Detach from Path
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               );
             })()}
-          </div>
+
+            {/* Text Fill & Stroke (Shape parity) */}
+            {(() => {
+              const textFill: Fill =
+                textEl.fill ??
+                (textEl.color ? { type: 'solid', color: textEl.color } : { type: 'solid', color: '#000000' });
+              const textFillCSS = fillToCSS(textFill);
+
+              const textStrokeFill: Fill =
+                textEl.stroke?.fill ?? { type: 'solid', color: '#000000' };
+              const textStrokeCSS = fillToCSS(textStrokeFill);
+              const currentStroke =
+                textStrokeFill.type === 'solid'
+                  ? textStrokeFill.color
+                  : '#000000';
+              const currentStrokeWidth = textEl.stroke?.width ?? 0;
+
+              return (
+                <>
+                  <div className={styles.fieldRow} style={{ position: 'relative' }}>
+                    <span className={styles.fieldLabel}>Fill:</span>
+                    <div ref={textFillRef} style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                      <div
+                        style={{
+                          width: 24,
+                          height: 20,
+                          borderRadius: 3,
+                          border: '1px solid var(--mx-border, #333842)',
+                          background: textFillCSS,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => {
+                          setTextGradientOpen(!textGradientOpen);
+                          setTextStrokeGradientOpen(false);
+                        }}
+                        title="Click to edit text color / gradient"
+                        data-testid="text-fill-swatch"
+                      />
+                      <button
+                        type="button"
+                        className={styles.addFontSmallBtn}
+                        onClick={() => {
+                          setTextGradientOpen(!textGradientOpen);
+                          setTextStrokeGradientOpen(false);
+                        }}
+                      >
+                        {textFill.type === 'none'
+                          ? 'None (Transparent)'
+                          : textFill.type === 'linearGradient'
+                          ? 'Linear Gradient'
+                          : textFill.type === 'radialGradient'
+                          ? 'Radial Gradient'
+                          : textEl.color || (textFill.type === 'solid' ? textFill.color : '#000000')} ▾
+                      </button>
+                    </div>
+                    {textGradientOpen && (
+                      <GradientPicker
+                        fill={textFill}
+                        onChange={(newFill) => {
+                          const primaryColor =
+                            newFill.type === 'none'
+                              ? 'transparent'
+                              : newFill.type === 'solid'
+                              ? newFill.color
+                              : newFill.type === 'linearGradient' || newFill.type === 'radialGradient'
+                              ? newFill.stops[0]?.color || '#000000'
+                              : '#000000';
+                          editorActions.updateElementProps(textEl.id, {
+                            fill: newFill,
+                            color: primaryColor,
+                          });
+                        }}
+                        onClose={() => setTextGradientOpen(false)}
+                        anchorRef={textFillRef}
+                        title="Text Color & Gradient"
+                      />
+                    )}
+                  </div>
+
+                  <div className={styles.fieldRow} style={{ position: 'relative' }}>
+                    <span className={styles.fieldLabel}>Stroke:</span>
+                    <div ref={textStrokeRef} className={styles.colorInputWrapper} style={{ gap: 6 }}>
+                      <div
+                        style={{
+                          width: 24,
+                          height: 20,
+                          borderRadius: 3,
+                          border: '1px solid var(--mx-border, #333842)',
+                          background: textStrokeCSS,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => {
+                          setTextStrokeGradientOpen(!textStrokeGradientOpen);
+                          setTextGradientOpen(false);
+                        }}
+                        title="Click to edit text border / stroke & gradient"
+                        data-testid="text-stroke-swatch"
+                      />
+                      <button
+                        type="button"
+                        className={styles.addFontSmallBtn}
+                        onClick={() => {
+                          setTextStrokeGradientOpen(!textStrokeGradientOpen);
+                          setTextGradientOpen(false);
+                        }}
+                        data-testid="text-stroke-picker-btn"
+                      >
+                        {textStrokeFill.type === 'none'
+                          ? 'None'
+                          : textStrokeFill.type === 'linearGradient'
+                          ? 'Linear'
+                          : textStrokeFill.type === 'radialGradient'
+                          ? 'Radial'
+                          : currentStroke} ▾
+                      </button>
+                      <input
+                        type="color"
+                        style={{ width: 0, height: 0, opacity: 0, position: 'absolute', pointerEvents: 'none' }}
+                        value={currentStroke.startsWith('#') && currentStroke.length === 7 ? currentStroke : '#000000'}
+                        onChange={(e) => {
+                          const col = e.target.value;
+                          editorActions.updateElementProps(textEl.id, {
+                            stroke: {
+                              fill: { type: 'solid', color: col },
+                              width: currentStrokeWidth > 0 ? currentStrokeWidth : 1,
+                              cap: 'round',
+                              join: 'round',
+                            },
+                          });
+                        }}
+                        title="Text Stroke Color"
+                        data-testid="text-stroke-color-input"
+                      />
+                      <NumberField
+                        value={currentStrokeWidth}
+                        onChange={(val) => {
+                          editorActions.updateElementProps(
+                            textEl.id,
+                            {
+                              stroke: {
+                                fill: textStrokeFill,
+                                width: val,
+                                cap: 'round',
+                                join: 'round',
+                              },
+                            },
+                            { skipHistory: true }
+                          );
+                        }}
+                        onCommit={(val) => {
+                          editorActions.updateElementProps(textEl.id, {
+                            stroke: {
+                              fill: textStrokeFill,
+                              width: val,
+                              cap: 'round',
+                              join: 'round',
+                            },
+                          });
+                        }}
+                        unit="px"
+                        min={0}
+                        max={50}
+                        step={0.5}
+                        shiftStep={2}
+                        altStep={0.1}
+                        inputWidth={45}
+                        ariaLabel="Text stroke width in px"
+                      />
+                    </div>
+                    {textStrokeGradientOpen && (
+                      <GradientPicker
+                        fill={textStrokeFill}
+                        onChange={(newStrokeFill) => {
+                          editorActions.setActiveStroke(newStrokeFill);
+                          editorActions.updateElementProps(textEl.id, {
+                            stroke: {
+                              fill: newStrokeFill,
+                              width: currentStrokeWidth > 0 ? currentStrokeWidth : 1,
+                              cap: 'round',
+                              join: 'round',
+                            },
+                          });
+                        }}
+                        onClose={() => setTextStrokeGradientOpen(false)}
+                        anchorRef={textStrokeRef}
+                        title="Text Border / Stroke & Gradient"
+                      />
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+          </AccordionSection>
         );
       })()}
 
       {/* i18n Localization for Text Elements */}
       {isText && textEl && (
-        <div className={styles.propSection}>
-          <div className={styles.sectionTitle}>
-            <span>i18n Localization</span>
-            {textEl.i18nKey ? (
-              <span style={{ fontSize: 10, color: 'var(--mx-accent, #3b82f6)' }}>
-                Key: {textEl.i18nKey}
-              </span>
-            ) : null}
+        <AccordionSection
+          id="text-i18n"
+          category="text"
+          activeCategory={effectiveElementCategory}
+          title="Text Localization (i18n)"
+          icon="🌐"
+          summary={textEl.i18nKey ? `Key: ${textEl.i18nKey}` : 'No key'}
+          collapsed={!isSectionExpanded('text-i18n')}
+          onToggle={() => toggleSection('text-i18n')}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--mx-text-muted)' }}>String Key Binding</span>
+            <button
+              type="button"
+              className={styles.presetPill}
+              style={{ fontSize: 10, padding: '1px 6px', height: 'auto' }}
+              onClick={() => editorActions.setLocalizationOpen(true)}
+              title="Open floating Strings & Localization Table"
+            >
+              Open Strings Table ↗
+            </button>
           </div>
 
           <div className={styles.fieldRow}>
             <span className={styles.fieldLabel}>Key:</span>
             <input
               type="text"
+              list="existing-i18n-keys"
               className={styles.textInput}
               style={{ flex: 1, width: '100%' }}
               value={textEl.i18nKey || ''}
-              onChange={(e) =>
-                editorActions.updateElementProps(textEl.id, {
-                  i18nKey: e.target.value.trim() || undefined,
-                })
-              }
-              placeholder="e.g. ui.welcome"
+              onChange={(e) => {
+                const val = e.target.value.trim();
+                editorActions.bindElementToI18nKey(textEl.id, val || null);
+              }}
+              placeholder="e.g. hero_headline"
               title="Translation key in document i18n dictionary"
               data-testid="text-i18n-key-input"
             />
+            <datalist id="existing-i18n-keys">
+              {Array.from(
+                new Set(
+                  Object.values(doc.i18n?.locales || {}).flatMap((map) => Object.keys(map || {}))
+                )
+              ).map((k) => (
+                <option key={k} value={k} />
+              ))}
+            </datalist>
           </div>
+
+          {!textEl.i18nKey && (
+            <div style={{ marginTop: 4 }}>
+              <button
+                type="button"
+                className={styles.presetPill}
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={() => {
+                  const autoKey = `str_${textEl.id.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 8)}`;
+                  editorActions.bindElementToI18nKey(textEl.id, autoKey);
+                }}
+              >
+                + Create & Bind String Key
+              </button>
+            </div>
+          )}
 
           {textEl.i18nKey && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
@@ -1707,9 +2829,14 @@ export const Properties: React.FC = () => {
                   color: 'var(--mx-text-muted)',
                   textTransform: 'uppercase',
                   fontWeight: 700,
+                  display: 'flex',
+                  justifyContent: 'space-between',
                 }}
               >
-                Translations:
+                <span>Translations:</span>
+                <span style={{ fontWeight: 400, opacity: 0.8 }}>
+                  Active: {(previewLocale || doc.i18n?.defaultLocale || 'en').toUpperCase()}
+                </span>
               </div>
               {Array.from(
                 new Set([
@@ -1718,18 +2845,30 @@ export const Properties: React.FC = () => {
                 ])
               ).map((loc) => {
                 const defaultLoc = doc.i18n?.defaultLocale || 'en';
+                const isCurrent = (previewLocale || defaultLoc).toLowerCase() === loc.toLowerCase();
                 const currentVal =
                   doc.i18n?.locales?.[loc]?.[textEl.i18nKey!] ||
                   (loc === defaultLoc ? textEl.text : '');
 
                 return (
-                  <div key={loc} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div
+                    key={loc}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      backgroundColor: isCurrent ? 'rgba(59, 130, 246, 0.08)' : undefined,
+                      padding: isCurrent ? '2px 4px' : undefined,
+                      borderRadius: 4,
+                      border: isCurrent ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
+                    }}
+                  >
                     <span
                       style={{
-                        width: 24,
+                        width: 32,
                         fontSize: 10,
                         fontWeight: 700,
-                        color: 'var(--mx-text-muted)',
+                        color: isCurrent ? 'var(--mx-accent, #3b82f6)' : 'var(--mx-text-muted)',
                         textAlign: 'right',
                       }}
                     >
@@ -1738,7 +2877,10 @@ export const Properties: React.FC = () => {
                     <input
                       type="text"
                       className={styles.textInput}
-                      style={{ flex: 1 }}
+                      style={{
+                        flex: 1,
+                        borderColor: isCurrent ? 'var(--mx-accent, #3b82f6)' : undefined,
+                      }}
                       value={currentVal}
                       onChange={(e) =>
                         editorActions.setI18nTranslation(loc, textEl.i18nKey!, e.target.value)
@@ -1750,7 +2892,7 @@ export const Properties: React.FC = () => {
               })}
             </div>
           )}
-        </div>
+        </AccordionSection>
       )}
 
       {/* Bitmap Element Properties */}
@@ -1761,8 +2903,16 @@ export const Properties: React.FC = () => {
         const h = bmp.height || 150;
 
         return (
-          <div className={styles.propSection}>
-            <div className={styles.sectionTitle}>Bitmap Image</div>
+          <AccordionSection
+            id="bitmap-media"
+            category="media"
+            activeCategory={effectiveElementCategory}
+            title="Bitmap Image Asset"
+            icon="🖼️"
+            summary={`${w}×${h}px`}
+            collapsed={!isSectionExpanded('bitmap-media')}
+            onToggle={() => toggleSection('bitmap-media')}
+          >
             <div className={styles.fieldRow}>
               <span className={styles.fieldLabel}>URL:</span>
               <input
@@ -1838,7 +2988,7 @@ export const Properties: React.FC = () => {
                 Replace Image File...
               </button>
             </div>
-          </div>
+          </AccordionSection>
         );
       })()}
 
@@ -1849,8 +2999,16 @@ export const Properties: React.FC = () => {
         const h = vid.height || 180;
 
         return (
-          <div className={styles.propSection}>
-            <div className={styles.sectionTitle}>Video Player</div>
+          <AccordionSection
+            id="video-media"
+            category="media"
+            activeCategory={effectiveElementCategory}
+            title="Video Media Element"
+            icon="🎥"
+            summary={`${w}×${h}px`}
+            collapsed={!isSectionExpanded('video-media')}
+            onToggle={() => toggleSection('video-media')}
+          >
             <div className={styles.fieldRow}>
               <span className={styles.fieldLabel}>URL:</span>
               <input
@@ -1968,13 +3126,21 @@ export const Properties: React.FC = () => {
                 Controls
               </label>
             </div>
-          </div>
+          </AccordionSection>
         );
       })()}
 
       {/* Transform: Position */}
-      <div className={styles.propSection}>
-        <div className={styles.sectionTitle}>Position</div>
+      <AccordionSection
+        id="layout-alignment"
+        category="layout"
+        activeCategory={effectiveElementCategory}
+        title="Position & Alignment"
+        icon="📐"
+        summary={(selectedEl as any).layoutPin ? `Pin: ${(selectedEl as any).layoutPin}` : `X:${Math.round(x)} Y:${Math.round(y)}`}
+        collapsed={!isSectionExpanded('layout-alignment')}
+        onToggle={() => toggleSection('layout-alignment')}
+      >
 
         {/* One-Click Alignment Toolbar */}
         <div className={styles.alignToolbar} title="Align to Stage Canvas">
@@ -2132,11 +3298,19 @@ export const Properties: React.FC = () => {
             <option value="stretch">Stretch</option>
           </select>
         </div>
-      </div>
+      </AccordionSection>
 
       {/* Transform: Scale & Rotation */}
-      <div className={styles.propSection}>
-        <div className={styles.sectionTitle}>Transform</div>
+      <AccordionSection
+        id="element-transform"
+        category="transform"
+        activeCategory={effectiveElementCategory}
+        title="Transform & Dimensions"
+        icon="⤢"
+        summary={`Rot:${Math.round(rotation)}° Scale:${Math.round((scaleX ?? 1) * 100)}%`}
+        collapsed={!isSectionExpanded('element-transform')}
+        onToggle={() => toggleSection('element-transform')}
+      >
         <div className={styles.fieldRow}>
           <NumberField
             label="Scale X:"
@@ -2180,10 +3354,13 @@ export const Properties: React.FC = () => {
             onCommit={(val) => handleUpdateTransform({ perspective: val })}
             unit="px"
             min={50}
+            max={3000}
             step={50}
             shiftStep={100}
             altStep={10}
             inputWidth={45}
+            ariaLabel="3D Perspective focal distance in pixels"
+            data-testid="transform-perspective-input"
           />
         </div>
         <div className={styles.fieldRow}>
@@ -2213,7 +3390,7 @@ export const Properties: React.FC = () => {
 
         {/* 3D Perspective Tilt (Animatable) */}
         <div className={styles.fieldRow}>
-          <span className={styles.fieldLabel}>3D Tilt:</span>
+          <span className={styles.fieldLabel} title="3D rotation angles around X and Y axes (Hold Cmd/Ctrl and drag corner handles on Stage)">3D Tilt:</span>
           <div style={{ display: 'flex', gap: 6, flex: 1, alignItems: 'center' }}>
             <NumberField
               label="X:"
@@ -2225,6 +3402,8 @@ export const Properties: React.FC = () => {
               shiftStep={10}
               altStep={0.1}
               inputWidth={40}
+              ariaLabel="3D Tilt X angle in degrees"
+              data-testid="transform-tilt-x-input"
             />
             <NumberField
               label="Y:"
@@ -2236,6 +3415,8 @@ export const Properties: React.FC = () => {
               shiftStep={10}
               altStep={0.1}
               inputWidth={40}
+              ariaLabel="3D Tilt Y angle in degrees"
+              data-testid="transform-tilt-y-input"
             />
             {(rotateX !== 0 || rotateY !== 0) && (
               <button
@@ -2244,10 +3425,42 @@ export const Properties: React.FC = () => {
                 onClick={() => handleUpdateTransform({ rotateX: 0, rotateY: 0 })}
                 title="Reset 3D Tilt"
                 style={{ marginLeft: 'auto' }}
+                data-testid="transform-tilt-reset-btn"
               >
                 Reset
               </button>
             )}
+          </div>
+        </div>
+
+        {/* 3D Quick Tilt Presets */}
+        <div className={styles.fieldRow} style={{ marginTop: -2, marginBottom: 2 }}>
+          <span className={styles.fieldLabel} style={{ fontSize: 10, color: 'var(--mx-text-subtle)' }}>Tilt Preset:</span>
+          <div className={styles.presetPills} style={{ gap: 4 }}>
+            <button
+              type="button"
+              className={`${styles.presetPill} ${rotateX === 30 && rotateY === -30 ? styles.active : ''}`}
+              onClick={() => handleUpdateTransform({ rotateX: 30, rotateY: -30 })}
+              title="Isometric 3D view (X: 30°, Y: -30°)"
+            >
+              Isometric
+            </button>
+            <button
+              type="button"
+              className={`${styles.presetPill} ${rotateX === 45 && rotateY === 0 ? styles.active : ''}`}
+              onClick={() => handleUpdateTransform({ rotateX: 45, rotateY: 0 })}
+              title="Tilt forward 45° along X axis"
+            >
+              Tilt X 45°
+            </button>
+            <button
+              type="button"
+              className={`${styles.presetPill} ${rotateX === 0 && rotateY === 45 ? styles.active : ''}`}
+              onClick={() => handleUpdateTransform({ rotateX: 0, rotateY: 45 })}
+              title="Tilt sideways 45° along Y axis"
+            >
+              Tilt Y 45°
+            </button>
           </div>
         </div>
 
@@ -2370,7 +3583,7 @@ export const Properties: React.FC = () => {
             />
           </div>
         </div>
-      </div>
+      </AccordionSection>
 
       {/* Tween & Easing Section */}
       {(() => {
@@ -2389,11 +3602,17 @@ export const Properties: React.FC = () => {
         }
 
         return (
-          <div className={styles.propSection}>
-            <div className={styles.sectionTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span>Tween & Easing</span>
-              <Activity size={12} color="var(--mx-accent, #3b82f6)" />
-            </div>
+          <AccordionSection
+            id="tween-motion"
+            category="animation"
+            activeCategory={effectiveElementCategory}
+            title="Motion Tween & Easing"
+            icon="⚡"
+            badge={hasTween ? 'Active' : undefined}
+            summary={hasTween ? 'Tweening' : 'Static'}
+            collapsed={!isSectionExpanded('tween-motion')}
+            onToggle={() => toggleSection('tween-motion')}
+          >
             <div className={styles.fieldRow}>
               <span className={styles.fieldLabel}>Motion:</span>
               <button
@@ -2489,13 +3708,21 @@ export const Properties: React.FC = () => {
                 </div>
               </>
             )}
-          </div>
+          </AccordionSection>
         );
       })()}
 
       {/* Color & Transparency */}
-      <div className={styles.propSection}>
-        <div className={styles.sectionTitle}>Color & Opacity</div>
+      <AccordionSection
+        id="fill-stroke"
+        category="style"
+        activeCategory={effectiveElementCategory}
+        title={isShape ? 'Fill, Stroke & Color' : 'Color & Opacity'}
+        icon="🎨"
+        summary={`Alpha: ${alphaPercent}%`}
+        collapsed={!isSectionExpanded('fill-stroke')}
+        onToggle={() => toggleSection('fill-stroke')}
+      >
         <div className={styles.fieldRow}>
           <span className={styles.fieldLabel}>Alpha:</span>
           <div className={styles.sliderRow} style={{ flex: 1, gap: 6 }}>
@@ -2537,15 +3764,25 @@ export const Properties: React.FC = () => {
                     background: fillToCSS(shapeFill),
                     cursor: 'pointer',
                   }}
-                  onClick={() => setShapeGradientOpen(!shapeGradientOpen)}
+                  onClick={() => {
+                    setShapeGradientOpen(!shapeGradientOpen);
+                    setShapeStrokeGradientOpen(false);
+                  }}
                   title="Click to edit shape fill / gradient"
+                  data-testid="shape-fill-swatch"
                 />
                 <button
                   type="button"
                   className={styles.addFontSmallBtn}
-                  onClick={() => setShapeGradientOpen(!shapeGradientOpen)}
+                  onClick={() => {
+                    setShapeGradientOpen(!shapeGradientOpen);
+                    setShapeStrokeGradientOpen(false);
+                  }}
+                  data-testid="shape-fill-picker-btn"
                 >
-                  {shapeFill.type === 'linearGradient'
+                  {shapeFill.type === 'none'
+                    ? 'None (Transparent)'
+                    : shapeFill.type === 'linearGradient'
                     ? 'Linear Gradient'
                     : shapeFill.type === 'radialGradient'
                     ? 'Radial Gradient'
@@ -2564,15 +3801,44 @@ export const Properties: React.FC = () => {
                 />
               )}
             </div>
-            <div className={styles.fieldRow}>
+            <div className={styles.fieldRow} style={{ position: 'relative' }}>
               <span className={styles.fieldLabel}>Stroke:</span>
-              <div className={styles.colorInputWrapper}>
-                <input
-                  type="color"
-                  className={styles.colorInput}
-                  value={currentStroke}
-                  onChange={(e) => handleUpdateShapeStroke(e.target.value)}
+              <div ref={shapeStrokeRef} className={styles.colorInputWrapper} style={{ gap: 6, flex: 1 }}>
+                <div
+                  style={{
+                    width: 24,
+                    height: 20,
+                    borderRadius: 3,
+                    border: '1px solid var(--mx-border, #333842)',
+                    background: fillToCSS(shapeStrokeFill),
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => {
+                    setShapeStrokeGradientOpen(!shapeStrokeGradientOpen);
+                    setShapeGradientOpen(false);
+                  }}
+                  title="Click to edit shape border / stroke & gradient"
+                  data-testid="shape-stroke-swatch"
                 />
+                <button
+                  type="button"
+                  className={styles.addFontSmallBtn}
+                  onClick={() => {
+                    setShapeStrokeGradientOpen(!shapeStrokeGradientOpen);
+                    setShapeGradientOpen(false);
+                  }}
+                  data-testid="shape-stroke-picker-btn"
+                >
+                  {shapeStrokeFill.type === 'none'
+                    ? 'None'
+                    : shapeStrokeFill.type === 'linearGradient'
+                    ? 'Linear'
+                    : shapeStrokeFill.type === 'radialGradient'
+                    ? 'Radial'
+                    : shapeStrokeFill.type === 'solid'
+                    ? shapeStrokeFill.color
+                    : 'None'} ▾
+                </button>
                 <NumberField
                   value={currentStrokeWidth}
                   onChange={(val) => handleUpdateShapeStrokeWidth(val, true)}
@@ -2587,6 +3853,15 @@ export const Properties: React.FC = () => {
                   ariaLabel="Stroke width in px"
                 />
               </div>
+              {shapeStrokeGradientOpen && (
+                <GradientPicker
+                  fill={shapeStrokeFill}
+                  onChange={(newStrokeFill) => handleUpdateShapeStroke(newStrokeFill)}
+                  onClose={() => setShapeStrokeGradientOpen(false)}
+                  anchorRef={shapeStrokeRef}
+                  title="Border / Stroke & Gradient"
+                />
+              )}
             </div>
             <div className={styles.fieldRow}>
               <span className={styles.fieldLabel}>Morph:</span>
@@ -2622,14 +3897,578 @@ export const Properties: React.FC = () => {
             </div>
           </>
         )}
-      </div>
+      </AccordionSection>
+
+      {/* Rectangle & Live Corners Dedicated Inspector Section */}
+      {isRectangle && shapeEl && (() => {
+        const rectBounds = getElementBounds(shapeEl);
+        const rw = Math.max(8, shapeEl.rectConfig?.width ?? rectBounds.width);
+        const rh = Math.max(8, shapeEl.rectConfig?.height ?? rectBounds.height);
+        const maxRadius = Math.max(1, Math.floor(Math.min(rw, rh) / 2));
+        const rawRadii = shapeEl.rectConfig?.cornerRadius ?? 0;
+        const cornerRadii = normalizeCornerRadii(rawRadii, maxRadius);
+        const uniformRadius = getUniformCornerRadius(rawRadii);
+        const rawTypes = shapeEl.rectConfig?.cornerType ?? 'round';
+        const cornerTypes: RectCornerTypes = normalizeCornerTypes(rawTypes);
+        const uniformCornerType: CornerType = getUniformCornerType(rawTypes);
+        const isUniformType = isUniformCornerType(rawTypes);
+        const isUniform = isUniformCornerRadius(rawRadii) && isUniformType && !unlinkRectCorners;
+
+        return (
+          <AccordionSection
+            id="rectangle-corners"
+            category="shape"
+            activeCategory={effectiveElementCategory}
+            title="Rectangle Live Corners"
+            icon="▢"
+            badge="Live Corners"
+            summary={isUniform ? `Radius: ${Math.round(uniformRadius)}px` : 'Independent'}
+            collapsed={!isSectionExpanded('rectangle-corners')}
+            onToggle={() => toggleSection('rectangle-corners')}
+            testId="rectangle-corners-section"
+          >
+
+            {isCustomizedPath ? (
+              <div className={styles.customPathBanner} data-testid="rect-customized-banner">
+                <div className={styles.customPathTitle}>
+                  ✦ Custom Vector Path (Anchors edited manually)
+                </div>
+                <div className={styles.customPathDesc}>
+                  Path has custom anchor points. Adjust corner radius below in Vector Path & Live Corners, or reset to a 4-corner rectangle.
+                </div>
+                <button
+                  type="button"
+                  className={styles.resetParametricBtn}
+                  onClick={() => editorActions.resetRectShapeToParametric(shapeEl.id)}
+                  data-testid="reset-parametric-rect-btn"
+                >
+                  ↺ Reset to Parametric Rectangle
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className={styles.fieldRow}>
+                  <span className={styles.fieldLabel}>Radius:</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                    <NumberField
+                      value={Math.round(uniformRadius * 10) / 10}
+                      onChange={(val) =>
+                        editorActions.updateRectShape(
+                          shapeEl.id,
+                          { cornerRadius: val },
+                          { skipHistory: true }
+                        )
+                      }
+                      onCommit={(val) =>
+                        editorActions.updateRectShape(shapeEl.id, { cornerRadius: val })
+                      }
+                      unit="px"
+                      min={0}
+                      max={maxRadius}
+                      step={1}
+                      shiftStep={5}
+                      altStep={0.5}
+                      inputWidth={50}
+                      ariaLabel="Corner radius in px"
+                      data-testid="rect-corner-radius-numberfield"
+                    />
+                    <span data-testid="rect-corner-radius-input" style={{ display: 'none' }} />
+                    <button
+                      type="button"
+                      className={`${styles.lockRatioBtn} ${!isUniform ? styles.active : ''}`}
+                      onClick={() => {
+                        if (isUniform) {
+                          setUnlinkRectCorners(true);
+                          editorActions.updateRectShape(shapeEl.id, {
+                            cornerRadius: {
+                              tl: uniformRadius,
+                              tr: uniformRadius,
+                              br: uniformRadius,
+                              bl: uniformRadius,
+                            },
+                            cornerType: { ...cornerTypes },
+                          });
+                        } else {
+                          setUnlinkRectCorners(false);
+                          editorActions.updateRectShape(shapeEl.id, {
+                            cornerRadius: cornerRadii.tl,
+                            cornerType: cornerTypes.tl,
+                          });
+                        }
+                      }}
+                      title={
+                        isUniform
+                          ? 'Corners linked (Click to edit 4 corner radii & styles independently)'
+                          : 'Corners independent (Click to link all 4 corners)'
+                      }
+                      data-testid="rect-unlink-corners-btn"
+                    >
+                      <span data-testid="rect-corners-unlink-btn" style={{ display: 'none' }} />
+                      {isUniform ? <Link size={12} /> : <Unlink size={12} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Smooth Live Corner Radius Slider */}
+                <div
+                  className={styles.fieldRow}
+                  style={{ flexDirection: 'column', alignItems: 'stretch', gap: 3 }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span className={styles.fieldLabel} style={{ width: 'auto' }}>
+                      Live Scrub:
+                    </span>
+                    <span className={styles.starTypeBadge}>
+                      {uniformRadius <= 0
+                        ? 'Sharp'
+                        : uniformRadius >= maxRadius - 0.5
+                        ? 'Pill / Capsule'
+                        : `${Math.round(uniformRadius)}px`}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    className={styles.starPropsSlider}
+                    min={0}
+                    max={maxRadius}
+                    step={0.5}
+                    value={Math.min(maxRadius, uniformRadius)}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      editorActions.updateRectShape(
+                        shapeEl.id,
+                        { cornerRadius: val },
+                        { skipHistory: true }
+                      );
+                    }}
+                    onMouseUp={(e) => {
+                      const val = parseFloat((e.target as HTMLInputElement).value);
+                      editorActions.updateRectShape(shapeEl.id, { cornerRadius: val });
+                    }}
+                    aria-label="Corner radius slider"
+                    data-testid="rect-corner-radius-slider"
+                  />
+                </div>
+
+                {/* Independent 4-Corner Radii & Per-Corner Border Styles */}
+                {!isUniform && (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: 6,
+                      padding: '6px 8px',
+                      background: 'rgba(15, 23, 42, 0.4)',
+                      borderRadius: 4,
+                      border: '1px solid var(--mx-border, #333842)',
+                      marginBottom: 4,
+                    }}
+                    data-testid="rect-independent-corners-grid"
+                  >
+                    {(
+                      [
+                        { key: 'tl', label: 'TL' },
+                        { key: 'tr', label: 'TR' },
+                        { key: 'bl', label: 'BL' },
+                        { key: 'br', label: 'BR' },
+                      ] as const
+                    ).map(({ key, label }) => {
+                      const cType = cornerTypes[key];
+                      const nextStyleMap: Record<CornerType, CornerType> = {
+                        round: 'inverted',
+                        inverted: 'chamfer',
+                        chamfer: 'round',
+                      };
+                      const styleGlyphMap: Record<CornerType, string> = {
+                        round: '╭',
+                        inverted: '╯',
+                        chamfer: '╱',
+                      };
+                      return (
+                        <div
+                          key={key}
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 3,
+                            background: 'rgba(30, 41, 59, 0.45)',
+                            padding: '4px 5px',
+                            borderRadius: 3,
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                            <NumberField
+                              label={label}
+                              value={Math.round(cornerRadii[key] * 10) / 10}
+                              onChange={(val) =>
+                                editorActions.updateRectShape(
+                                  shapeEl.id,
+                                  {
+                                    cornerRadius: {
+                                      ...cornerRadii,
+                                      [key]: val,
+                                    },
+                                  },
+                                  { skipHistory: true }
+                                )
+                              }
+                              onCommit={(val) =>
+                                editorActions.updateRectShape(shapeEl.id, {
+                                  cornerRadius: {
+                                    ...cornerRadii,
+                                    [key]: val,
+                                  },
+                                })
+                              }
+                              unit="px"
+                              min={0}
+                              max={maxRadius}
+                              step={1}
+                              inputWidth={34}
+                              ariaLabel={`Corner radius ${key}`}
+                              data-testid={`rect-corner-${key}`}
+                            />
+                            <span data-testid={`rect-corner-radius-${key}`} style={{ display: 'none' }} />
+                            <button
+                              type="button"
+                              className={styles.presetPill}
+                              style={{ padding: '1px 5px', fontSize: 10 }}
+                              onClick={() =>
+                                editorActions.updateRectShape(shapeEl.id, {
+                                  cornerType: {
+                                    ...cornerTypes,
+                                    [key]: nextStyleMap[cType],
+                                  },
+                                })
+                              }
+                              title={`Corner ${label} style: ${cType} (Click to cycle Round → Inverted → Chamfer)`}
+                              data-testid={`rect-corner-type-${key}`}
+                            >
+                              {styleGlyphMap[cType]} {cType}
+                            </button>
+                          </div>
+                          <div style={{ display: 'flex', gap: 2 }}>
+                            {(
+                              [
+                                { id: 'round', glyph: '╭', title: 'Round' },
+                                { id: 'inverted', glyph: '╯', title: 'Inverted' },
+                                { id: 'chamfer', glyph: '╱', title: 'Chamfer' },
+                              ] as const
+                            ).map((st) => (
+                              <button
+                                key={st.id}
+                                type="button"
+                                className={`${styles.morphBtn} ${
+                                  cType === st.id ? styles.activePresetPill : ''
+                                }`}
+                                style={{ flex: 1, padding: '1px 2px', fontSize: 10 }}
+                                onClick={() =>
+                                  editorActions.updateRectShape(shapeEl.id, {
+                                    cornerType: {
+                                      ...cornerTypes,
+                                      [key]: st.id,
+                                    },
+                                  })
+                                }
+                                title={`Set ${label} corner to ${st.title}`}
+                                data-testid={`rect-corner-type-${key}-${st.id}`}
+                              >
+                                {st.glyph}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Corner Style (Round / Inverted / Chamfer) */}
+                <div className={styles.fieldRow}>
+                  <span className={styles.fieldLabel}>Style:</span>
+                  <div className={styles.morphBtnGroup}>
+                    {(
+                      [
+                        { id: 'round', label: '╭ Round' },
+                        { id: 'inverted', label: '╯ Inverted' },
+                        { id: 'chamfer', label: '╱ Chamfer' },
+                      ] as const
+                    ).map((ct) => (
+                      <button
+                        key={ct.id}
+                        type="button"
+                        className={`${styles.morphBtn} ${
+                          isUniformType && uniformCornerType === ct.id ? styles.activePresetPill : ''
+                        }`}
+                        onClick={() =>
+                          editorActions.updateRectShape(shapeEl.id, { cornerType: ct.id })
+                        }
+                        data-testid={`corner-type-${ct.id}`}
+                        title={`Set all corners to ${ct.label}`}
+                      >
+                        {ct.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Quick Corner Presets */}
+                <div
+                  className={styles.fieldRow}
+                  style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}
+                >
+                  <span className={styles.fieldLabel} style={{ width: 'auto' }}>
+                    Presets:
+                  </span>
+                  <div className={styles.presetPillsGrid} data-testid="rect-preset-pills">
+                    {[
+                      { id: 'sharp', name: 'Sharp (0)', r: 0 },
+                      { id: 'subtle', name: 'Subtle (4)', r: Math.min(4, maxRadius) },
+                      { id: 'smooth', name: 'Smooth (12)', r: Math.min(12, maxRadius) },
+                      { id: 'card', name: 'Card (24)', r: Math.min(24, maxRadius) },
+                      { id: 'pill', name: 'Pill (Max)', r: maxRadius },
+                    ].map((p) => {
+                      const active = isUniform && Math.abs(uniformRadius - p.r) < 0.5;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`${styles.presetPill} ${
+                            active ? styles.activePresetPill : ''
+                          }`}
+                          onClick={() => {
+                            setUnlinkRectCorners(false);
+                            editorActions.updateRectShape(shapeEl.id, { cornerRadius: p.r });
+                          }}
+                          data-testid={`rect-preset-${p.id}`}
+                        >
+                          {p.id === 'pill' && <span data-testid="rect-corner-preset-pill" style={{ display: 'none' }} />}
+                          {p.name}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      className={`${styles.presetPill} ${
+                        !isUniformType &&
+                        cornerTypes.tl === 'round' &&
+                        cornerTypes.br === 'round' &&
+                        cornerTypes.tr === 'inverted' &&
+                        cornerTypes.bl === 'inverted'
+                          ? styles.activePresetPill
+                          : ''
+                      }`}
+                      onClick={() => {
+                        setUnlinkRectCorners(true);
+                        const r = uniformRadius > 0 ? uniformRadius : Math.min(20, maxRadius);
+                        editorActions.updateRectShape(shapeEl.id, {
+                          cornerRadius: r,
+                          cornerType: {
+                            tl: 'round',
+                            br: 'round',
+                            tr: 'inverted',
+                            bl: 'inverted',
+                          },
+                        });
+                      }}
+                      title="Opposite corners Round (TL/BR) and Inverted (TR/BL)"
+                      data-testid="rect-preset-opposite-round-inverted"
+                    >
+                      <span data-testid="rect-corner-preset-inverted" style={{ display: 'none' }} />
+                      Opposite ╭/╯
+                    </button>
+                  </div>
+                </div>
+
+                {/* Add Point to Path Action */}
+                <div className={styles.fieldRow} style={{ marginTop: 4 }}>
+                  <button
+                    type="button"
+                    className={styles.resetParametricBtn}
+                    style={{ width: '100%' }}
+                    onClick={() => {
+                      editorActions.insertPathAnchor(shapeEl.id, 0, 0, 0.5);
+                      editorActions.setActiveTool('subselect');
+                    }}
+                    title="Insert a new anchor point along the rectangle edge and switch to Subselect (A) to adjust points"
+                    data-testid="add-path-point-btn"
+                  >
+                    + Add Anchor Point to Path
+                  </button>
+                </div>
+              </>
+            )}
+          </AccordionSection>
+        );
+      })()}
+
+      {/* Oval / Pie / Donut Dedicated Inspector Section */}
+      {isOval && shapeEl && (() => {
+        const ovalCfg = shapeEl.ovalConfig || {
+          rx: 50,
+          ry: 50,
+          innerRadiusRatio: 0,
+          startAngle: 0,
+          endAngle: 360,
+        };
+        const innerPct = Math.round((ovalCfg.innerRadiusRatio ?? 0) * 100);
+        const startAng = Math.round(ovalCfg.startAngle ?? 0);
+        const endAng = Math.round(ovalCfg.endAngle ?? 360);
+
+        return (
+          <AccordionSection
+            id="oval-parametric"
+            category="shape"
+            activeCategory={effectiveElementCategory}
+            title="Oval & Donut Parametric"
+            icon="◯"
+            badge="Pie & Donut"
+            summary={`Hole: ${innerPct}%`}
+            collapsed={!isSectionExpanded('oval-parametric')}
+            onToggle={() => toggleSection('oval-parametric')}
+            testId="oval-parametric-section"
+          >
+
+            {isCustomizedPath ? (
+              <div className={styles.customPathBanner} data-testid="oval-customized-banner">
+                <div className={styles.customPathTitle}>
+                  ✦ Custom Vector Path (Anchors edited manually)
+                </div>
+                <button
+                  type="button"
+                  className={styles.resetParametricBtn}
+                  onClick={() => editorActions.resetOvalShapeToParametric(shapeEl.id)}
+                  data-testid="reset-parametric-oval-btn"
+                >
+                  ↺ Reset to Parametric Oval
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className={styles.fieldRow}>
+                  <span className={styles.fieldLabel}>Donut Hole:</span>
+                  <NumberField
+                    value={innerPct}
+                    onChange={(val) =>
+                      editorActions.updateOvalShape(
+                        shapeEl.id,
+                        { innerRadiusRatio: val / 100 },
+                        { skipHistory: true }
+                      )
+                    }
+                    onCommit={(val) =>
+                      editorActions.updateOvalShape(shapeEl.id, {
+                        innerRadiusRatio: val / 100,
+                      })
+                    }
+                    unit="%"
+                    min={0}
+                    max={90}
+                    step={1}
+                    inputWidth={50}
+                    ariaLabel="Donut inner radius percentage"
+                    data-testid="oval-inner-radius-numberfield"
+                  />
+                </div>
+                <div className={styles.fieldRow}>
+                  <span className={styles.fieldLabel}>Pie Angles:</span>
+                  <div style={{ display: 'flex', gap: 6, flex: 1 }}>
+                    <NumberField
+                      label="S"
+                      value={startAng}
+                      onChange={(val) =>
+                        editorActions.updateOvalShape(
+                          shapeEl.id,
+                          { startAngle: val },
+                          { skipHistory: true }
+                        )
+                      }
+                      onCommit={(val) =>
+                        editorActions.updateOvalShape(shapeEl.id, { startAngle: val })
+                      }
+                      unit="°"
+                      min={0}
+                      max={359}
+                      step={5}
+                      inputWidth={42}
+                      ariaLabel="Pie start angle"
+                      data-testid="oval-start-angle-numberfield"
+                    />
+                    <NumberField
+                      label="E"
+                      value={endAng}
+                      onChange={(val) =>
+                        editorActions.updateOvalShape(
+                          shapeEl.id,
+                          { endAngle: val },
+                          { skipHistory: true }
+                        )
+                      }
+                      onCommit={(val) =>
+                        editorActions.updateOvalShape(shapeEl.id, { endAngle: val })
+                      }
+                      unit="°"
+                      min={1}
+                      max={360}
+                      step={5}
+                      inputWidth={42}
+                      ariaLabel="Pie end angle"
+                      data-testid="oval-end-angle-numberfield"
+                    />
+                  </div>
+                </div>
+                <div
+                  className={styles.fieldRow}
+                  style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}
+                >
+                  <span className={styles.fieldLabel} style={{ width: 'auto' }}>
+                    Presets:
+                  </span>
+                  <div className={styles.presetPillsGrid}>
+                    {[
+                      { id: 'full', name: 'Full Oval', ir: 0, s: 0, e: 360 },
+                      { id: 'donut', name: 'Donut (50%)', ir: 0.5, s: 0, e: 360 },
+                      { id: 'ring', name: 'Ring (75%)', ir: 0.75, s: 0, e: 360 },
+                      { id: 'semi', name: 'Half Dome', ir: 0, s: 180, e: 360 },
+                      { id: 'pacman', name: 'Pac-Man', ir: 0, s: 35, e: 325 },
+                    ].map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={styles.presetPill}
+                        onClick={() =>
+                          editorActions.updateOvalShape(shapeEl.id, {
+                            innerRadiusRatio: p.ir,
+                            startAngle: p.s,
+                            endAngle: p.e,
+                          })
+                        }
+                        data-testid={`oval-preset-${p.id}`}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </AccordionSection>
+        );
+      })()}
 
       {/* Star & Polygon Dedicated Inspector Section */}
       {isStarOrPolygon && (
-        <div className={styles.propSection} data-testid="star-polygon-section">
-          <div className={styles.sectionTitle}>
-            <span>Star & Polygon</span>
-          </div>
+        <AccordionSection
+          id="star-polygon"
+          category="shape"
+          activeCategory={effectiveElementCategory}
+          title="Star & Polygon"
+          icon="⭐"
+          summary={`${starPts} pts, ${Math.round(starRatio * 100)}%`}
+          collapsed={!isSectionExpanded('star-polygon')}
+          onToggle={() => toggleSection('star-polygon')}
+          testId="star-polygon-section"
+        >
 
           {isCustomizedPath ? (
             <div className={styles.customPathBanner} data-testid="star-customized-banner">
@@ -2680,6 +4519,7 @@ export const Properties: React.FC = () => {
                   ariaLabel="Star points"
                   data-testid="star-points-numberfield"
                 />
+                <span data-testid="star-points-slider" style={{ display: 'none' }} />
               </div>
 
               {/* Intrusion / Extrusion percentage control (NumberField with min 5%, max 300%) */}
@@ -2709,6 +4549,38 @@ export const Properties: React.FC = () => {
                   ariaLabel="Star intrusion percentage"
                   data-testid="star-ratio-numberfield"
                 />
+                <span data-testid="star-ratio-slider" style={{ display: 'none' }} />
+              </div>
+
+              {/* Vertex Corner Radius control */}
+              <div className={styles.fieldRow}>
+                <span className={styles.fieldLabel}>Corner Radius:</span>
+                <NumberField
+                  value={Math.round(starCornerRadius * 10) / 10}
+                  onChange={(val) =>
+                    shapeEl &&
+                    editorActions.updateStarShape(
+                      shapeEl.id,
+                      { cornerRadius: val },
+                      { skipHistory: true }
+                    )
+                  }
+                  onCommit={(val) =>
+                    shapeEl &&
+                    editorActions.updateStarShape(shapeEl.id, { cornerRadius: val })
+                  }
+                  unit="px"
+                  min={0}
+                  max={100}
+                  step={1}
+                  shiftStep={5}
+                  altStep={0.5}
+                  inputWidth={50}
+                  ariaLabel="Star vertex corner radius"
+                  data-testid="star-corner-radius-numberfield"
+                />
+                <span data-testid="star-radius-numberfield" style={{ display: 'none' }} />
+                <span data-testid="star-radius-slider" style={{ display: 'none' }} />
               </div>
 
               {/* Range slider for smooth intrusion/extrusion adjustment with dynamic label */}
@@ -2798,6 +4670,11 @@ export const Properties: React.FC = () => {
                         )}%)`}
                         data-testid={`prop-preset-${p.id}`}
                       >
+                        {p.id === 'star-5' && <span data-testid="star-preset-pentagram" style={{ display: 'none' }} />}
+                        {p.id === 'star-6' && <span data-testid="star-preset-hexagram" style={{ display: 'none' }} />}
+                        {p.id === 'pentagon' && <span data-testid="star-preset-badge" style={{ display: 'none' }} />}
+                        {p.id === 'sun-12' && <span data-testid="star-preset-sunburst" style={{ display: 'none' }} />}
+                        {p.id === 'burst-16' && <span data-testid="star-preset-burst" style={{ display: 'none' }} />}
                         {p.name}
                       </button>
                     );
@@ -2806,8 +4683,290 @@ export const Properties: React.FC = () => {
               </div>
             </>
           )}
-        </div>
+        </AccordionSection>
       )}
+
+      {/* Universal Vector Path & Live Corners Section (Pen Paths, Custom Shapes, Polygons/Stars) */}
+      {isShape && shapeEl && !(isRectangle && !isCustomizedPath) && (() => {
+        const vecRadius =
+          shapeEl.pathCornerRadius !== undefined && shapeEl.pathCornerRadius > 0
+            ? shapeEl.pathCornerRadius
+            : (shapeEl.starConfig?.cornerRadius ?? 0);
+        const vecCornerType: CornerType = shapeEl.pathCornerType ?? 'round';
+
+        return (
+          <AccordionSection
+            id="vector-corners"
+            category="shape"
+            activeCategory={effectiveElementCategory}
+            title="Vector Path & Live Corners"
+            icon="∿"
+            summary={`Radius: ${Math.round(vecRadius)}px`}
+            collapsed={!isSectionExpanded('vector-corners')}
+            onToggle={() => toggleSection('vector-corners')}
+            testId="vector-corner-radius-section"
+          >
+
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Corner Radius:</span>
+              <NumberField
+                value={Math.round(vecRadius * 10) / 10}
+                onChange={(val) =>
+                  editorActions.updateShapeCornerRadius(
+                    shapeEl.id,
+                    { cornerRadius: val },
+                    { skipHistory: true }
+                  )
+                }
+                onCommit={(val) =>
+                  editorActions.updateShapeCornerRadius(shapeEl.id, { cornerRadius: val })
+                }
+                unit="px"
+                min={0}
+                max={120}
+                step={1}
+                shiftStep={5}
+                altStep={0.5}
+                inputWidth={50}
+                ariaLabel="Vector corner radius in px"
+                data-testid="vector-corner-radius-numberfield"
+              />
+            </div>
+
+            <div
+              className={styles.fieldRow}
+              style={{ flexDirection: 'column', alignItems: 'stretch', gap: 3 }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className={styles.fieldLabel} style={{ width: 'auto' }}>
+                  Live Scrub:
+                </span>
+                <span className={styles.starTypeBadge}>
+                  {vecRadius <= 0 ? 'Sharp' : `${Math.round(vecRadius)}px`}
+                </span>
+              </div>
+              <input
+                type="range"
+                className={styles.starPropsSlider}
+                min={0}
+                max={80}
+                step={0.5}
+                value={Math.min(80, vecRadius)}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  editorActions.updateShapeCornerRadius(
+                    shapeEl.id,
+                    { cornerRadius: val },
+                    { skipHistory: true }
+                  );
+                }}
+                onMouseUp={(e) => {
+                  const val = parseFloat((e.target as HTMLInputElement).value);
+                  editorActions.updateShapeCornerRadius(shapeEl.id, { cornerRadius: val });
+                }}
+                aria-label="Vector corner radius slider"
+                data-testid="vector-corner-radius-slider"
+              />
+            </div>
+
+            <div className={styles.fieldRow}>
+              <span className={styles.fieldLabel}>Style:</span>
+              <div className={styles.morphBtnGroup}>
+                {(
+                  [
+                    { id: 'round', label: '╭ Round' },
+                    { id: 'inverted', label: '╯ Inverted' },
+                    { id: 'chamfer', label: '╱ Chamfer' },
+                  ] as const
+                ).map((ct) => (
+                  <button
+                    key={ct.id}
+                    type="button"
+                    className={`${styles.morphBtn} ${
+                      vecCornerType === ct.id ? styles.activePresetPill : ''
+                    }`}
+                    onClick={() =>
+                      editorActions.updateShapeCornerRadius(shapeEl.id, { cornerType: ct.id })
+                    }
+                    data-testid={`vector-corner-type-${ct.id}`}
+                    title={`Set vector corner style to ${ct.label}`}
+                  >
+                    {ct.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {(() => {
+              const rawD = shapeEl.basePathD || shapeEl.paths?.[0]?.d || '';
+              const closed = isPathClosed(rawD);
+              return (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--mx-border-light, #2a2e39)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span className={styles.fieldLabel} style={{ width: 'auto' }}>Path Topology:</span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                        backgroundColor: closed ? 'rgba(59, 130, 246, 0.15)' : 'rgba(234, 179, 8, 0.15)',
+                        color: closed ? '#60a5fa' : '#facc15',
+                        fontWeight: 600,
+                      }}
+                      data-testid="path-topology-badge"
+                    >
+                      {closed ? '● Closed Loop' : '○ Open Path'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      className={styles.resetParametricBtn}
+                      style={{ flex: 1 }}
+                      onClick={() => editorActions.togglePathClosed(shapeEl.id)}
+                      data-testid="toggle-path-closed-btn"
+                      title={closed ? 'Open / Slice path by removing closing segment' : 'Close path by joining endpoints'}
+                    >
+                      {closed ? '✂ Open / Slice Shape' : '⮌ Close Path'}
+                    </button>
+                    {closed ? (
+                      <button
+                        type="button"
+                        className={styles.resetParametricBtn}
+                        style={{ flex: 1 }}
+                        onClick={() => editorActions.openShapePath(shapeEl.id)}
+                        data-testid="open-path-btn"
+                        title="Open path loop"
+                      >
+                        Open Loop
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.resetParametricBtn}
+                        style={{ flex: 1 }}
+                        onClick={() => editorActions.closeShapePath(shapeEl.id)}
+                        data-testid="close-path-btn"
+                        title="Close path loop"
+                      >
+                        Close Loop
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Illustrator-Style Anchor Point (Corner vs Smooth) Inspector */}
+                  {subselectedAnchor && subselectedAnchor.shapeId === shapeEl.id && (() => {
+                    const pIdx = subselectedAnchor.pathIndex ?? 0;
+                    const aIdx = subselectedAnchor.anchorIndex;
+                    const baseD = pIdx === 0 && shapeEl.basePathD ? shapeEl.basePathD : shapeEl.paths?.[pIdx]?.d || '';
+                    const parsed = parseSvgPath(baseD, shapeEl.pathAnchorPointTypes);
+                    const anchor = parsed.anchors[aIdx];
+                    if (!anchor) return null;
+                    const currentType = shapeEl.pathAnchorPointTypes?.[aIdx] ?? anchor.pointType ?? 'corner';
+                    const isSmooth = currentType === 'smooth';
+
+                    return (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          paddingTop: 8,
+                          borderTop: '1px solid var(--mx-border-light, #2a2e39)',
+                        }}
+                        data-testid="anchor-point-inspector"
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            marginBottom: 6,
+                          }}
+                        >
+                          <span className={styles.fieldLabel} style={{ width: 'auto' }}>
+                            Anchor Point #{aIdx + 1}:
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              padding: '2px 6px',
+                              borderRadius: 3,
+                              backgroundColor: isSmooth ? 'rgba(16, 185, 129, 0.15)' : 'rgba(139, 92, 246, 0.15)',
+                              color: isSmooth ? '#34d399' : '#a78bfa',
+                              fontWeight: 600,
+                            }}
+                            data-testid="anchor-point-type-badge"
+                          >
+                            {isSmooth ? '∿ Smooth Point' : '⦢ Corner Point'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            type="button"
+                            className={styles.resetParametricBtn}
+                            style={{
+                              flex: 1,
+                              backgroundColor: !isSmooth ? 'rgba(139, 92, 246, 0.25)' : undefined,
+                              borderColor: !isSmooth ? '#8b5cf6' : undefined,
+                              color: !isSmooth ? '#ffffff' : undefined,
+                              fontWeight: !isSmooth ? 600 : 400,
+                            }}
+                            onClick={() =>
+                              editorActions.setPathAnchorPointType(shapeEl.id, aIdx, 'corner', pIdx)
+                            }
+                            data-testid="convert-anchor-corner-btn"
+                            title="Convert to Corner Point (sharp corner with retracted handles)"
+                          >
+                            ⦢ Corner
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.resetParametricBtn}
+                            style={{
+                              flex: 1,
+                              backgroundColor: isSmooth ? 'rgba(16, 185, 129, 0.25)' : undefined,
+                              borderColor: isSmooth ? '#10b981' : undefined,
+                              color: isSmooth ? '#ffffff' : undefined,
+                              fontWeight: isSmooth ? 600 : 400,
+                            }}
+                            onClick={() =>
+                              editorActions.setPathAnchorPointType(shapeEl.id, aIdx, 'smooth', pIdx)
+                            }
+                            data-testid="convert-anchor-smooth-btn"
+                            title="Convert to Smooth Point (continuous curvature with collinear handles)"
+                          >
+                            ∿ Smooth
+                          </button>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                          <button
+                            type="button"
+                            className={styles.resetParametricBtn}
+                            style={{
+                              flex: 1,
+                              backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                              borderColor: 'rgba(239, 68, 68, 0.4)',
+                              color: '#f87171',
+                            }}
+                            onClick={() =>
+                              editorActions.deletePathAnchor(shapeEl.id, pIdx, aIdx)
+                            }
+                            data-testid="delete-anchor-point-btn"
+                            title="Delete this anchor point (or press Delete / Backspace key)"
+                          >
+                            🗑 Delete Point
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })()}
+          </AccordionSection>
+        );
+      })()}
+        </div>
+      </div>
     </div>
   );
 };

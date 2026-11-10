@@ -4,6 +4,7 @@ import { Tools } from '../panels/Tools/Tools';
 import { Stage } from '../panels/Stage/Stage';
 import { ArtboardTabStrip } from '../panels/Stage/ArtboardTabStrip';
 import { Library } from '../panels/Library/Library';
+import { Localization } from '../panels/Localization/Localization';
 import { Timeline } from '../panels/Timeline/Timeline';
 import { Layers } from '../panels/Layers/Layers';
 import { Properties } from '../panels/Properties/Properties';
@@ -22,6 +23,8 @@ type BottomTab = 'timeline' | 'properties' | 'scripts';
 
 export const Workspace: React.FC = () => {
   const activeTab = useEditorStore((s) => s.activeInspectorTab ?? 'timeline');
+  const isLibraryOpen = useEditorStore((s) => s.isLibraryOpen);
+  const isLocalizationOpen = useEditorStore((s) => s.isLocalizationOpen);
   const setActiveTab = (tab: BottomTab) => {
     editorActions.setActiveInspectorTab(tab);
     setIsInspectorCollapsed(false);
@@ -162,7 +165,8 @@ export const Workspace: React.FC = () => {
           </div>
         </div>
 
-        <Library />
+        {isLibraryOpen && <Library />}
+        {isLocalizationOpen && <Localization />}
       </div>
 
       {/* Modals & Dialogs */}

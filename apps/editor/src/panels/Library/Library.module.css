@@ -1,28 +1,36 @@
 .libraryPanel {
-  width: 230px;
-  background-color: var(--mx-bg-panel);
-  border-left: 1px solid var(--mx-border-light);
+  position: fixed;
+  width: 290px;
+  max-height: 480px;
+  background-color: var(--mx-bg-panel, #1e1e24);
+  border: 1px solid var(--mx-border-light, #2f3336);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
   user-select: none;
-  flex-shrink: 0;
   overflow: hidden;
-  z-index: 20;
+  z-index: 1000;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .panelHeader {
-  height: 28px;
-  background-color: var(--mx-bg-panel-dark);
-  color: var(--mx-text-muted);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  height: 32px;
+  background-color: var(--mx-bg-panel-dark, #16171a);
+  color: var(--mx-text-muted, #94a3b8);
+  font-size: 11px;
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--mx-border-light);
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--mx-border-light, #2f3336);
+  cursor: grab;
+}
+
+.panelHeader:active {
+  cursor: grabbing;
 }
 
 .panelHeaderTitle {
@@ -32,16 +40,48 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mx-text-main, #f1f5f9);
+}
+
+.headerIcon {
+  color: var(--mx-accent, #3b82f6);
+  flex-shrink: 0;
+}
+
+.headerControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.closeWindowBtn {
+  background: transparent;
+  border: none;
+  color: var(--mx-text-muted, #94a3b8);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.closeWindowBtn:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
 }
 
 .symbolList {
-  flex: 1;
+  height: 220px;
   overflow-y: auto;
-  background-color: #141518;
+  background-color: #121316;
   margin: 6px;
-  border: 1px solid var(--mx-border-light);
-  border-radius: var(--mx-radius-md);
-  font-size: var(--mx-font-size-base);
+  border: 1px solid var(--mx-border-light, #2f3336);
+  border-radius: var(--mx-radius-md, 6px);
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -50,28 +90,31 @@
 
 .symbolItem {
   padding: 6px 8px;
-  border-radius: var(--mx-radius-sm);
+  border-radius: var(--mx-radius-sm, 4px);
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  color: var(--mx-text-muted);
+  color: var(--mx-text-muted, #94a3b8);
   transition: all 0.12s ease;
 }
 
 .symbolItem:hover {
-  background-color: var(--mx-bg-panel-hover);
-  color: var(--mx-text-main);
+  background-color: var(--mx-bg-panel-hover, #282a30);
+  color: var(--mx-text-main, #f1f5f9);
 }
 
 .symbolItem.selected {
-  background-color: var(--mx-selection-bg);
-  color: var(--mx-text-inverse);
-  border-left: 2px solid var(--mx-selection);
+  background-color: var(--mx-selection-bg, rgba(59, 130, 246, 0.2));
+  color: var(--mx-text-main, #f1f5f9);
+  border-left: 2px solid var(--mx-selection, #3b82f6);
 }
 
 .symbolIcon {
   font-size: 12px;
+  color: var(--mx-accent, #3b82f6);
+  display: flex;
+  align-items: center;
 }
 
 .symbolName {
@@ -79,40 +122,68 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
+}
+
+.artboardSizeBadge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--mx-text-subtle, #64748b);
+  font-family: monospace;
 }
 
 .symbolKindBadge {
   font-size: 9px;
-  padding: 2px 6px;
-  border-radius: var(--mx-radius-xs);
-  background-color: var(--mx-bg-input);
-  color: var(--mx-text-subtle);
+  padding: 2px 5px;
+  border-radius: var(--mx-radius-xs, 3px);
+  background-color: var(--mx-bg-input, #16171a);
+  color: var(--mx-text-subtle, #64748b);
   text-transform: uppercase;
   font-weight: 600;
 }
 
 .symbolItem.selected .symbolKindBadge {
-  background-color: var(--mx-accent-subtle);
-  color: var(--mx-accent);
+  background-color: var(--mx-accent-subtle, rgba(59, 130, 246, 0.2));
+  color: var(--mx-accent, #3b82f6);
+}
+
+.editClipBtn {
+  background: transparent;
+  border: none;
+  color: var(--mx-text-subtle, #64748b);
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.editClipBtn:hover {
+  background-color: var(--mx-bg-panel-hover, #282a30);
+  color: var(--mx-text-main, #f1f5f9);
 }
 
 .emptyNotice {
-  padding: 24px 12px;
+  padding: 24px 16px;
   text-align: center;
-  color: var(--mx-text-subtle);
-  font-size: var(--mx-font-size-sm);
+  color: var(--mx-text-subtle, #64748b);
+  font-size: 11px;
   line-height: 1.5;
+  font-style: italic;
 }
 
 .libraryFooter {
-  padding: 8px;
-  border-top: 1px solid var(--mx-border-light);
+  padding: 6px 8px 8px 8px;
+  border-top: 1px solid var(--mx-border-light, #2f3336);
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background-color: var(--mx-bg-panel-dark);
+  background-color: var(--mx-bg-panel, #1e1e24);
 }
 
 .buttonRow {
@@ -122,29 +193,28 @@
 
 .libBtn {
   flex: 1;
-  height: 26px;
-  background-color: var(--mx-bg-input);
-  border: 1px solid var(--mx-border-light);
-  border-radius: var(--mx-radius-sm);
-  color: var(--mx-text-main);
-  cursor: pointer;
-  font-size: 11px;
+  background-color: var(--mx-bg-btn, #2a2c33);
+  color: var(--mx-text-main, #f1f5f9);
+  border: 1px solid var(--mx-border-light, #3b3f47);
+  padding: 6px 8px;
+  font-size: 10px;
   font-weight: 500;
+  border-radius: var(--mx-radius-sm, 4px);
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  white-space: nowrap;
-  padding: 0 6px;
+  gap: 4px;
   transition: all 0.12s ease;
+  white-space: nowrap;
 }
 
 .libBtn:hover:not(:disabled) {
-  background-color: var(--mx-bg-input-hover);
-  border-color: var(--mx-accent);
+  background-color: var(--mx-bg-btn-hover, #373b45);
+  border-color: var(--mx-border-focus, #4f5563);
 }
 
 .libBtn:disabled {
-  opacity: 0.4;
-  cursor: default;
+  opacity: 0.45;
+  cursor: not-allowed;
 }

@@ -26,9 +26,9 @@ export const MenuBar: React.FC = () => {
   const undoStack = useEditorStore((s) => s.undoStack);
   const redoStack = useEditorStore((s) => s.redoStack);
   const selectedElementIds = useEditorStore((s) => s.selectedElementIds);
-  const selectedLayerId = useEditorStore((s) => s.selectedLayerId);
-  const selectedFrameIndex = useEditorStore((s) => s.selectedFrameIndex);
   const isolationStack = useEditorStore((s) => s.isolationStack);
+  const isLibraryOpen = useEditorStore((s) => s.isLibraryOpen);
+  const isLocalizationOpen = useEditorStore((s) => s.isLocalizationOpen);
 
   const activeTl = getActiveTimeline(doc, isolationStack);
   const fps = doc.stage.fps || 24;
@@ -143,41 +143,37 @@ export const MenuBar: React.FC = () => {
       ],
     },
     {
-      title: 'Insert & Components',
+      title: 'Clips & Windows',
       items: [
         {
-          label: 'Convert to Component (F8)',
+          label: isLibraryOpen ? '✓ Clips Window' : 'Clips Window',
+          shortcut: 'Ctrl+L',
+          action: () => editorActions.toggleLibrary(),
+        },
+        {
+          label: isLocalizationOpen ? '✓ Strings & Localization Window' : 'Strings & Localization Window',
+          shortcut: 'Ctrl+Shift+L',
+          action: () => editorActions.toggleLocalization(),
+        },
+        { separator: true, label: '' },
+        {
+          label: 'Convert to Clip (F8)',
           shortcut: 'F8',
           action: () => editorActions.setConvertToComponentModalOpen(true),
           disabled: selectedElementIds.length === 0,
         },
         {
-          label: 'New Component...',
-          action: () => editorActions.setConvertToComponentModalOpen(true),
-          disabled: selectedElementIds.length === 0,
+          label: 'New Empty Clip (100×100)...',
+          action: () => editorActions.createEmptyClip(),
         },
         {
-          label: 'Insert Component',
+          label: 'Insert Clip to Stage',
           action: () => editorActions.insertComponent(),
         },
         {
           label: 'Add Web Font...',
           action: () => editorActions.setAddFontModalOpen(true),
         },
-        { separator: true, label: '' },
-        { label: 'Keyframe', shortcut: 'F6', action: () => editorActions.insertKeyframe() },
-        { label: 'Blank Keyframe', shortcut: 'F7', action: () => editorActions.insertBlankKeyframe() },
-        { label: 'Frame', shortcut: 'F5', action: () => editorActions.insertFrame() },
-        { label: 'Remove Frame', shortcut: 'Shift+F5', action: () => editorActions.removeFrame() },
-        {
-          label: 'Create Motion Tween',
-          action: () => {
-            if (selectedLayerId !== null) {
-              editorActions.createMotionTween(selectedLayerId, selectedFrameIndex);
-            }
-          },
-        },
-        { label: 'New Layer', action: () => editorActions.addLayer() },
       ],
     },
   ];

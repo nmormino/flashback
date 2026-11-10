@@ -222,7 +222,7 @@ describe('Streamlined Text Editing & Component Overhaul', () => {
       expect(instance.symbolId).toBe(compDef.id);
     });
 
-    it('opens ConvertToComponentDialog with "Create New Component" title and Component default name', () => {
+    it('opens ConvertToComponentDialog with "Convert to Clip" title and default settings', () => {
       const container = document.createElement('div');
       document.body.appendChild(container);
       const root = createRoot(container);
@@ -232,7 +232,7 @@ describe('Streamlined Text Editing & Component Overhaul', () => {
         root.render(React.createElement(ConvertToComponentDialog));
       });
 
-      expect(container.textContent).toContain('Create New Component');
+      expect(container.textContent).toContain('Convert to Clip');
       expect(container.textContent).toContain('Behavior:');
       expect(container.textContent).toContain('Movie clip');
 
@@ -243,7 +243,7 @@ describe('Streamlined Text Editing & Component Overhaul', () => {
       container.remove();
     });
 
-    it('renders Library with "Components & Assets" and component buttons', () => {
+    it('renders Library with "Clips" and clip buttons', () => {
       const container = document.createElement('div');
       document.body.appendChild(container);
       const root = createRoot(container);
@@ -252,8 +252,8 @@ describe('Streamlined Text Editing & Component Overhaul', () => {
         root.render(React.createElement(Library));
       });
 
-      expect(container.textContent).toContain('Components & Assets');
-      expect(container.textContent).toContain('New Component (F8)');
+      expect(container.textContent).toContain('Clips');
+      expect(container.textContent).toContain('+ New Clip (F8)');
 
       act(() => {
         root.unmount();

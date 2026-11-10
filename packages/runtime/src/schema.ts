@@ -134,6 +134,10 @@ export interface SymbolDef {
   kind: SymbolKind;
   /** Registration point, in symbol-local px. */
   registration: { x: number; y: number };
+  /** Nested artboard width in symbol-local px (defaults to 100). */
+  width?: number;
+  /** Nested artboard height in symbol-local px (defaults to 100). */
+  height?: number;
   /**
    * For `button` symbols the runtime treats frames 1–4 as
    * Up / Over / Down / Hit (Flash parity; 0-based indices 0–3). The Hit frame
@@ -344,21 +348,76 @@ export interface SymbolInstance extends ElementBase {
   tabIndex?: number;
 }
 
+export type CornerType = 'round' | 'inverted' | 'chamfer';
+
+export interface RectCornerRadius {
+  tl: number;
+  tr: number;
+  br: number;
+  bl: number;
+}
+
+export interface RectCornerTypes {
+  tl: CornerType;
+  tr: CornerType;
+  br: CornerType;
+  bl: CornerType;
+}
+
+export interface RectConfig {
+  width: number;
+  height: number;
+  cornerRadius: number | RectCornerRadius;
+  cornerType?: CornerType | RectCornerTypes;
+}
+
+export interface OvalConfig {
+  rx: number;
+  ry: number;
+  /** 0 = solid ellipse, > 0 and < 1 = donut inner radius ratio */
+  innerRadiusRatio?: number;
+  /** Start angle in degrees (0-360) */
+  startAngle?: number;
+  /** End angle in degrees (0-360) */
+  endAngle?: number;
+}
+
 export interface ShapeElement extends ElementBase {
   type: 'shape';
   /** One or more SVG paths, rendered in order inside an inline <svg>. */
   paths: VectorPath[];
+  /** Parametric rectangle configuration (live corners) */
+  rectConfig?: RectConfig;
+  /** Parametric oval / pie / donut configuration */
+  ovalConfig?: OvalConfig;
   /** Parametric star / polygon configuration */
   starConfig?: {
     points: number;
     pointRatio: number;
     outerRadius: number;
     startAngle?: number;
+    cornerRadius?: number;
     cx?: number;
     cy?: number;
   };
+  /** Base un-rounded control polygon path data for universal Live Corner Radius on arbitrary vector shapes */
+  basePathD?: string;
+  /** Universal corner radius applied to vertices of arbitrary vector shapes */
+  pathCornerRadius?: number;
+  /** Universal corner style ('round' | 'inverted' | 'chamfer') for arbitrary vector shapes */
+  pathCornerType?: CornerType;
+  /** Per-vertex corner radii for arbitrary vector shapes */
+  pathAnchorRadii?: Record<number, number>;
+  /** Per-vertex corner styles for arbitrary vector shapes */
+  pathAnchorTypes?: Record<number, CornerType>;
+  /** Per-vertex anchor point types ('smooth' | 'corner') */
+  pathAnchorPointTypes?: Record<number, 'smooth' | 'corner'>;
   /** Whether the path has been customized manually (e.g. via Subselect anchor manipulation) */
   isCustomizedPath?: boolean;
+  /** Sampled raw mouse points from freehand Pencil Tool, enabling live smoothness re-adjustment before or after drawing */
+  rawPoints?: Array<{ x: number; y: number }>;
+  /** Pencil tool smoothness percentage (0-100) used when drawn */
+  pencilSmoothness?: number;
 }
 
 export interface VectorPath {
@@ -393,6 +452,8 @@ export interface TextPathConfig {
 
 export interface TextElement extends ElementBase {
   type: 'text';
+  /** Adobe Illustrator text paradigm: 'point' (line of text, auto width), 'area' (bounded box with wrapping), 'path' (aligned along a vector curve). */
+  textType?: 'point' | 'area' | 'path';
   mode: 'static' | 'dynamic' | 'input';
   text: string; // or sanitized rich HTML subset when `html: true`
   spans?: TextSpan[];
@@ -402,6 +463,8 @@ export interface TextElement extends ElementBase {
   color: Color;
   /** Fill specification (solid color or linear/radial gradient). */
   fill?: Fill;
+  /** Stroke specification (outline color, width, cap, join). */
+  stroke?: Stroke;
   align: 'left' | 'center' | 'right' | 'justify';
   width: number;
   height: number;

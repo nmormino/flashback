@@ -1,5 +1,56 @@
 import type { Library, TextElement, TextSpan } from '../schema';
-import { fillToCSS } from './fills';
+import { fillToCSS, fillToPaint, IdScope } from './fills';
+
+/**
+ * Resolves an i18n text string from an AnimDocument for a given locale and key.
+ * Supports exact matching, case-insensitive / normalized (e.g. EN-US vs en-US vs en_US),
+ * language code prefix fallback (e.g. en-US -> en), and defaultLocale fallback.
+ */
+export function resolveI18nText(
+  doc: { i18n?: { defaultLocale?: string; locales?: Record<string, Record<string, string>> } } | undefined,
+  locale: string | undefined,
+  i18nKey: string | undefined
+): string | undefined {
+  if (!doc?.i18n?.locales || !i18nKey) return undefined;
+  const locales = doc.i18n.locales;
+  const targetLocale = (locale || doc.i18n.defaultLocale || 'en').trim();
+
+  // 1. Direct match
+  if (locales[targetLocale]?.[i18nKey] !== undefined) {
+    return locales[targetLocale][i18nKey];
+  }
+
+  // 2. Normalized match (lowercase with hyphen: 'en-us', 'es-es', etc.)
+  const normTarget = targetLocale.toLowerCase().replace(/_/g, '-');
+  for (const [locKey, map] of Object.entries(locales)) {
+    if (locKey.toLowerCase().replace(/_/g, '-') === normTarget && map?.[i18nKey] !== undefined) {
+      return map[i18nKey];
+    }
+  }
+
+  // 3. Base language prefix match (e.g. 'en-us' -> 'en')
+  const baseLang = normTarget.split('-')[0];
+  for (const [locKey, map] of Object.entries(locales)) {
+    const normKey = locKey.toLowerCase().replace(/_/g, '-');
+    if (normKey === baseLang && map?.[i18nKey] !== undefined) {
+      return map[i18nKey];
+    }
+  }
+
+  // 4. Fallback to defaultLocale
+  const defaultLoc = doc.i18n.defaultLocale || 'en';
+  if (locales[defaultLoc]?.[i18nKey] !== undefined) {
+    return locales[defaultLoc][i18nKey];
+  }
+  const normDef = defaultLoc.toLowerCase().replace(/_/g, '-');
+  for (const [locKey, map] of Object.entries(locales)) {
+    if (locKey.toLowerCase().replace(/_/g, '-') === normDef && map?.[i18nKey] !== undefined) {
+      return map[i18nKey];
+    }
+  }
+
+  return undefined;
+}
 
 /** Binds a text field to a variable (Flash "Var:" field). */
 export interface TextVariableBinding {
@@ -144,7 +195,18 @@ export function renderText(doc: Document, el: TextElement, opts: TextRenderOptio
     if (el.fontWeight) textSvg.setAttribute('font-weight', String(el.fontWeight));
     if (el.fontStyle) textSvg.setAttribute('font-style', el.fontStyle);
     if (el.letterSpacing) textSvg.setAttribute('letter-spacing', `${el.letterSpacing}px`);
-    textSvg.setAttribute('fill', el.fill?.type === 'solid' ? el.fill.color : el.color || '#ffffff');
+    const textScope = new IdScope(`text_${el.id}`);
+    textSvg.setAttribute(
+      'fill',
+      el.fill ? fillToPaint(el.fill, defs, textScope, opts.library) : (el.color || '#000000')
+    );
+    if (el.stroke && el.stroke.width > 0 && el.stroke.fill && el.stroke.fill.type !== 'none') {
+      textSvg.setAttribute(
+        'stroke',
+        fillToPaint(el.stroke.fill, defs, textScope, opts.library)
+      );
+      textSvg.setAttribute('stroke-width', `${el.stroke.width}px`);
+    }
 
     const textPath = doc.createElementNS('http://www.w3.org/2000/svg', 'textPath');
     textPath.setAttribute('href', `#${pathId}`);
@@ -177,8 +239,12 @@ export function renderText(doc: Document, el: TextElement, opts: TextRenderOptio
   s.left = '0';
   s.top = '0';
   s.boxSizing = 'border-box';
-  s.width = `${el.width}px`;
-  s.height = `${el.height}px`;
+  s.width = el.textType === 'point' || !el.width ? 'auto' : `${el.width}px`;
+  s.height = el.textType === 'point' || !el.height ? 'auto' : `${el.height}px`;
+  if (el.textType === 'point') {
+    s.overflow = 'visible';
+    s.whiteSpace = el.multiline ? 'pre-wrap' : 'pre';
+  }
   s.fontFamily = fontFamily(el, opts.library);
   s.fontSize = `${el.fontSize}px`;
   if (el.fill && (el.fill.type === 'linearGradient' || el.fill.type === 'radialGradient')) {
@@ -187,10 +253,23 @@ export function renderText(doc: Document, el: TextElement, opts: TextRenderOptio
     (s as any).backgroundClip = 'text';
     s.color = 'transparent';
     (s as any).webkitTextFillColor = 'transparent';
+  } else if (el.fill && el.fill.type === 'none') {
+    s.color = 'transparent';
   } else if (el.fill && el.fill.type === 'solid') {
     s.color = el.fill.color;
   } else {
-    s.color = el.color;
+    s.color = el.color || '#000000';
+  }
+  if (el.stroke && el.stroke.width > 0 && el.stroke.fill && el.stroke.fill.type !== 'none') {
+    if (el.stroke.fill.type === 'solid') {
+      (s as any).webkitTextStroke = `${el.stroke.width}px ${el.stroke.fill.color}`;
+    } else if (
+      el.stroke.fill.type === 'linearGradient' ||
+      el.stroke.fill.type === 'radialGradient'
+    ) {
+      const stopColor = el.stroke.fill.stops[0]?.color || '#000000';
+      (s as any).webkitTextStroke = `${el.stroke.width}px ${stopColor}`;
+    }
   }
   s.textAlign = el.align;
   s.lineHeight = el.lineHeight !== undefined ? String(el.lineHeight) : '1.2';

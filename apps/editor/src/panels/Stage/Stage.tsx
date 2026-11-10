@@ -21,8 +21,13 @@ import type {
   Transform,
   BitmapElement,
   VideoElement,
+  Fill,
+  Stroke,
+  CornerType,
+  RectCornerRadius,
+  RectCornerTypes,
 } from '@flashback/runtime';
-import { Matrix2D, filtersToCSS, fillToCSS, computeEasingProgress, normalizeRotation } from '@flashback/runtime';
+import { Matrix2D, filtersToCSS, fillToCSS, computeEasingProgress, normalizeRotation, resolveI18nText } from '@flashback/runtime';
 import {
   useEditorStore,
   editorActions,
@@ -42,10 +47,27 @@ import {
   formatSvgPath,
   updatePathAnchor,
   interpolatePathD,
+  findClosestPointOnPathSegments,
+  fitCurveToPoints,
+  isPathClosed,
+  openPath,
+  closePath,
+  slicePathAtPoint,
   type BezierAnchor,
   type Vector2D,
 } from '../../utils/bezier';
-import { generatePolygonStarPath } from '../../utils/shapeGenerators';
+import {
+  generatePolygonStarPath,
+  generateRoundedRectPath,
+  generateOvalPath,
+  normalizeCornerRadii,
+  getUniformCornerRadius,
+  normalizeCornerTypes,
+  isUniformCornerType,
+  getUniformCornerType,
+  getSharpCornerVertices,
+  applyCornerRadiusToPath,
+} from '../../utils/shapeGenerators';
 import styles from './Stage.module.css';
 
 interface DragState {
@@ -58,11 +80,15 @@ interface DragState {
     | 'draw_rect'
     | 'draw_oval'
     | 'draw_polygon'
+    | 'draw_text'
+    | 'draw_pencil'
     | 'marquee'
     | 'pan'
     | 'pen_drag'
     | 'subselect_drag_anchor'
-    | 'subselect_drag_handle';
+    | 'subselect_drag_handle'
+    | 'drag_corner_radius'
+    | 'drag_vector_corner_radius';
   startX: number;
   startY: number;
   currentX: number;
@@ -93,6 +119,18 @@ interface DragState {
   initialPathD?: string;
   polygonPoints?: number;
   polygonStarRatio?: number;
+  pencilPoints?: Vector2D[];
+  polygonCornerRadius?: number;
+  rectCornerRadius?: number;
+  rectCornerType?: CornerType | RectCornerTypes;
+  activeCornerKey?: 'tl' | 'tr' | 'br' | 'bl';
+  initialCornerRadii?: RectCornerRadius;
+  initialRectWidth?: number;
+  initialRectHeight?: number;
+  activeVertexIndex?: number;
+  vertexBisector?: Vector2D;
+  initialVectorCornerRadius?: number;
+  maxVectorCornerRadius?: number;
   shiftKey?: boolean;
 }
 
@@ -224,6 +262,23 @@ export function getElementBounds(el: EditorElement): {
   }
   if (el.type === 'text') {
     const textEl = el as TextElement;
+    if (textEl.textType === 'path' && textEl.pathConfig?.pathData) {
+      return getShapeBounds({ paths: [{ d: textEl.pathConfig.pathData }] } as ShapeElement);
+    }
+    if (textEl.textType === 'point' || (!textEl.textType && !textEl.width)) {
+      const fontSize = textEl.fontSize || 18;
+      const text = textEl.text || ' ';
+      const lines = text.split('\n');
+      const maxLineLen = Math.max(...lines.map((l) => l.length), 1);
+      const estWidth = Math.max(30, Math.round(maxLineLen * fontSize * 0.6));
+      const estHeight = Math.max(Math.round(fontSize * 1.2), Math.round(lines.length * fontSize * 1.25));
+      return {
+        x: 0,
+        y: 0,
+        width: estWidth,
+        height: estHeight,
+      };
+    }
     return {
       x: 0,
       y: 0,
@@ -232,11 +287,13 @@ export function getElementBounds(el: EditorElement): {
     };
   }
   if (el.type === 'instance') {
+    const inst = el as SymbolInstance;
+    const sym = (useEditorStore.getState()?.doc.library.symbols as Record<string, EditorSymbol> | undefined)?.[inst.symbolId];
     return {
       x: 0,
       y: 0,
-      width: 80,
-      height: 80,
+      width: sym?.width || 100,
+      height: sym?.height || 100,
     };
   }
   if (el.type === 'bitmap') {
@@ -510,6 +567,29 @@ export function computeInterpolatedElement(
       });
     }
 
+    // 6. Interpolate Type on Path startOffset & pathData
+    let interpPathConfig = sText.pathConfig || eText.pathConfig;
+    if (sText.pathConfig && eText.pathConfig) {
+      const sOffset = sText.pathConfig.startOffset ?? 0;
+      const eOffset = eText.pathConfig.startOffset ?? 0;
+      const interpOffset = +(sOffset + (eOffset - sOffset) * t).toFixed(2);
+
+      const sPathData = sText.pathConfig.pathData || '';
+      const ePathData = eText.pathConfig.pathData || '';
+      const pathData =
+        sPathData === ePathData
+          ? sPathData
+          : sPathData && ePathData
+          ? interpolatePathD(sPathData, ePathData, t)
+          : sPathData || ePathData;
+
+      interpPathConfig = {
+        ...sText.pathConfig,
+        pathData,
+        startOffset: interpOffset,
+      };
+    }
+
     return {
       ...sText,
       transform: effectiveTransform,
@@ -519,6 +599,7 @@ export function computeInterpolatedElement(
       fontWeight: interpFontWeight,
       color: interpColor,
       ...(interpSpans ? { spans: interpSpans } : {}),
+      ...(interpPathConfig ? { pathConfig: interpPathConfig } : {}),
     };
   }
 
@@ -616,6 +697,115 @@ export function elementLocalToStage(
   return { x: pt.x, y: pt.y };
 }
 
+export function getPathPointAndNormal(
+  pathData: string,
+  offsetPct: number
+): {
+  x: number;
+  y: number;
+  nx: number;
+  ny: number;
+  angleDeg: number;
+} {
+  if (typeof document !== 'undefined') {
+    try {
+      const tempPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      tempPath.setAttribute('d', pathData);
+      if (typeof tempPath.getTotalLength === 'function') {
+        const totalLen = tempPath.getTotalLength();
+        if (totalLen > 0) {
+          const s = Math.max(0, Math.min(totalLen, (offsetPct / 100) * totalLen));
+          const p0 = tempPath.getPointAtLength(s);
+          const nextS = Math.min(totalLen, s + 1);
+          const prevS = Math.max(0, s - 1);
+          const p1 = s < totalLen ? tempPath.getPointAtLength(nextS) : p0;
+          const pPrev = s > 0 ? tempPath.getPointAtLength(prevS) : p0;
+          const dx = p1.x - pPrev.x || 1;
+          const dy = p1.y - pPrev.y || 0;
+          const len = Math.hypot(dx, dy) || 1;
+          const tx = dx / len;
+          const ty = dy / len;
+          return {
+            x: p0.x,
+            y: p0.y,
+            nx: -ty,
+            ny: tx,
+            angleDeg: (Math.atan2(dy, dx) * 180) / Math.PI,
+          };
+        }
+      }
+    } catch {
+      // Fallback
+    }
+  }
+  return { x: 0, y: 0, nx: 0, ny: -1, angleDeg: 0 };
+}
+
+export function findClosestOffsetOnPath(
+  svgEl: SVGSVGElement,
+  pathEl: SVGPathElement,
+  clientX: number,
+  clientY: number
+): number {
+  try {
+    let localX = clientX;
+    let localY = clientY;
+
+    if (typeof svgEl.createSVGPoint === 'function' && typeof svgEl.getScreenCTM === 'function') {
+      const pt = svgEl.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      const ctm = svgEl.getScreenCTM();
+      if (ctm) {
+        const inv = ctm.inverse();
+        const p = pt.matrixTransform(inv);
+        localX = p.x;
+        localY = p.y;
+      }
+    } else {
+      const rect = svgEl.getBoundingClientRect();
+      localX = clientX - rect.left;
+      localY = clientY - rect.top;
+    }
+
+    const totalLen = typeof pathEl.getTotalLength === 'function' ? pathEl.getTotalLength() : 0;
+    if (totalLen <= 0) return 0;
+
+    let bestLen = 0;
+    let bestDistSq = Infinity;
+    const samples = 100;
+    for (let i = 0; i <= samples; i++) {
+      const curLen = (i / samples) * totalLen;
+      const p = pathEl.getPointAtLength(curLen);
+      const dSq = (p.x - localX) ** 2 + (p.y - localY) ** 2;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        bestLen = curLen;
+      }
+    }
+
+    // Refinement search
+    const span = totalLen / samples;
+    const refineSamples = 20;
+    const startL = Math.max(0, bestLen - span);
+    const endL = Math.min(totalLen, bestLen + span);
+    for (let j = 0; j <= refineSamples; j++) {
+      const curLen = startL + (j / refineSamples) * (endL - startL);
+      const p = pathEl.getPointAtLength(curLen);
+      const dSq = (p.x - localX) ** 2 + (p.y - localY) ** 2;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        bestLen = curLen;
+      }
+    }
+
+    const pct = Math.round((bestLen / totalLen) * 100);
+    return Math.max(0, Math.min(100, pct));
+  } catch {
+    return 0;
+  }
+}
+
 export const Stage: React.FC = () => {
   const doc = useEditorStore((s) => s.doc);
   const currentFrame = useEditorStore((s) => s.currentFrame);
@@ -626,9 +816,13 @@ export const Stage: React.FC = () => {
   const fillColor = useEditorStore((s) => s.fillColor);
   const activeFill = useEditorStore((s) => s.activeFill);
   const strokeColor = useEditorStore((s) => s.strokeColor);
+  const activeStroke = useEditorStore((s) => s.activeStroke);
   const strokeWidth = useEditorStore((s) => s.strokeWidth);
   const isolationStack = useEditorStore((s) => s.isolationStack);
   const starConfig = useEditorStore((s) => s.starConfig);
+  const rectConfig = useEditorStore((s) => s.rectConfig);
+  const ovalConfig = useEditorStore((s) => s.ovalConfig);
+  const pencilConfig = useEditorStore((s) => s.pencilConfig);
   const textSelection = useEditorStore((s) => s.textSelection);
   const previewLocale = useEditorStore((s) => s.previewLocale);
   const activeLocale = previewLocale || doc.i18n?.defaultLocale || 'en';
@@ -638,35 +832,136 @@ export const Stage: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pathInputRef = useRef<HTMLInputElement | null>(null);
   const justCreatedTextIdRef = useRef<string | null>(null);
 
   // Pan & Zoom state
   const [zoom, setZoom] = useState<number>(1.0);
+  const invZoom = 1 / Math.max(0.01, zoom);
   const [panX, setPanX] = useState<number>(0);
   const [panY, setPanY] = useState<number>(0);
   const [isSpaceDown, setIsSpaceDown] = useState<boolean>(false);
   const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // In-place text editing state
-  const [editingTextElId, setEditingTextElId] = useState<string | null>(null);
-  const [textDraft, setTextDraft] = useState<string>('');
+  // In-place text editing state (synced with global editorStore)
+  const editingTextElId = useEditorStore((s) => s.editingTextElId);
+  const setEditingTextElId = (id: string | null) => editorActions.setEditingTextElId(id);
 
-  // Sync textDraft from doc if edited externally (e.g. Properties panel)
+  const getElementActiveText = useCallback(
+    (textEl: TextElement): string => {
+      if (textEl.i18nKey) {
+        const translated = resolveI18nText(doc, activeLocale, textEl.i18nKey);
+        if (translated !== undefined) return translated;
+      }
+      return textEl.text || '';
+    },
+    [doc, activeLocale]
+  );
+
+  const handleTextValueChange = useCallback(
+    (textEl: TextElement, val: string) => {
+      const defaultLoc = doc.i18n?.defaultLocale || 'en';
+      const isDefaultLocale =
+        activeLocale.toLowerCase().replace(/_/g, '-') ===
+        defaultLoc.toLowerCase().replace(/_/g, '-');
+
+      if (textEl.i18nKey) {
+        editorActions.setI18nTranslation(activeLocale, textEl.i18nKey, val);
+        if (isDefaultLocale) {
+          editorActions.updateElementProps(textEl.id, { text: val }, { skipHistory: true });
+        }
+      } else {
+        if (isDefaultLocale) {
+          editorActions.updateElementProps(textEl.id, { text: val }, { skipHistory: true });
+        } else {
+          const autoKey = `str_${textEl.id.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 10)}`;
+          editorActions.updateElementProps(textEl.id, { i18nKey: autoKey }, { skipHistory: true });
+          editorActions.setI18nTranslation(defaultLoc, autoKey, textEl.text || '');
+          editorActions.setI18nTranslation(activeLocale, autoKey, val);
+        }
+      }
+    },
+    [doc, activeLocale]
+  );
+
+  const [textDraft, setTextDraft] = useState<string>(() => {
+    if (editingTextElId) {
+      for (const layer of activeTl.layers) {
+        const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
+        const item = kf?.elements.find((e) => e.id === editingTextElId);
+        if (item && item.type === 'text') {
+          const textEl = item as TextElement;
+          if (textEl.i18nKey) {
+            const locText = resolveI18nText(doc, activeLocale, textEl.i18nKey);
+            if (locText !== undefined) return locText;
+          }
+          return textEl.text || '';
+        }
+      }
+    }
+    return '';
+  });
+  const [caretPos, setCaretPos] = useState<number>(() => {
+    if (editingTextElId) {
+      for (const layer of activeTl.layers) {
+        const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
+        const item = kf?.elements.find((e) => e.id === editingTextElId);
+        if (item && item.type === 'text') {
+          const textEl = item as TextElement;
+          let t = textEl.text || '';
+          if (textEl.i18nKey) {
+            const locText = resolveI18nText(doc, activeLocale, textEl.i18nKey);
+            if (locText !== undefined) t = locText;
+          }
+          return t.length;
+        }
+      }
+    }
+    return 0;
+  });
+
+  const [prevEditingId, setPrevEditingId] = useState<string | null>(editingTextElId);
+  if (editingTextElId !== prevEditingId) {
+    setPrevEditingId(editingTextElId);
+    if (editingTextElId) {
+      for (const layer of activeTl.layers) {
+        const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
+        const item = kf?.elements.find((e) => e.id === editingTextElId);
+        if (item && item.type === 'text') {
+          const t = getElementActiveText(item as TextElement);
+          setTextDraft(t);
+          setCaretPos(t.length);
+          break;
+        }
+      }
+    } else {
+      setTextDraft('');
+      setCaretPos(0);
+    }
+  }
+
+  // Sync textDraft from doc when editing starts or changes
   useEffect(() => {
     if (editingTextElId) {
       for (const layer of activeTl.layers) {
         const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
         const item = kf?.elements.find((e) => e.id === editingTextElId);
         if (item && item.type === 'text') {
-          const t = (item as TextElement).text || '';
-          if (t !== textDraft && document.activeElement !== textareaRef.current) {
+          const textEl = item as TextElement;
+          let t = textEl.text || '';
+          if (textEl.i18nKey) {
+            const locText = resolveI18nText(doc, activeLocale, textEl.i18nKey);
+            if (locText !== undefined) t = locText;
+          }
+          if (t !== textDraft && document.activeElement !== textareaRef.current && document.activeElement !== pathInputRef.current) {
             setTextDraft(t);
+            setCaretPos(t.length);
           }
           break;
         }
       }
     }
-  }, [doc, editingTextElId, currentTime, currentFrame, activeTl]);
+  }, [doc, editingTextElId, currentTime, currentFrame, activeTl, activeLocale]);
 
   // Freeform transform dynamic badge
   const [transformBadge, setTransformBadge] = useState<{ x: number; y: number; text: string } | null>(null);
@@ -675,12 +970,8 @@ export const Stage: React.FC = () => {
   const [penAnchors, setPenAnchors] = useState<BezierAnchor[]>([]);
   const [penHoverPoint, setPenHoverPoint] = useState<Vector2D | null>(null);
 
-  // Subselect vector anchor state
-  const [subselectedAnchor, setSubselectedAnchor] = useState<{
-    shapeId: string;
-    pathIndex: number;
-    anchorIndex: number;
-  } | null>(null);
+  // Subselect vector anchor state from editorStore
+  const subselectedAnchor = useEditorStore((s) => s.subselectedAnchor);
 
   const [hoveredRotateCorner, setHoveredRotateCorner] = useState<'tl' | 'tr' | 'bl' | 'br' | null>(null);
   const [hoveredSkewEdge, setHoveredSkewEdge] = useState<'top' | 'bottom' | 'left' | 'right' | null>(null);
@@ -688,8 +979,12 @@ export const Stage: React.FC = () => {
   const rotateDragRef = useRef<{ lastAngle: number; accumulatedRot: number } | null>(null);
 
   const activeArtboard = getActiveArtboard(doc);
-  const width = activeArtboard.width || doc.stage.width || 550;
-  const height = activeArtboard.height || doc.stage.height || 400;
+  const currentIsolatedSymbol =
+    isolationStack.length > 0
+      ? (doc.library.symbols[isolationStack[isolationStack.length - 1].symbolId] as EditorSymbol | undefined)
+      : undefined;
+  const width = currentIsolatedSymbol?.width ?? (activeArtboard.width || doc.stage.width || 550);
+  const height = currentIsolatedSymbol?.height ?? (activeArtboard.height || doc.stage.height || 400);
 
   const finishPenDrawing = useCallback(
     (anchors: BezierAnchor[], closed = false) => {
@@ -747,7 +1042,7 @@ export const Stage: React.FC = () => {
             d: pathD,
             fill: activeFill ?? { type: 'solid', color: fillColor },
             stroke: {
-              fill: { type: 'solid', color: strokeColor },
+              fill: activeStroke ?? { type: 'solid', color: strokeColor },
               width: strokeWidth,
               cap: 'round',
               join: 'round',
@@ -763,7 +1058,7 @@ export const Stage: React.FC = () => {
       setPenHoverPoint(null);
       editorActions.setActiveTool('select');
     },
-    [fillColor, strokeColor, strokeWidth]
+    [activeFill, fillColor, activeStroke, strokeColor, strokeWidth]
   );
 
   // Spacebar pan key listeners and Escape/Enter handlers
@@ -794,7 +1089,7 @@ export const Stage: React.FC = () => {
           setPenHoverPoint(null);
         } else {
           editorActions.deselectAll();
-          setSubselectedAnchor(null);
+          editorActions.setSubselectedAnchor(null);
         }
       }
       if (e.key === 'Enter' && penAnchors.length >= 2) {
@@ -913,6 +1208,39 @@ export const Stage: React.FC = () => {
           finishPenDrawing(penAnchors, true);
           return;
         }
+      } else if (selectedElementIds.length > 0) {
+        // Illustrator Add Anchor Point behavior: clicking on a selected shape's path edge with Pen tool adds a point!
+        for (const layer of activeTl.layers) {
+          const kf = findKeyframeAtTime(layer, currentTime) ?? findKeyframeAt(layer, currentFrame);
+          const found = kf?.elements.find(
+            (item) => item.id === selectedElementIds[0] && item.type === 'shape'
+          );
+          if (found) {
+            const selShape = found as ShapeElement;
+            const rawD = selShape.basePathD || selShape.paths?.[0]?.d;
+            if (rawD) {
+              const localPt = stageToElementLocal(x, y, selShape.transform);
+              const closest = findClosestPointOnPathSegments(rawD, localPt);
+              if (closest && closest.distance <= 14) {
+                const newIdx = editorActions.insertPathAnchor(
+                  selShape.id,
+                  0,
+                  closest.segmentIndex,
+                  closest.t
+                );
+                if (newIdx !== null) {
+                  editorActions.setSubselectedAnchor({
+                    shapeId: selShape.id,
+                    pathIndex: 0,
+                    anchorIndex: newIdx,
+                  });
+                  editorActions.setActiveTool('subselect');
+                  return;
+                }
+              }
+            }
+          }
+        }
       }
 
       const newAnchor: BezierAnchor = { x, y };
@@ -931,13 +1259,33 @@ export const Stage: React.FC = () => {
       return;
     }
 
+    if (activeTool === 'pencil') {
+      editorActions.commitHistorySnapshot();
+      setDragState({
+        type: 'draw_pencil',
+        startX: x,
+        startY: y,
+        currentX: x,
+        currentY: y,
+        shiftKey: e.shiftKey,
+        initialTransforms: {},
+        pencilPoints: [{ x, y }],
+      });
+      return;
+    }
+
     if (activeTool === 'rect') {
+      const initialRadius = getUniformCornerRadius(rectConfig?.cornerRadius);
+      const initialCornerType: CornerType | RectCornerTypes = rectConfig?.cornerType ?? 'round';
       setDragState({
         type: 'draw_rect',
         startX: x,
         startY: y,
         currentX: x,
         currentY: y,
+        rectCornerRadius: initialRadius,
+        rectCornerType: initialCornerType,
+        shiftKey: e.shiftKey,
         initialTransforms: {},
       });
       return;
@@ -950,6 +1298,7 @@ export const Stage: React.FC = () => {
         startY: y,
         currentX: x,
         currentY: y,
+        shiftKey: e.shiftKey,
         initialTransforms: {},
       });
       return;
@@ -958,6 +1307,7 @@ export const Stage: React.FC = () => {
     if (activeTool === 'polygon') {
       const pts = starConfig?.points ?? 5;
       const ratio = starConfig?.pointRatio ?? 0.5;
+      const polyCR = starConfig?.cornerRadius ?? 0;
       setDragState({
         type: 'draw_polygon',
         startX: x,
@@ -966,6 +1316,7 @@ export const Stage: React.FC = () => {
         currentY: y,
         polygonPoints: pts,
         polygonStarRatio: ratio,
+        polygonCornerRadius: polyCR,
         shiftKey: e.shiftKey,
         initialTransforms: {},
       });
@@ -973,48 +1324,75 @@ export const Stage: React.FC = () => {
     }
 
     if (activeTool === 'text') {
-      const newId = `text_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      const resolvedColor =
-        activeFill?.type === 'solid'
-          ? activeFill.color
-          : activeFill?.type === 'linearGradient' || activeFill?.type === 'radialGradient'
-          ? activeFill.stops[0]?.color || fillColor || '#ffffff'
-          : fillColor || '#ffffff';
+      // Proximity check: if user clicked on or near an existing text element or shape, activate it!
+      let candidateText: TextElement | null = null;
+      let candidateShape: ShapeElement | null = null;
+      for (const layer of activeTl.layers) {
+        if (layer.locked || !layer.visible) continue;
+        const kf =
+          findKeyframeAtTime(layer, currentTime, doc.stage.fps || 24) ??
+          findKeyframeAt(layer, currentFrame);
+        if (!kf) continue;
+        for (const item of kf.elements) {
+          if (item.type === 'text') {
+            const te = item as TextElement;
+            const b = getElementBounds(te);
+            const pad = 24;
+            const minX = te.transform.x + b.x - pad;
+            const maxX = te.transform.x + b.x + b.width + pad;
+            const minY = te.transform.y + b.y - pad;
+            const maxY = te.transform.y + b.y + b.height + pad;
+            if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+              candidateText = te;
+              break;
+            }
+          } else if (item.type === 'shape') {
+            const sh = item as ShapeElement;
+            const b = getShapeBounds(sh);
+            const pad = 24; // Generous 24px tolerance for clicking pen lines
+            const minX = sh.transform.x + b.x - pad;
+            const maxX = sh.transform.x + b.x + b.width + pad;
+            const minY = sh.transform.y + b.y - pad;
+            const maxY = sh.transform.y + b.y + b.height + pad;
+            if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+              candidateShape = sh;
+              break;
+            }
+          }
+        }
+        if (candidateText || candidateShape) break;
+      }
 
-      const newText: TextElement = {
-        id: newId,
-        type: 'text',
-        transform: {
-          x,
-          y,
-          scaleX: 1,
-          scaleY: 1,
-          rotation: 0,
-          skewX: 0,
-          skewY: 0,
-          originX: 0,
-          originY: 0,
-        },
-        text: 'Text',
-        fontSize: 18,
-        color: resolvedColor,
-        fill: activeFill ?? { type: 'solid', color: resolvedColor },
-        align: 'left',
-        width: 140,
-        height: 32,
-        mode: 'static',
-        multiline: false,
-        selectable: true,
-        fontId: 'default',
-        alpha: 1,
-        visible: true,
-      };
-      editorActions.addElement(newText);
-      editorActions.selectElement(newId, false);
-      setTextDraft('Text');
-      setEditingTextElId(newId);
-      editorActions.setEditingTextElId(newId);
-      justCreatedTextIdRef.current = newId;
+      if (candidateText) {
+        editorActions.selectElement(candidateText.id, false);
+        setEditingTextElId(candidateText.id);
+        editorActions.setEditingTextElId(candidateText.id);
+        const t = getElementActiveText(candidateText);
+        setTextDraft(t);
+        setCaretPos(t.length);
+        setTimeout(() => {
+          if (candidateText?.pathConfig?.pathData) {
+            pathInputRef.current?.focus();
+          } else {
+            textareaRef.current?.focus();
+          }
+        }, 0);
+        return;
+      }
+
+      if (candidateShape && candidateShape.paths?.[0]?.d) {
+        attachTextToShape(candidateShape);
+        return;
+      }
+
+      setDragState({
+        type: 'draw_text',
+        startX: x,
+        startY: y,
+        currentX: x,
+        currentY: y,
+        initialTransforms: {},
+      });
       return;
     }
 
@@ -1031,9 +1409,235 @@ export const Stage: React.FC = () => {
     }
   };
 
+  // Illustrator-style Start Offset Bracket Handle drag along path
+  const handleStartOffsetMouseDown = (
+    e: React.MouseEvent,
+    textEl: TextElement,
+    pathId: string
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const svgEl = e.currentTarget.closest('svg') as SVGSVGElement | null;
+    const pathEl = (document.getElementById(pathId) as unknown as SVGPathElement) || svgEl?.querySelector('path');
+    if (!svgEl || !pathEl) return;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const newOffset = findClosestOffsetOnPath(svgEl, pathEl, moveEvent.clientX, moveEvent.clientY);
+      editorActions.updateElementProps(textEl.id, {
+        pathConfig: {
+          ...textEl.pathConfig,
+          startOffset: newOffset,
+        },
+      });
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+    };
+
+    document.body.style.cursor = 'ew-resize';
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Illustrator-style Live Corner Radius Bullseye Handle drag
+  const handleCornerRadiusMouseDown = (
+    e: React.MouseEvent,
+    shape: ShapeElement,
+    cornerKey: 'tl' | 'tr' | 'br' | 'bl',
+    bounds: { x: number; y: number; width: number; height: number }
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    // Alt / Option click cycles corner style: round -> inverted -> chamfer
+    // Hold Shift+Alt (or when corners already have independent styles) to cycle only the clicked corner!
+    if (e.altKey) {
+      const rawTypes = shape.rectConfig?.cornerType ?? 'round';
+      const normTypes = normalizeCornerTypes(rawTypes);
+      const currentCornerType = normTypes[cornerKey];
+      const nextType: CornerType =
+        currentCornerType === 'round'
+          ? 'inverted'
+          : currentCornerType === 'inverted'
+          ? 'chamfer'
+          : 'round';
+      if (e.shiftKey || !isUniformCornerType(rawTypes)) {
+        editorActions.updateRectShape(shape.id, {
+          cornerType: {
+            ...normTypes,
+            [cornerKey]: nextType,
+          },
+        });
+      } else {
+        editorActions.updateRectShape(shape.id, { cornerType: nextType });
+      }
+      return;
+    }
+
+    const { x, y } = getStageCoordinates(e);
+    const rw = Math.max(8, shape.rectConfig?.width ?? bounds.width);
+    const rh = Math.max(8, shape.rectConfig?.height ?? bounds.height);
+    const maxR = Math.min(rw, rh) / 2;
+    const initRadii = normalizeCornerRadii(shape.rectConfig?.cornerRadius, maxR);
+
+    editorActions.commitHistorySnapshot();
+    setDragState({
+      type: 'drag_corner_radius',
+      resizeElId: shape.id,
+      activeCornerKey: cornerKey,
+      initialCornerRadii: initRadii,
+      initialRectWidth: rw,
+      initialRectHeight: rh,
+      initialBounds: bounds,
+      startX: x,
+      startY: y,
+      currentX: x,
+      currentY: y,
+      shiftKey: e.shiftKey,
+      initialTransforms: { [shape.id]: { ...shape.transform } },
+    });
+  };
+
+  // Illustrator-style Live Corner Bullseye Handle drag for arbitrary Vector Shapes
+  const handleVectorCornerMouseDown = (
+    e: React.MouseEvent,
+    shape: ShapeElement,
+    vertexIndex: number,
+    bisector: Vector2D,
+    maxRadius: number
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    if (e.altKey) {
+      const currentUniform: CornerType = shape.pathCornerType ?? 'round';
+      const currentVertexType: CornerType =
+        shape.pathAnchorTypes?.[vertexIndex] ?? currentUniform;
+      const nextType: CornerType =
+        currentVertexType === 'round'
+          ? 'inverted'
+          : currentVertexType === 'inverted'
+          ? 'chamfer'
+          : 'round';
+      if (e.shiftKey || (shape.pathAnchorTypes && Object.keys(shape.pathAnchorTypes).length > 0)) {
+        editorActions.updateShapeCornerRadius(shape.id, {
+          anchorTypes: {
+            ...(shape.pathAnchorTypes ?? {}),
+            [vertexIndex]: nextType,
+          },
+        });
+      } else {
+        editorActions.updateShapeCornerRadius(shape.id, { cornerType: nextType });
+      }
+      return;
+    }
+
+    const { x, y } = getStageCoordinates(e);
+    const initR =
+      shape.pathAnchorRadii?.[vertexIndex] ??
+      shape.pathCornerRadius ??
+      shape.starConfig?.cornerRadius ??
+      0;
+
+    editorActions.commitHistorySnapshot();
+    setDragState({
+      type: 'drag_vector_corner_radius',
+      resizeElId: shape.id,
+      activeVertexIndex: vertexIndex,
+      vertexBisector: bisector,
+      initialVectorCornerRadius: initR,
+      maxVectorCornerRadius: maxRadius,
+      startX: x,
+      startY: y,
+      currentX: x,
+      currentY: y,
+      shiftKey: e.shiftKey,
+      initialTransforms: { [shape.id]: { ...shape.transform } },
+    });
+  };
+
+  const attachTextToShape = useCallback(
+    (shape: ShapeElement) => {
+      const pathData = shape.paths && shape.paths.length > 0 ? shape.paths[0].d : '';
+      if (!pathData) return;
+
+      const newId = `text_path_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const resolvedFill: Fill = activeFill ?? { type: 'solid', color: fillColor || '#000000' };
+      const primaryColor =
+        resolvedFill.type === 'none'
+          ? 'transparent'
+          : resolvedFill.type === 'solid'
+          ? resolvedFill.color
+          : resolvedFill.type === 'linearGradient' || resolvedFill.type === 'radialGradient'
+          ? resolvedFill.stops[0]?.color || fillColor || '#000000'
+          : fillColor || '#000000';
+
+      const resolvedStroke: Stroke | undefined =
+        strokeWidth > 0
+          ? {
+              fill: activeStroke ?? { type: 'solid', color: strokeColor || '#000000' },
+              width: strokeWidth,
+              cap: 'round',
+              join: 'round',
+            }
+          : undefined;
+
+      const newText: TextElement = {
+        id: newId,
+        type: 'text',
+        textType: 'path',
+        pathConfig: {
+          pathId: shape.id,
+          pathData: pathData,
+          startOffset: 0,
+        },
+        transform: {
+          ...shape.transform,
+        },
+        text: 'Type on Path',
+        fontSize: 18,
+        color: primaryColor,
+        fill: resolvedFill,
+        stroke: resolvedStroke,
+        align: 'left',
+        width: 0,
+        height: 0,
+        mode: 'static',
+        multiline: false,
+        selectable: true,
+        fontId: 'default',
+        alpha: 1,
+        visible: true,
+      };
+      editorActions.addElement(newText);
+      editorActions.selectElement(newId, false);
+      const initialText = 'Type on Path';
+      setTextDraft(initialText);
+      setCaretPos(initialText.length);
+      setEditingTextElId(newId);
+      editorActions.setEditingTextElId(newId);
+      justCreatedTextIdRef.current = newId;
+    },
+    [activeFill, fillColor, activeStroke, strokeColor, strokeWidth]
+  );
+
   const handleElementMouseDown = (e: React.MouseEvent, el: EditorElement) => {
     if (e.button === 2) return; // Right-click handled by onContextMenu
     if (isSpaceDown || activeTool === 'hand') return;
+
+    if (editingTextElId === el.id) {
+      e.stopPropagation();
+      if ((el as TextElement).pathConfig?.pathData) {
+        pathInputRef.current?.focus();
+      } else {
+        textareaRef.current?.focus();
+      }
+      return;
+    }
 
     if (activeTool === 'text') {
       if (el.type === 'text') {
@@ -1041,8 +1645,22 @@ export const Stage: React.FC = () => {
         editorActions.selectElement(el.id, false);
         setEditingTextElId(el.id);
         editorActions.setEditingTextElId(el.id);
-        setTextDraft((el as TextElement).text || '');
+        const t = getElementActiveText(el as TextElement);
+        setTextDraft(t);
+        setCaretPos(t.length);
         justCreatedTextIdRef.current = el.id;
+        setTimeout(() => {
+          if ((el as TextElement).pathConfig?.pathData) {
+            pathInputRef.current?.focus();
+          } else {
+            textareaRef.current?.focus();
+          }
+        }, 0);
+        return;
+      }
+      if (el.type === 'shape') {
+        e.stopPropagation();
+        attachTextToShape(el as ShapeElement);
         return;
       }
       return;
@@ -1052,12 +1670,22 @@ export const Stage: React.FC = () => {
     if ((el as any).locked) return;
     e.stopPropagation();
 
+    const { x, y } = getStageCoordinates(e);
+
+    // Illustrator subselect behavior: clicking on or near a shape path segment inserts an anchor point with handles
+    if (activeTool === 'subselect' && el.type === 'shape') {
+      // In subselect mode, clicking an unselected shape selects it.
+      // Segment point insertion is handled exclusively by the subselect-segment-hit overlay.
+      if (!selectedElementIds.includes(el.id)) {
+        editorActions.selectElement(el.id, e.shiftKey);
+      }
+      return;
+    }
+
     const isAlreadySelected = selectedElementIds.includes(el.id);
     if (!isAlreadySelected) {
       editorActions.selectElement(el.id, e.shiftKey);
     }
-
-    const { x, y } = getStageCoordinates(e);
 
     const initialTransforms: Record<string, Transform> = {};
     const ids = isAlreadySelected
@@ -1092,8 +1720,17 @@ export const Stage: React.FC = () => {
       editorActions.selectElement(el.id, false);
       setEditingTextElId(el.id);
       editorActions.setEditingTextElId(el.id);
-      setTextDraft((el as TextElement).text || '');
+      const t = getElementActiveText(el as TextElement);
+      setTextDraft(t);
+      setCaretPos(t.length);
       justCreatedTextIdRef.current = el.id;
+      setTimeout(() => {
+        if ((el as TextElement).pathConfig?.pathData) {
+          pathInputRef.current?.focus();
+        } else {
+          textareaRef.current?.focus();
+        }
+      }, 0);
     } else if (el.type === 'instance') {
       const inst = el as SymbolInstance;
       editorActions.enterIsolation(inst.symbolId);
@@ -1274,11 +1911,45 @@ export const Stage: React.FC = () => {
     e.stopPropagation();
     const { x, y } = getStageCoordinates(e);
 
-    setSubselectedAnchor({
+    editorActions.setSubselectedAnchor({
       shapeId: shape.id,
       pathIndex,
       anchorIndex,
     });
+
+    const baseD =
+      pathIndex === 0 && shape.basePathD ? shape.basePathD : shape.paths[pathIndex].d;
+
+    // Illustrator Convert Anchor Point behavior: Alt/Option-drag pulls out new Bézier handles from an anchor!
+    if (e.altKey) {
+      const updatedD = updatePathAnchor(baseD, anchorIndex, {
+        handleIn: { x: anchor.x, y: anchor.y },
+        handleOut: { x: anchor.x, y: anchor.y },
+      });
+      editorActions.commitHistorySnapshot();
+      editorActions.updateElementProps(
+        shape.id,
+        {
+          paths: shape.paths.map((p, idx) => (idx === pathIndex ? { ...p, d: updatedD } : p)),
+          isCustomizedPath: true,
+        },
+        { skipHistory: true }
+      );
+      setDragState({
+        type: 'subselect_drag_handle',
+        startX: x,
+        startY: y,
+        currentX: x,
+        currentY: y,
+        subselectShapeId: shape.id,
+        subselectPathIndex: pathIndex,
+        subselectAnchorIndex: anchorIndex,
+        subselectHandleType: 'out',
+        initialPathD: updatedD,
+        initialTransforms: {},
+      });
+      return;
+    }
 
     editorActions.commitHistorySnapshot();
     setDragState({
@@ -1291,7 +1962,7 @@ export const Stage: React.FC = () => {
       subselectPathIndex: pathIndex,
       subselectAnchorIndex: anchorIndex,
       initialAnchorPos: { x: anchor.x, y: anchor.y },
-      initialPathD: shape.paths[pathIndex].d,
+      initialPathD: baseD,
       initialTransforms: {},
     });
   };
@@ -1307,6 +1978,9 @@ export const Stage: React.FC = () => {
     e.stopPropagation();
     const { x, y } = getStageCoordinates(e);
 
+    const baseD =
+      pathIndex === 0 && shape.basePathD ? shape.basePathD : shape.paths[pathIndex].d;
+
     editorActions.commitHistorySnapshot();
     setDragState({
       type: 'subselect_drag_handle',
@@ -1318,7 +1992,7 @@ export const Stage: React.FC = () => {
       subselectPathIndex: pathIndex,
       subselectAnchorIndex: anchorIndex,
       subselectHandleType: handleType,
-      initialPathD: shape.paths[pathIndex].d,
+      initialPathD: baseD,
       initialTransforms: {},
     });
   };
@@ -1339,6 +2013,20 @@ export const Stage: React.FC = () => {
         const dy = e.clientY - (dragState.startClientY ?? 0);
         setPanX((dragState.startPanX ?? 0) + dx);
         setPanY((dragState.startPanY ?? 0) + dy);
+        return;
+      }
+
+      if (dragState.type === 'draw_pencil') {
+        const pts = dragState.pencilPoints ?? [];
+        const last = pts[pts.length - 1];
+        if (!last || Math.hypot(coords.x - last.x, coords.y - last.y) >= 2) {
+          setDragState({
+            ...dragState,
+            currentX: coords.x,
+            currentY: coords.y,
+            pencilPoints: [...pts, coords],
+          });
+        }
         return;
       }
 
@@ -1573,18 +2261,47 @@ export const Stage: React.FC = () => {
         };
 
         if (targetEl?.type === 'shape' && dragState.initialPaths) {
-          const scaledPaths = dragState.initialPaths.map((p) => ({
-            ...p,
-            d: scaleSvgPathD(p.d, initB, newW, newH),
-          }));
-          editorActions.updateElementProps(
-            dragState.resizeElId,
-            {
-              paths: scaledPaths,
-              transform: updatedTransform,
-            },
-            { skipHistory: true }
-          );
+          const shapeTarget = targetEl as ShapeElement;
+          if (shapeTarget.rectConfig && !shapeTarget.isCustomizedPath) {
+            const rc = shapeTarget.rectConfig;
+            const newD = generateRoundedRectPath(
+              newW,
+              newH,
+              rc.cornerRadius ?? 0,
+              rc.cornerType ?? 'round',
+              initB.x,
+              initB.y
+            );
+            const updatedPaths = dragState.initialPaths.map((p, idx) =>
+              idx === 0 ? { ...p, d: newD } : { ...p, d: scaleSvgPathD(p.d, initB, newW, newH) }
+            );
+            editorActions.updateElementProps(
+              dragState.resizeElId,
+              {
+                paths: updatedPaths,
+                transform: updatedTransform,
+                rectConfig: {
+                  ...rc,
+                  width: Math.round(newW * 100) / 100,
+                  height: Math.round(newH * 100) / 100,
+                },
+              } as Partial<ShapeElement>,
+              { skipHistory: true }
+            );
+          } else {
+            const scaledPaths = dragState.initialPaths.map((p) => ({
+              ...p,
+              d: scaleSvgPathD(p.d, initB, newW, newH),
+            }));
+            editorActions.updateElementProps(
+              dragState.resizeElId,
+              {
+                paths: scaledPaths,
+                transform: updatedTransform,
+              },
+              { skipHistory: true }
+            );
+          }
           setTransformBadge({
             x: e.clientX,
             y: e.clientY - 28,
@@ -1678,10 +2395,27 @@ export const Stage: React.FC = () => {
         if (e.shiftKey) {
           newRot = Math.round(newRot / 15) * 15;
         }
+
+        const targetInitT = dragState.initialTransforms[dragState.resizeElId];
+        const targetInitB = dragState.initialBounds;
+        const pivotX =
+          targetInitT?.originX !== undefined
+            ? targetInitT.originX
+            : targetInitB
+              ? Math.round(targetInitB.width / 2)
+              : undefined;
+        const pivotY =
+          targetInitT?.originY !== undefined
+            ? targetInitT.originY
+            : targetInitB
+              ? Math.round(targetInitB.height / 2)
+              : undefined;
+
         editorActions.updateElementTransform(
           dragState.resizeElId,
           {
             rotation: newRot,
+            ...(pivotX !== undefined && targetInitT?.originX === undefined ? { originX: pivotX, originY: pivotY } : {}),
           },
           { skipHistory: true }
         );
@@ -1781,7 +2515,7 @@ export const Stage: React.FC = () => {
       ) {
         let targetEl: ShapeElement | undefined;
         for (const l of activeTl.layers) {
-          const kf = findKeyframeAt(l, currentFrame);
+          const kf = findKeyframeAtTime(l, currentTime) ?? findKeyframeAt(l, currentFrame);
           const el = kf?.elements.find((e) => e.id === dragState.subselectShapeId);
           if (el && el.type === 'shape') {
             targetEl = el as ShapeElement;
@@ -1805,15 +2539,35 @@ export const Stage: React.FC = () => {
             { delta: { x: localDx, y: localDy } }
           );
 
+          const pIdx = dragState.subselectPathIndex ?? 0;
+          const hasPathCorners =
+            pIdx === 0 &&
+            (Boolean(targetEl.basePathD) ||
+              (targetEl.pathCornerRadius ?? 0) > 0 ||
+              (targetEl.pathAnchorRadii && Object.keys(targetEl.pathAnchorRadii).length > 0));
+          const renderedD = hasPathCorners
+            ? applyCornerRadiusToPath(
+                updatedD,
+                targetEl.pathCornerRadius ?? 0,
+                targetEl.pathCornerType ?? 'round',
+                targetEl.pathAnchorRadii,
+                targetEl.pathAnchorTypes
+              )
+            : updatedD;
+
           const newPaths = [...targetEl.paths];
-          newPaths[dragState.subselectPathIndex ?? 0] = {
-            ...newPaths[dragState.subselectPathIndex ?? 0],
-            d: updatedD,
+          newPaths[pIdx] = {
+            ...newPaths[pIdx],
+            d: renderedD,
           };
 
           editorActions.updateElementProps(
             targetEl.id,
-            { paths: newPaths, isCustomizedPath: true },
+            {
+              paths: newPaths,
+              isCustomizedPath: true,
+              ...(hasPathCorners ? { basePathD: updatedD } : {}),
+            },
             { skipHistory: true }
           );
         }
@@ -1837,24 +2591,173 @@ export const Stage: React.FC = () => {
           const currLocal = stageToElementLocal(x, y, targetEl.transform);
           const handleProp =
             dragState.subselectHandleType === 'in' ? 'handleIn' : 'handleOut';
+          const aIdx = dragState.subselectAnchorIndex;
+          const pIdx = dragState.subselectPathIndex ?? 0;
+          const pointType = targetEl.pathAnchorPointTypes?.[aIdx];
 
           const updatedD = updatePathAnchor(
             dragState.initialPathD,
-            dragState.subselectAnchorIndex,
-            { [handleProp]: currLocal }
+            aIdx,
+            {
+              [handleProp]: currLocal,
+              pointType,
+              breakHandles: Boolean(e.altKey),
+            }
           );
 
+          const hasPathCorners =
+            pIdx === 0 &&
+            (Boolean(targetEl.basePathD) ||
+              (targetEl.pathCornerRadius ?? 0) > 0 ||
+              (targetEl.pathAnchorRadii && Object.keys(targetEl.pathAnchorRadii).length > 0));
+          const renderedD = hasPathCorners
+            ? applyCornerRadiusToPath(
+                updatedD,
+                targetEl.pathCornerRadius ?? 0,
+                targetEl.pathCornerType ?? 'round',
+                targetEl.pathAnchorRadii,
+                targetEl.pathAnchorTypes
+              )
+            : updatedD;
+
           const newPaths = [...targetEl.paths];
-          newPaths[dragState.subselectPathIndex ?? 0] = {
-            ...newPaths[dragState.subselectPathIndex ?? 0],
-            d: updatedD,
+          newPaths[pIdx] = {
+            ...newPaths[pIdx],
+            d: renderedD,
           };
 
           editorActions.updateElementProps(
             targetEl.id,
-            { paths: newPaths, isCustomizedPath: true },
+            {
+              paths: newPaths,
+              isCustomizedPath: true,
+              ...(hasPathCorners ? { basePathD: updatedD } : {}),
+            },
             { skipHistory: true }
           );
+        }
+      } else if (
+        dragState.type === 'drag_corner_radius' &&
+        dragState.resizeElId &&
+        dragState.activeCornerKey &&
+        dragState.initialCornerRadii
+      ) {
+        const initT = dragState.initialTransforms[dragState.resizeElId] ?? {
+          x: 0,
+          y: 0,
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+          skewX: 0,
+          skewY: 0,
+          originX: 0,
+          originY: 0,
+        };
+        const initB = dragState.initialBounds ?? { x: 0, y: 0, width: 100, height: 100 };
+        const startLocal = stageToElementLocal(
+          dragState.startX,
+          dragState.startY,
+          initT as Transform
+        );
+        const currLocal = stageToElementLocal(x, y, initT as Transform);
+        const key = dragState.activeCornerKey;
+        const sx = key === 'tl' || key === 'bl' ? 1 : -1;
+        const sy = key === 'tl' || key === 'tr' ? 1 : -1;
+        const deltaInward =
+          ((currLocal.x - startLocal.x) * sx + (currLocal.y - startLocal.y) * sy) / Math.SQRT2;
+        const maxR = Math.max(0, Math.min(initB.width, initB.height) / 2);
+        const baseR = dragState.initialCornerRadii[key] ?? 0;
+        const newR = Math.round(Math.max(0, Math.min(maxR, baseR + deltaInward)));
+
+        if (e.shiftKey) {
+          const nextRadii: RectCornerRadius = {
+            ...dragState.initialCornerRadii,
+            [key]: newR,
+          };
+          editorActions.updateRectShape(
+            dragState.resizeElId,
+            { cornerRadius: nextRadii },
+            { skipHistory: true }
+          );
+          setTransformBadge({
+            x: e.clientX,
+            y: e.clientY - 28,
+            text: `${key.toUpperCase()} Corner: ${newR} px`,
+          });
+        } else {
+          editorActions.updateRectShape(
+            dragState.resizeElId,
+            { cornerRadius: newR },
+            { skipHistory: true }
+          );
+          setTransformBadge({
+            x: e.clientX,
+            y: e.clientY - 28,
+            text: `Corner Radius: ${newR} px`,
+          });
+        }
+      } else if (
+        dragState.type === 'drag_vector_corner_radius' &&
+        dragState.resizeElId &&
+        dragState.activeVertexIndex !== undefined &&
+        dragState.vertexBisector
+      ) {
+        const initT = dragState.initialTransforms[dragState.resizeElId] ?? {
+          x: 0,
+          y: 0,
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+          skewX: 0,
+          skewY: 0,
+          originX: 0,
+          originY: 0,
+        };
+        const startLocal = stageToElementLocal(
+          dragState.startX,
+          dragState.startY,
+          initT as Transform
+        );
+        const currLocal = stageToElementLocal(x, y, initT as Transform);
+        const bisector = dragState.vertexBisector;
+        const deltaInward =
+          (currLocal.x - startLocal.x) * bisector.x +
+          (currLocal.y - startLocal.y) * bisector.y;
+        const maxR = Math.max(0, dragState.maxVectorCornerRadius ?? 80);
+        const baseR = dragState.initialVectorCornerRadius ?? 0;
+        const newR = Math.round(Math.max(0, Math.min(maxR, baseR + deltaInward)));
+
+        if (e.shiftKey) {
+          let existingAnchorRadii: Record<number, number> = {};
+          for (const l of activeTl.layers) {
+            const kf = findKeyframeAtTime(l, currentTime) ?? findKeyframeAt(l, currentFrame);
+            const el = kf?.elements.find((it) => it.id === dragState.resizeElId);
+            if (el && el.type === 'shape') {
+              existingAnchorRadii = { ...((el as ShapeElement).pathAnchorRadii ?? {}) };
+              break;
+            }
+          }
+          editorActions.updateShapeCornerRadius(
+            dragState.resizeElId,
+            { anchorRadii: { ...existingAnchorRadii, [dragState.activeVertexIndex]: newR } },
+            { skipHistory: true }
+          );
+          setTransformBadge({
+            x: e.clientX,
+            y: e.clientY - 28,
+            text: `Vertex #${dragState.activeVertexIndex + 1} Radius: ${newR} px`,
+          });
+        } else {
+          editorActions.updateShapeCornerRadius(
+            dragState.resizeElId,
+            { cornerRadius: newR },
+            { skipHistory: true }
+          );
+          setTransformBadge({
+            x: e.clientX,
+            y: e.clientY - 28,
+            text: `Vector Corner Radius: ${newR} px`,
+          });
         }
       }
 
@@ -1882,7 +2785,9 @@ export const Stage: React.FC = () => {
         dragState.type === 'subselect_drag_handle' ||
         dragState.type === 'rotate' ||
         dragState.type === 'pivot' ||
-        dragState.type === 'skew'
+        dragState.type === 'skew' ||
+        dragState.type === 'drag_corner_radius' ||
+        dragState.type === 'drag_vector_corner_radius'
       ) {
         if (
           (dragState.type === 'subselect_drag_anchor' ||
@@ -1894,6 +2799,19 @@ export const Stage: React.FC = () => {
             dragState.subselectShapeId,
             { isCustomizedPath: true },
             { skipHistory: true }
+          );
+        } else if (
+          dragState.type === 'subselect_drag_anchor' &&
+          dragState.subselectShapeId &&
+          dragState.subselectAnchorIndex !== undefined &&
+          Math.hypot(dragState.currentX - dragState.startX, dragState.currentY - dragState.startY) < 3
+        ) {
+          // Illustrator feature: Clicking the actual point itself and releasing without dragging
+          // toggles between the two point types (Smooth <-> Corner)!
+          editorActions.togglePathAnchorPointType(
+            dragState.subselectShapeId,
+            dragState.subselectAnchorIndex,
+            dragState.subselectPathIndex ?? 0
           );
         }
         setDragState(null);
@@ -1929,7 +2847,93 @@ export const Stage: React.FC = () => {
           editorActions.selectElements(matchedIds);
         } else {
           editorActions.deselectAll();
-          setSubselectedAnchor(null);
+          editorActions.setSubselectedAnchor(null);
+        }
+      } else if (dragState.type === 'draw_pencil') {
+        const rawPoints = dragState.pencilPoints || [];
+        if (rawPoints.length >= 2) {
+          const smoothness = pencilConfig?.smoothness ?? 50;
+          const { d: fittedD, closed } = fitCurveToPoints(rawPoints, smoothness);
+          if (fittedD) {
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            for (const pt of rawPoints) {
+              if (pt.x < minX) minX = pt.x;
+              if (pt.x > maxX) maxX = pt.x;
+              if (pt.y < minY) minY = pt.y;
+              if (pt.y > maxY) maxY = pt.y;
+            }
+            const w = Math.max(8, maxX - minX);
+            const h = Math.max(8, maxY - minY);
+            const originX = Math.round(w / 2);
+            const originY = Math.round(h / 2);
+
+            const parsed = parseSvgPath(fittedD);
+            const localAnchors = parsed.anchors.map((a) => ({
+              ...a,
+              x: Math.round((a.x - minX) * 100) / 100,
+              y: Math.round((a.y - minY) * 100) / 100,
+              handleIn: a.handleIn
+                ? {
+                    x: Math.round((a.handleIn.x - minX) * 100) / 100,
+                    y: Math.round((a.handleIn.y - minY) * 100) / 100,
+                  }
+                : undefined,
+              handleOut: a.handleOut
+                ? {
+                    x: Math.round((a.handleOut.x - minX) * 100) / 100,
+                    y: Math.round((a.handleOut.y - minY) * 100) / 100,
+                  }
+                : undefined,
+            }));
+            const localD = formatSvgPath(localAnchors, parsed.closed || closed);
+            const localRawPoints = rawPoints.map((p) => ({
+              x: Math.round((p.x - minX) * 100) / 100,
+              y: Math.round((p.y - minY) * 100) / 100,
+            }));
+            const shouldFill = pencilConfig?.fillNewStrokes ? Boolean(activeFill) : closed;
+
+            const newShape: ShapeElement = {
+              id: `pencil_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: 'shape',
+              visible: true,
+              rawPoints: localRawPoints,
+              pencilSmoothness: smoothness,
+              transform: {
+                x: Math.round((minX + originX) * 100) / 100,
+                y: Math.round((minY + originY) * 100) / 100,
+                scaleX: 1,
+                scaleY: 1,
+                rotation: 0,
+                skewX: 0,
+                skewY: 0,
+                originX,
+                originY,
+              },
+              paths: [
+                {
+                  d: localD,
+                  fill: shouldFill
+                    ? (activeFill ?? { type: 'solid', color: fillColor })
+                    : { type: 'solid', color: 'transparent' },
+                  stroke: {
+                    fill: activeStroke ?? { type: 'solid', color: strokeColor },
+                    width: strokeWidth,
+                    cap: 'round',
+                    join: 'round',
+                  },
+                },
+              ],
+              alpha: 1,
+            };
+
+            editorActions.addElement(newShape);
+            if (pencilConfig?.keepSelected ?? true) {
+              editorActions.selectElements([newShape.id]);
+            }
+          }
         }
       } else if (dragState.type === 'draw_rect') {
         let rx = Math.min(dragState.startX, x);
@@ -1949,6 +2953,9 @@ export const Stage: React.FC = () => {
         }
         const cx = Math.round((rw / 2) * 100) / 100;
         const cy = Math.round((rh / 2) * 100) / 100;
+        const cornerR = dragState.rectCornerRadius ?? rectConfig?.cornerRadius ?? 0;
+        const cornerType = dragState.rectCornerType ?? rectConfig?.cornerType ?? 'round';
+        const rectPathD = generateRoundedRectPath(rw, rh, cornerR, cornerType, 0, 0);
 
         const newRect: ShapeElement = {
           id: `rect_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -1966,16 +2973,22 @@ export const Stage: React.FC = () => {
           },
           paths: [
             {
-              d: `M 0 0 L ${rw} 0 L ${rw} ${rh} L 0 ${rh} Z`,
+              d: rectPathD,
               fill: activeFill ?? { type: 'solid', color: fillColor },
               stroke: {
-                fill: { type: 'solid', color: strokeColor },
+                fill: activeStroke ?? { type: 'solid', color: strokeColor },
                 width: strokeWidth,
                 cap: 'round',
                 join: 'round',
               },
             },
           ],
+          rectConfig: {
+            width: rw,
+            height: rh,
+            cornerRadius: cornerR,
+            cornerType,
+          },
           alpha: 1,
           visible: true,
         };
@@ -2002,6 +3015,8 @@ export const Stage: React.FC = () => {
         const rY = rh / 2;
         const cx = Math.round(rX * 100) / 100;
         const cy = Math.round(rY * 100) / 100;
+        const ovalPathD = generateOvalPath(rX, rY, ovalConfig);
+        const hasInnerHole = (ovalConfig?.innerRadiusRatio ?? 0) > 0.005;
 
         const newOval: ShapeElement = {
           id: `oval_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2019,16 +3034,24 @@ export const Stage: React.FC = () => {
           },
           paths: [
             {
-              d: `M 0 ${rY} a ${rX} ${rY} 0 1 0 ${rw} 0 a ${rX} ${rY} 0 1 0 ${-rw} 0 Z`,
+              d: ovalPathD,
               fill: activeFill ?? { type: 'solid', color: fillColor },
+              fillRule: hasInnerHole ? 'evenodd' : undefined,
               stroke: {
-                fill: { type: 'solid', color: strokeColor },
+                fill: activeStroke ?? { type: 'solid', color: strokeColor },
                 width: strokeWidth,
                 cap: 'round',
                 join: 'round',
               },
             },
           ],
+          ovalConfig: {
+            rx: rX,
+            ry: rY,
+            innerRadiusRatio: ovalConfig?.innerRadiusRatio ?? 0,
+            startAngle: ovalConfig?.startAngle ?? 0,
+            endAngle: ovalConfig?.endAngle ?? 360,
+          },
           alpha: 1,
           visible: true,
         };
@@ -2042,13 +3065,32 @@ export const Stage: React.FC = () => {
         const radius = Math.max(8, rawRadius);
         const pts = dragState.polygonPoints ?? 5;
         const ratio = dragState.polygonStarRatio ?? 0.5;
+        const cornerR = dragState.polygonCornerRadius ?? starConfig.cornerRadius ?? 0;
         let angle = rawRadius < 4 ? -Math.PI / 2 : Math.atan2(dy, dx);
         if (e.shiftKey || dragState.shiftKey) {
           const snap = Math.PI / 12; // 15 degrees
           angle = Math.round(angle / snap) * snap;
         }
 
-        const pathD = generatePolygonStarPath(radius, radius, radius, pts, ratio, angle);
+        const pathD = generatePolygonStarPath(
+          radius,
+          radius,
+          radius,
+          pts,
+          ratio,
+          angle,
+          cornerR
+        );
+
+        const unroundedBaseD = generatePolygonStarPath(
+          radius,
+          radius,
+          radius,
+          pts,
+          ratio,
+          angle,
+          0
+        );
 
         const newPoly: ShapeElement = {
           id: `poly_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2069,26 +3111,134 @@ export const Stage: React.FC = () => {
               d: pathD,
               fill: activeFill ?? { type: 'solid', color: fillColor },
               stroke: {
-                fill: { type: 'solid', color: strokeColor },
+                fill: activeStroke ?? { type: 'solid', color: strokeColor },
                 width: strokeWidth,
                 cap: 'round',
                 join: 'round',
               },
             },
           ],
+          starConfig: {
+            points: pts,
+            pointRatio: ratio,
+            outerRadius: radius,
+            startAngle: angle,
+            cornerRadius: cornerR,
+          },
+          basePathD: unroundedBaseD,
+          pathCornerRadius: cornerR,
           alpha: 1,
           visible: true,
         };
 
-        (newPoly as any).starConfig = {
-          points: pts,
-          pointRatio: ratio,
-          outerRadius: radius,
-          startAngle: angle,
-        };
-
         editorActions.addElement(newPoly);
         editorActions.setActiveTool('select');
+      } else if (dragState.type === 'draw_text') {
+        const dx = x - dragState.startX;
+        const dy = y - dragState.startY;
+        const dist = Math.hypot(dx, dy);
+
+        const newId = `text_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const resolvedFill: Fill = activeFill ?? { type: 'solid', color: fillColor || '#000000' };
+        const primaryColor =
+          resolvedFill.type === 'solid'
+            ? resolvedFill.color
+            : resolvedFill.type === 'linearGradient' || resolvedFill.type === 'radialGradient'
+            ? resolvedFill.stops[0]?.color || fillColor || '#000000'
+            : fillColor || '#000000';
+
+        const resolvedStroke: Stroke | undefined =
+          strokeWidth > 0
+            ? {
+                fill: activeStroke ?? { type: 'solid', color: strokeColor || '#000000' },
+                width: strokeWidth,
+                cap: 'round',
+                join: 'round',
+              }
+            : undefined;
+
+        if (dist < 10) {
+          // Point text (Adobe Illustrator click behavior: single line, no fixed bounding box)
+          const newText: TextElement = {
+            id: newId,
+            type: 'text',
+            textType: 'point',
+            transform: {
+              x: dragState.startX,
+              y: dragState.startY,
+              scaleX: 1,
+              scaleY: 1,
+              rotation: 0,
+              skewX: 0,
+              skewY: 0,
+              originX: 0,
+              originY: 0,
+            },
+            text: 'Text',
+            fontSize: 18,
+            color: primaryColor,
+            fill: resolvedFill,
+            stroke: resolvedStroke,
+            align: 'left',
+            width: 0,
+            height: 0,
+            mode: 'static',
+            multiline: false,
+            selectable: true,
+            fontId: 'default',
+            alpha: 1,
+            visible: true,
+          };
+          editorActions.addElement(newText);
+          editorActions.selectElement(newId, false);
+          setTextDraft('Text');
+          setEditingTextElId(newId);
+          editorActions.setEditingTextElId(newId);
+          justCreatedTextIdRef.current = newId;
+        } else {
+          // Area text (Adobe Illustrator drag behavior: text box bounding box with wrapping)
+          let rx = Math.min(dragState.startX, x);
+          let ry = Math.min(dragState.startY, y);
+          let rw = Math.max(30, Math.abs(x - dragState.startX));
+          let rh = Math.max(20, Math.abs(y - dragState.startY));
+
+          const newText: TextElement = {
+            id: newId,
+            type: 'text',
+            textType: 'area',
+            transform: {
+              x: rx,
+              y: ry,
+              scaleX: 1,
+              scaleY: 1,
+              rotation: 0,
+              skewX: 0,
+              skewY: 0,
+              originX: 0,
+              originY: 0,
+            },
+            text: 'Text',
+            fontSize: 18,
+            color: primaryColor,
+            fill: resolvedFill,
+            stroke: resolvedStroke,
+            align: 'left',
+            width: rw,
+            height: rh,
+            mode: 'static',
+            multiline: true,
+            selectable: true,
+            fontId: 'default',
+            alpha: 1,
+            visible: true,
+          };
+          editorActions.addElement(newText);
+          editorActions.selectElement(newId, false);
+          setTextDraft('Text');
+          setEditingTextElId(newId);
+          editorActions.setEditingTextElId(newId);
+          justCreatedTextIdRef.current = newId;
+        }
       }
 
       setDragState(null);
@@ -2098,7 +3248,29 @@ export const Stage: React.FC = () => {
     window.addEventListener('mouseup', handleMouseUp);
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (dragState && dragState.type === 'draw_polygon') {
+      if (dragState && dragState.type === 'draw_rect') {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowRight' || e.key === ']') {
+          e.preventDefault();
+          setDragState((prev) => {
+            if (!prev || prev.type !== 'draw_rect') return prev;
+            const nextR = Math.min(200, (prev.rectCornerRadius ?? 0) + 2);
+            editorActions.setRectConfig({ cornerRadius: nextR });
+            return { ...prev, rectCornerRadius: nextR };
+          });
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === '[') {
+          e.preventDefault();
+          setDragState((prev) => {
+            if (!prev || prev.type !== 'draw_rect') return prev;
+            const nextR = Math.max(0, (prev.rectCornerRadius ?? 0) - 2);
+            editorActions.setRectConfig({ cornerRadius: nextR });
+            return { ...prev, rectCornerRadius: nextR };
+          });
+        } else if (e.key === 'Shift') {
+          setDragState((prev) =>
+            prev && prev.type === 'draw_rect' ? { ...prev, shiftKey: true } : prev
+          );
+        }
+      } else if (dragState && dragState.type === 'draw_polygon') {
         if (e.key === 'ArrowUp') {
           e.preventDefault();
           setDragState((prev) =>
@@ -2148,10 +3320,10 @@ export const Stage: React.FC = () => {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (dragState && dragState.type === 'draw_polygon') {
+      if (dragState && (dragState.type === 'draw_polygon' || dragState.type === 'draw_rect')) {
         if (e.key === 'Shift') {
           setDragState((prev) =>
-            prev && prev.type === 'draw_polygon' ? { ...prev, shiftKey: false } : prev
+            prev ? { ...prev, shiftKey: false } : prev
           );
         }
       }
@@ -2169,8 +3341,13 @@ export const Stage: React.FC = () => {
   }, [
     dragState,
     fillColor,
+    activeFill,
     strokeColor,
+    activeStroke,
     strokeWidth,
+    rectConfig,
+    ovalConfig,
+    starConfig,
     activeTool,
     activeTl.layers,
     currentFrame,
@@ -2230,6 +3407,7 @@ export const Stage: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     editorActions.selectElement(el.id);
+    const clickCoords = getStageCoordinates(e);
     const otherArtboards =
       doc.artboards && doc.artboards.length > 1
         ? doc.artboards.filter((a) => a.id !== activeArtboard.id)
@@ -2243,8 +3421,34 @@ export const Stage: React.FC = () => {
       x: e.clientX,
       y: e.clientY,
       items: [
+        ...(el.type === 'shape'
+          ? [
+              (() => {
+                const shape = el as ShapeElement;
+                const rawD = shape.basePathD || shape.paths?.[0]?.d || '';
+                const closed = isPathClosed(rawD);
+                return {
+                  label: closed ? 'Open / Slice Path (Remove Closing Segment)' : 'Close Path (Loop to Start)',
+                  action: () => editorActions.togglePathClosed(shape.id),
+                };
+              })(),
+              {
+                label: 'Slice Path at Click Point',
+                action: () => {
+                  const shape = el as ShapeElement;
+                  const localPt = stageToElementLocal(
+                    clickCoords.x,
+                    clickCoords.y,
+                    shape.transform
+                  );
+                  editorActions.slicePathAtPoint(shape.id, localPt);
+                },
+              },
+              { separator: true },
+            ]
+          : []),
         {
-          label: 'Convert to Component (F8)',
+          label: 'Convert to Clip (F8)',
           shortcut: 'F8',
           action: () => editorActions.setConvertToComponentModalOpen(true),
         },
@@ -2371,45 +3575,84 @@ export const Stage: React.FC = () => {
         >
           <defs>
             {shape.paths.map((p, pIdx) => {
-              if (!p.fill) return null;
-              const gradId = `stage_grad_${shape.id}_${pIdx}`;
-              if (p.fill.type === 'linearGradient') {
-                const rad = (p.fill.angle * Math.PI) / 180;
-                const dx = Math.cos(rad) / 2;
-                const dy = Math.sin(rad) / 2;
-                return (
-                  <linearGradient
-                    key={gradId}
-                    id={gradId}
-                    x1={0.5 - dx}
-                    y1={0.5 - dy}
-                    x2={0.5 + dx}
-                    y2={0.5 + dy}
-                  >
-                    {p.fill.stops.map((st, si) => (
-                      <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
-                    ))}
-                  </linearGradient>
-                );
+              const els: React.ReactNode[] = [];
+              if (p.fill) {
+                const gradId = `stage_grad_${shape.id}_${pIdx}`;
+                if (p.fill.type === 'linearGradient') {
+                  const rad = (p.fill.angle * Math.PI) / 180;
+                  const dx = Math.cos(rad) / 2;
+                  const dy = Math.sin(rad) / 2;
+                  els.push(
+                    <linearGradient
+                      key={gradId}
+                      id={gradId}
+                      x1={0.5 - dx}
+                      y1={0.5 - dy}
+                      x2={0.5 + dx}
+                      y2={0.5 + dy}
+                    >
+                      {p.fill.stops.map((st, si) => (
+                        <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+                      ))}
+                    </linearGradient>
+                  );
+                } else if (p.fill.type === 'radialGradient') {
+                  els.push(
+                    <radialGradient
+                      key={gradId}
+                      id={gradId}
+                      cx={p.fill.cx}
+                      cy={p.fill.cy}
+                      r={p.fill.r}
+                      fx={p.fill.focalX}
+                      fy={p.fill.focalY}
+                    >
+                      {p.fill.stops.map((st, si) => (
+                        <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+                      ))}
+                    </radialGradient>
+                  );
+                }
               }
-              if (p.fill.type === 'radialGradient') {
-                return (
-                  <radialGradient
-                    key={gradId}
-                    id={gradId}
-                    cx={p.fill.cx}
-                    cy={p.fill.cy}
-                    r={p.fill.r}
-                    fx={p.fill.focalX}
-                    fy={p.fill.focalY}
-                  >
-                    {p.fill.stops.map((st, si) => (
-                      <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
-                    ))}
-                  </radialGradient>
-                );
+              if (p.stroke?.fill) {
+                const strokeGradId = `stage_stroke_grad_${shape.id}_${pIdx}`;
+                if (p.stroke.fill.type === 'linearGradient') {
+                  const rad = (p.stroke.fill.angle * Math.PI) / 180;
+                  const dx = Math.cos(rad) / 2;
+                  const dy = Math.sin(rad) / 2;
+                  els.push(
+                    <linearGradient
+                      key={strokeGradId}
+                      id={strokeGradId}
+                      x1={0.5 - dx}
+                      y1={0.5 - dy}
+                      x2={0.5 + dx}
+                      y2={0.5 + dy}
+                    >
+                      {p.stroke.fill.stops.map((st, si) => (
+                        <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+                      ))}
+                    </linearGradient>
+                  );
+                } else if (p.stroke.fill.type === 'radialGradient') {
+                  els.push(
+                    <radialGradient
+                      key={strokeGradId}
+                      id={strokeGradId}
+                      cx={p.stroke.fill.cx}
+                      cy={p.stroke.fill.cy}
+                      r={p.stroke.fill.r}
+                      fx={p.stroke.fill.focalX}
+                      fy={p.stroke.fill.focalY}
+                    >
+                      {p.stroke.fill.stops.map((st, si) => (
+                        <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+                      ))}
+                    </radialGradient>
+                  );
+                }
               }
-              return null;
+              return els;
             })}
           </defs>
           {shape.paths.map((p, idx) => {
@@ -2422,27 +3665,50 @@ export const Stage: React.FC = () => {
               }
             }
             const sWidth = p.stroke?.width ?? 0;
-            const strokePaint =
-              sWidth > 0 && p.stroke && p.stroke.fill && p.stroke.fill.type === 'solid'
-                ? (p.stroke.fill as { color: string }).color
-                : 'none';
+            let strokePaint = 'none';
+            if (sWidth > 0 && p.stroke?.fill) {
+              if (p.stroke.fill.type === 'solid') {
+                strokePaint = p.stroke.fill.color;
+              } else if (
+                p.stroke.fill.type === 'linearGradient' ||
+                p.stroke.fill.type === 'radialGradient'
+              ) {
+                strokePaint = `url(#stage_stroke_grad_${shape.id}_${idx})`;
+              }
+            }
 
             return (
-              <path
-                key={idx}
-                d={p.d}
-                fill={fillPaint}
-                stroke={strokePaint}
-                strokeWidth={sWidth}
-                strokeLinecap={p.stroke?.cap ?? 'round'}
-                strokeLinejoin={p.stroke?.join ?? 'round'}
-                className={styles.elementPath}
-                style={{
-                  pointerEvents: 'all',
-                  cursor: isSelectMode ? 'move' : 'default',
-                }}
-                onContextMenu={(e) => handleShapeContextMenu(e, el)}
-              />
+              <g key={idx}>
+                {/* Generous transparent hit target for easy clicking on thin pen lines */}
+                <path
+                  d={p.d}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={Math.max(sWidth + 16, 20)}
+                  strokeLinecap={p.stroke?.cap ?? 'round'}
+                  strokeLinejoin={p.stroke?.join ?? 'round'}
+                  style={{
+                    pointerEvents: 'stroke',
+                    cursor: activeTool === 'text' ? 'text' : isSelectMode ? 'move' : 'default',
+                  }}
+                  onContextMenu={(e) => handleShapeContextMenu(e, el)}
+                />
+                <path
+                  d={p.d}
+                  fill={fillPaint}
+                  fillRule={p.fillRule}
+                  stroke={strokePaint}
+                  strokeWidth={sWidth}
+                  strokeLinecap={p.stroke?.cap ?? 'round'}
+                  strokeLinejoin={p.stroke?.join ?? 'round'}
+                  className={styles.elementPath}
+                  style={{
+                    pointerEvents: 'all',
+                    cursor: activeTool === 'text' ? 'text' : isSelectMode ? 'move' : 'default',
+                  }}
+                  onContextMenu={(e) => handleShapeContextMenu(e, el)}
+                />
+              </g>
             );
           })}
         </svg>
@@ -2458,7 +3724,257 @@ export const Stage: React.FC = () => {
         ? `"${textEl.fontId}", sans-serif`
         : 'Inter, -apple-system, BlinkMacSystemFont, sans-serif';
 
+      const isGradientText =
+        textEl.fill &&
+        (textEl.fill.type === 'linearGradient' || textEl.fill.type === 'radialGradient');
+      const textBg = isGradientText ? fillToCSS(textEl.fill, doc.library as any) : undefined;
+      const textFillColor =
+        isGradientText
+          ? 'transparent'
+          : textEl.fill?.type === 'solid'
+          ? textEl.fill.color
+          : textEl.color || '#000000';
+      const textStrokeColor =
+        textEl.stroke && textEl.stroke.width > 0 && textEl.stroke.fill
+          ? textEl.stroke.fill.type === 'solid'
+            ? textEl.stroke.fill.color
+            : textEl.stroke.fill.type === 'linearGradient' ||
+              textEl.stroke.fill.type === 'radialGradient'
+            ? textEl.stroke.fill.stops[0]?.color
+            : undefined
+          : undefined;
+      const textStrokeCss = textStrokeColor
+        ? `${textEl.stroke!.width}px ${textStrokeColor}`
+        : undefined;
+
+      // Text aligned to an undulating or arbitrary path
+      if (textEl.pathConfig?.pathData) {
+        const pathId = `stage_text_path_${textEl.id}`;
+        const offsetNum =
+          textEl.pathConfig.startOffset !== undefined ? textEl.pathConfig.startOffset : 0;
+        const offset = `${offsetNum}%`;
+        const isSelectMode = activeTool === 'select' || activeTool === 'subselect';
+        const isEditing = editingTextElId === el.id;
+        const isSelected = selectedElementIds.includes(el.id);
+        const isLocked = Boolean((el as any).locked);
+        const displayText = isEditing ? textDraft : (textEl.text || '');
+        const strokePaint = textStrokeColor ?? 'none';
+
+        const handleGeom = getPathPointAndNormal(textEl.pathConfig.pathData, offsetNum);
+        const showPathHandle = isSelected && !isLocked;
+
+        return (
+          <div
+            style={{ position: 'relative', display: 'inline-block' }}
+            onMouseDown={(e) => {
+              if (activeTool === 'text' || isEditing) {
+                e.stopPropagation();
+              }
+            }}
+          >
+            <svg
+              style={{
+                overflow: 'visible',
+                position: 'relative',
+                left: 0,
+                top: 0,
+                width: textEl.width ? `${textEl.width}px` : 'auto',
+                height: textEl.height ? `${textEl.height}px` : 'auto',
+                pointerEvents: 'all',
+                cursor: isEditing ? 'text' : isSelectMode ? 'move' : 'text',
+              }}
+              onContextMenu={(e) => handleTextContextMenu(e, el)}
+              onMouseDown={(e) => {
+                if (activeTool === 'text') {
+                  e.stopPropagation();
+                  setEditingTextElId(el.id);
+                  editorActions.setEditingTextElId(el.id);
+                  const t = getElementActiveText(textEl);
+                  setTextDraft(t);
+                  setCaretPos(t.length);
+                  setTimeout(() => pathInputRef.current?.focus(), 0);
+                } else if (isEditing) {
+                  e.stopPropagation();
+                  pathInputRef.current?.focus();
+                }
+              }}
+              onClick={(e) => {
+                if (activeTool === 'text' || isEditing) {
+                  e.stopPropagation();
+                  pathInputRef.current?.focus();
+                }
+              }}
+            >
+              <defs>
+                <path id={pathId} d={textEl.pathConfig.pathData} />
+              </defs>
+
+              {/* Path guide line when selected */}
+              {isSelected && (
+                <path
+                  d={textEl.pathConfig.pathData}
+                  fill="none"
+                  stroke="var(--mx-accent, #3b82f6)"
+                  strokeWidth="1"
+                  strokeDasharray="3 3"
+                  opacity="0.45"
+                  pointerEvents="none"
+                />
+              )}
+
+              <text
+                fontFamily={resolvedFamily}
+                fontSize={`${textEl.fontSize || 16}px`}
+                fontWeight={textEl.fontWeight !== undefined ? textEl.fontWeight : 400}
+                fontStyle={textEl.fontStyle || 'normal'}
+                letterSpacing={
+                  textEl.letterSpacing !== undefined ? `${textEl.letterSpacing}px` : undefined
+                }
+                fill={textFillColor}
+                stroke={strokePaint}
+                strokeWidth={textEl.stroke?.width ?? 0}
+              >
+                <textPath href={`#${pathId}`} startOffset={offset}>
+                  {isEditing ? (
+                    displayText.length === 0 ? (
+                      <>
+                        <tspan className={styles.pathTextCaret}>|</tspan>
+                        <tspan fill="rgba(148, 163, 184, 0.45)" fontStyle="italic">
+                          Type on path...
+                        </tspan>
+                      </>
+                    ) : (
+                      <>
+                        {displayText.slice(0, caretPos)}
+                        <tspan className={styles.pathTextCaret}>|</tspan>
+                        {displayText.slice(caretPos)}
+                      </>
+                    )
+                  ) : (
+                    getElementActiveText(textEl) || ' '
+                  )}
+                </textPath>
+              </text>
+
+              {/* Illustrator-style Start Offset Bracket Handle */}
+              {showPathHandle && (
+                <g
+                  className={styles.pathOffsetHandleGroup}
+                  data-testid="path-start-offset-handle"
+                  onMouseDown={(e) => handleStartOffsetMouseDown(e, textEl, pathId)}
+                >
+                  <title>Start Offset Bracket: Drag along path to reposition text (Illustrator)</title>
+                  {/* Invisible wide hit target for responsive grabbing */}
+                  <line
+                    x1={handleGeom.x - handleGeom.nx * 14}
+                    y1={handleGeom.y - handleGeom.ny * 14}
+                    x2={handleGeom.x + handleGeom.nx * 14}
+                    y2={handleGeom.y + handleGeom.ny * 14}
+                    stroke="transparent"
+                    strokeWidth="16"
+                  />
+                  {/* Perpendicular bracket stem line */}
+                  <line
+                    x1={handleGeom.x - handleGeom.nx * 10}
+                    y1={handleGeom.y - handleGeom.ny * 10}
+                    x2={handleGeom.x + handleGeom.nx * 10}
+                    y2={handleGeom.y + handleGeom.ny * 10}
+                    stroke="var(--mx-accent, #3b82f6)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                  {/* Handle bracket knob / box at outer tip */}
+                  <rect
+                    x={handleGeom.x + handleGeom.nx * 10 - 4}
+                    y={handleGeom.y + handleGeom.ny * 10 - 4}
+                    width="8"
+                    height="8"
+                    rx="1.5"
+                    fill="#ffffff"
+                    stroke="var(--mx-accent, #3b82f6)"
+                    strokeWidth="2"
+                  />
+                  {/* Center dot on the path */}
+                  <circle
+                    cx={handleGeom.x}
+                    cy={handleGeom.y}
+                    r="2.5"
+                    fill="var(--mx-accent, #3b82f6)"
+                  />
+                </g>
+              )}
+            </svg>
+
+            {/* In-line hidden typing receiver: zero popup, native keystroke capture */}
+            {isEditing && (
+              <input
+                ref={(input) => {
+                  pathInputRef.current = input;
+                  if (input) {
+                    input.focus();
+                    if (justCreatedTextIdRef.current === el.id) {
+                      input.select();
+                      justCreatedTextIdRef.current = null;
+                    }
+                  }
+                }}
+                type="text"
+                value={textDraft}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setTextDraft(val);
+                  setCaretPos(e.target.selectionStart || val.length);
+                  handleTextValueChange(textEl, val);
+                }}
+                onSelect={(e) => {
+                  setCaretPos((e.target as HTMLInputElement).selectionStart || 0);
+                }}
+                onKeyUp={(e) => {
+                  setCaretPos((e.target as HTMLInputElement).selectionStart || 0);
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                }}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Escape' || e.key === 'Enter') {
+                    handleTextValueChange(textEl, textDraft);
+                    setEditingTextElId(null);
+                    editorActions.setEditingTextElId(null);
+                  }
+                }}
+                onBlur={() => {
+                  handleTextValueChange(textEl, textDraft);
+                  setEditingTextElId(null);
+                  editorActions.setEditingTextElId(null);
+                }}
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  width: '100%',
+                  height: '100%',
+                  minWidth: '60px',
+                  minHeight: '30px',
+                  opacity: 0,
+                  cursor: 'text',
+                  zIndex: 10,
+                  border: 'none',
+                  outline: 'none',
+                  background: 'transparent',
+                  color: 'transparent',
+                }}
+                data-testid="path-inline-text-input"
+              />
+            )}
+          </div>
+        );
+      }
+
       if (editingTextElId === el.id) {
+        const isPoint = textEl.textType === 'point' || !textEl.width;
+        const estWidth = Math.max(60, (textDraft.length + 2) * ((textEl.fontSize || 16) * 0.65));
+
         return (
           <div style={{ position: 'relative', display: 'inline-block' }}>
             <textarea
@@ -2473,15 +3989,17 @@ export const Stage: React.FC = () => {
                 }
               }}
               className={styles.inlineTextEditor}
+              wrap={textEl.multiline ? 'soft' : 'off'}
               style={{
                 padding: 0,
                 margin: 0,
                 border: 'none',
+                outline: 'none',
                 boxSizing: 'border-box',
-                width: textEl.width ? `${textEl.width}px` : 'auto',
-                minWidth: '80px',
+                width: isPoint ? `${estWidth}px` : `${textEl.width}px`,
+                minWidth: '40px',
                 height: textEl.height ? `${textEl.height}px` : 'auto',
-                minHeight: `${Math.round((textEl.fontSize || 16) * 1.5)}px`,
+                minHeight: `${Math.round((textEl.fontSize || 16) * 1.3)}px`,
                 fontSize: `${textEl.fontSize || 16}px`,
                 fontWeight: textEl.fontWeight !== undefined ? textEl.fontWeight : 400,
                 fontStyle: textEl.fontStyle || 'normal',
@@ -2489,37 +4007,41 @@ export const Stage: React.FC = () => {
                 lineHeight: textEl.lineHeight ? String(textEl.lineHeight) : 1.2,
                 letterSpacing:
                   textEl.letterSpacing !== undefined ? `${textEl.letterSpacing}px` : undefined,
-                color: textEl.color || '#ffffff',
+                color: textFillColor,
+                WebkitTextStroke: textStrokeCss,
+                background: textBg || 'transparent',
+                WebkitBackgroundClip: isGradientText ? 'text' : undefined,
                 caretColor: 'var(--mx-accent, #3b82f6)',
                 zIndex: 1000,
                 textAlign: textEl.align || 'left',
                 fontFamily: resolvedFamily,
-                whiteSpace: textEl.multiline ? 'pre-wrap' : 'nowrap',
+                whiteSpace: textEl.multiline ? 'pre-wrap' : 'pre',
+                overflow: 'visible',
               }}
               value={textDraft}
               onChange={(e) => {
                 const val = e.target.value;
                 setTextDraft(val);
-                editorActions.updateElementProps(el.id, { text: val });
+                handleTextValueChange(textEl, val);
               }}
               onKeyDown={(e) => {
                 e.stopPropagation();
                 if (e.key === 'Escape') {
-                  editorActions.updateElementProps(el.id, { text: textDraft });
+                  handleTextValueChange(textEl, textDraft);
                   setEditingTextElId(null);
                   editorActions.setEditingTextElId(null);
                   editorActions.setTextSelection(null);
                 }
                 if (e.key === 'Enter' && !textEl.multiline && !e.shiftKey) {
                   e.preventDefault();
-                  editorActions.updateElementProps(el.id, { text: textDraft });
+                  handleTextValueChange(textEl, textDraft);
                   setEditingTextElId(null);
                   editorActions.setEditingTextElId(null);
                   editorActions.setTextSelection(null);
                 }
               }}
               onBlur={() => {
-                editorActions.updateElementProps(el.id, { text: textDraft });
+                handleTextValueChange(textEl, textDraft);
                 setEditingTextElId(null);
                 editorActions.setEditingTextElId(null);
                 editorActions.setTextSelection(null);
@@ -2530,53 +4052,6 @@ export const Stage: React.FC = () => {
           </div>
         );
       }
-
-      // Text aligned to an undulating path
-      if (textEl.pathConfig?.pathData) {
-        const pathId = `stage_text_path_${textEl.id}`;
-        const offset =
-          textEl.pathConfig.startOffset !== undefined ? `${textEl.pathConfig.startOffset}%` : '0%';
-        const isSelectMode = activeTool === 'select' || activeTool === 'subselect';
-
-        return (
-          <svg
-            style={{
-              overflow: 'visible',
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              width: textEl.width ? `${textEl.width}px` : 'auto',
-              height: textEl.height ? `${textEl.height}px` : 'auto',
-              pointerEvents: 'all',
-              cursor: isSelectMode ? 'move' : 'default',
-            }}
-            onContextMenu={(e) => handleTextContextMenu(e, el)}
-          >
-            <defs>
-              <path id={pathId} d={textEl.pathConfig.pathData} />
-            </defs>
-            <text
-              fontFamily={resolvedFamily}
-              fontSize={`${textEl.fontSize || 16}px`}
-              fontWeight={textEl.fontWeight !== undefined ? textEl.fontWeight : 400}
-              fontStyle={textEl.fontStyle || 'normal'}
-              letterSpacing={
-                textEl.letterSpacing !== undefined ? `${textEl.letterSpacing}px` : undefined
-              }
-              fill={textEl.color || '#ffffff'}
-            >
-              <textPath href={`#${pathId}`} startOffset={offset}>
-                {(textEl.i18nKey && doc.i18n?.locales?.[activeLocale]?.[textEl.i18nKey]) || textEl.text}
-              </textPath>
-            </text>
-          </svg>
-        );
-      }
-
-      const isGradientText =
-        textEl.fill &&
-        (textEl.fill.type === 'linearGradient' || textEl.fill.type === 'radialGradient');
-      const textBg = isGradientText ? fillToCSS(textEl.fill, doc.library as any) : undefined;
 
       return (
         <div
@@ -2595,7 +4070,10 @@ export const Stage: React.FC = () => {
             lineHeight: textEl.lineHeight ? String(textEl.lineHeight) : 1.2,
             letterSpacing:
               textEl.letterSpacing !== undefined ? `${textEl.letterSpacing}px` : undefined,
-            color: isGradientText ? 'transparent' : textEl.color || '#ffffff',
+            color: isGradientText
+              ? 'transparent'
+              : textEl.color || (textEl.fill?.type === 'solid' ? textEl.fill.color : '#000000'),
+            WebkitTextStroke: textStrokeCss,
             background: textBg,
             WebkitBackgroundClip: isGradientText ? 'text' : undefined,
             backgroundClip: isGradientText ? 'text' : undefined,
@@ -2653,7 +4131,7 @@ export const Stage: React.FC = () => {
                   </span>
                 );
               })
-            : (textEl.i18nKey && doc.i18n?.locales?.[activeLocale]?.[textEl.i18nKey]) || textEl.text}
+            : getElementActiveText(textEl)}
         </div>
       );
     }
@@ -2819,29 +4297,96 @@ export const Stage: React.FC = () => {
           onContextMenu={(e) => handleShapeContextMenu(e, el)}
           style={{
             position: 'relative',
+            width: `${symbolDef.width || 100}px`,
+            height: `${symbolDef.height || 100}px`,
             cursor: activeTool === 'select' || activeTool === 'subselect' ? 'move' : 'default',
           }}
         >
           {symbolDef.timeline.layers.map((subLayer) => {
-            const kf = findKeyframeAtTime(subLayer, innerTime, symFps) ??
+            const kf =
+              findKeyframeAtTime(subLayer, innerTime, symFps) ??
               findKeyframeAt(subLayer, innerFrame) ??
               subLayer.keyframes[0];
             if (!kf) return null;
+
+            const isTween = kf.tween?.type === 'motion' || kf.tween?.type === 'shape';
+            let nextKf: EditorKeyframe | undefined;
+            if (isTween) {
+              const kfIdx = subLayer.keyframes.indexOf(kf);
+              nextKf = subLayer.keyframes[kfIdx + 1];
+            }
+
+            const kfTime = getKeyframeTime(kf, symFps);
+            const nextKfTime = nextKf ? getKeyframeTime(nextKf, symFps) : kfTime;
+
+            const rawTweenProgress =
+              isTween && nextKf && nextKfTime > kfTime
+                ? Math.max(0, Math.min(1, (innerTime - kfTime) / (nextKfTime - kfTime)))
+                : 0;
+            const tweenProgress =
+              isTween && kf.tween?.easing
+                ? computeEasingProgress(kf.tween.easing, rawTweenProgress)
+                : rawTweenProgress;
+
             return (
               <div key={subLayer.id}>
                 {kf.elements.map((subEl) => {
-                  const t = subEl.transform;
-                  const cssTransform = `matrix(${t.scaleX ?? 1}, 0, 0, ${t.scaleY ?? 1}, ${t.x}, ${t.y})`;
+                  if (subEl.visible === false) return null;
+                  let displaySubEl: EditorElement = subEl;
+                  if (isTween && nextKf && tweenProgress > 0) {
+                    const matchEl = nextKf.elements.find((e) => e.id === subEl.id);
+                    if (matchEl) {
+                      displaySubEl = computeInterpolatedElement(
+                        subEl,
+                        matchEl,
+                        tweenProgress,
+                        kf.tween?.rotate
+                      );
+                    }
+                  }
+
+                  const subBounds = getElementBounds(displaySubEl);
+                  const subOriginX =
+                    displaySubEl.transform.originX !== undefined
+                      ? displaySubEl.transform.originX
+                      : Math.round(subBounds.width / 2);
+                  const subOriginY =
+                    displaySubEl.transform.originY !== undefined
+                      ? displaySubEl.transform.originY
+                      : Math.round(subBounds.height / 2);
+                  const t = {
+                    ...displaySubEl.transform,
+                    originX: subOriginX,
+                    originY: subOriginY,
+                  };
+                  const elMatrix = Matrix2D.fromTransform(t);
+                  let cssTransform = elMatrix.toCSS();
+
+                  const rx = t.rotateX ? Math.round(t.rotateX * 1000) / 1000 : 0;
+                  const ry = t.rotateY ? Math.round(t.rotateY * 1000) / 1000 : 0;
+                  const persp = t.perspective ? Math.round(t.perspective * 1000) / 1000 : 800;
+                  const has3D = rx !== 0 || ry !== 0;
+
+                  if (has3D) {
+                    const ox = t.originX !== undefined ? t.originX : subBounds.x + subBounds.width / 2;
+                    const oy = t.originY !== undefined ? t.originY : subBounds.y + subBounds.height / 2;
+                    cssTransform = `perspective(${persp}px) translate3d(${ox}px, ${oy}px, 0) rotateX(${rx}deg) rotateY(${ry}deg) translate3d(${-ox}px, ${-oy}px, 0) ${cssTransform}`;
+                  }
+
                   return (
                     <div
                       key={subEl.id}
                       style={{
                         position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        transformOrigin: '0 0',
                         transform: cssTransform,
-                        opacity: subEl.alpha ?? 1,
+                        opacity: displaySubEl.alpha ?? 1,
+                        transformStyle: 'preserve-3d',
                       }}
                     >
-                      {renderElementContent(subEl as EditorElement)}
+                      {renderElementContent(displaySubEl as EditorElement)}
                     </div>
                   );
                 })}
@@ -2861,7 +4406,7 @@ export const Stage: React.FC = () => {
     cursorClass = dragState?.type === 'pan' ? styles.toolHandGrabbing : styles.toolHand;
   } else if (activeTool === 'rect' || activeTool === 'oval' || activeTool === 'polygon') {
     cursorClass = styles.toolCrosshair;
-  } else if (activeTool === 'pen') {
+  } else if (activeTool === 'pen' || activeTool === 'pencil') {
     cursorClass = styles.toolPen;
   } else if (activeTool === 'text') {
     cursorClass = styles.toolText;
@@ -2896,41 +4441,91 @@ export const Stage: React.FC = () => {
   }
 
   const renderPreviewGradientDefs = (idPrefix: string) => {
-    if (!activeFill) return null;
-    const gradId = `${idPrefix}_grad`;
-    if (activeFill.type === 'linearGradient') {
-      const rad = (activeFill.angle * Math.PI) / 180;
-      const dx = Math.cos(rad) / 2;
-      const dy = Math.sin(rad) / 2;
-      return (
-        <linearGradient id={gradId} x1={0.5 - dx} y1={0.5 - dy} x2={0.5 + dx} y2={0.5 + dy}>
-          {activeFill.stops.map((st, si) => (
-            <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
-          ))}
-        </linearGradient>
-      );
+    const defs: React.ReactNode[] = [];
+    if (activeFill) {
+      const gradId = `${idPrefix}_grad`;
+      if (activeFill.type === 'linearGradient') {
+        const rad = (activeFill.angle * Math.PI) / 180;
+        const dx = Math.cos(rad) / 2;
+        const dy = Math.sin(rad) / 2;
+        defs.push(
+          <linearGradient
+            key={gradId}
+            id={gradId}
+            x1={0.5 - dx}
+            y1={0.5 - dy}
+            x2={0.5 + dx}
+            y2={0.5 + dy}
+          >
+            {activeFill.stops.map((st, si) => (
+              <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+            ))}
+          </linearGradient>
+        );
+      } else if (activeFill.type === 'radialGradient') {
+        defs.push(
+          <radialGradient
+            key={gradId}
+            id={gradId}
+            cx={activeFill.cx}
+            cy={activeFill.cy}
+            r={activeFill.r}
+            fx={activeFill.focalX}
+            fy={activeFill.focalY}
+          >
+            {activeFill.stops.map((st, si) => (
+              <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+            ))}
+          </radialGradient>
+        );
+      }
     }
-    if (activeFill.type === 'radialGradient') {
-      return (
-        <radialGradient
-          id={gradId}
-          cx={activeFill.cx}
-          cy={activeFill.cy}
-          r={activeFill.r}
-          fx={activeFill.focalX}
-          fy={activeFill.focalY}
-        >
-          {activeFill.stops.map((st, si) => (
-            <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
-          ))}
-        </radialGradient>
-      );
+    if (activeStroke) {
+      const strokeGradId = `${idPrefix}_stroke_grad`;
+      if (activeStroke.type === 'linearGradient') {
+        const rad = (activeStroke.angle * Math.PI) / 180;
+        const dx = Math.cos(rad) / 2;
+        const dy = Math.sin(rad) / 2;
+        defs.push(
+          <linearGradient
+            key={strokeGradId}
+            id={strokeGradId}
+            x1={0.5 - dx}
+            y1={0.5 - dy}
+            x2={0.5 + dx}
+            y2={0.5 + dy}
+          >
+            {activeStroke.stops.map((st, si) => (
+              <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+            ))}
+          </linearGradient>
+        );
+      } else if (activeStroke.type === 'radialGradient') {
+        defs.push(
+          <radialGradient
+            key={strokeGradId}
+            id={strokeGradId}
+            cx={activeStroke.cx}
+            cy={activeStroke.cy}
+            r={activeStroke.r}
+            fx={activeStroke.focalX}
+            fy={activeStroke.focalY}
+          >
+            {activeStroke.stops.map((st, si) => (
+              <stop key={si} offset={`${st.offset * 100}%`} stopColor={st.color} />
+            ))}
+          </radialGradient>
+        );
+      }
     }
-    return null;
+    return defs;
   };
 
   const getPreviewFillPaint = (idPrefix: string): string => {
     if (activeFill) {
+      if (activeFill.type === 'none') {
+        return 'none';
+      }
       if (activeFill.type === 'solid') {
         return activeFill.color;
       }
@@ -2941,7 +4536,17 @@ export const Stage: React.FC = () => {
     return fillColor || '#ffffff';
   };
 
-  const previewStrokePaint = (strokeWidth ?? 1) > 0 ? (strokeColor || '#000000') : 'none';
+  const getPreviewStrokePaint = (idPrefix: string): string => {
+    if ((strokeWidth ?? 1) <= 0) return 'none';
+    if (activeStroke) {
+      if (activeStroke.type === 'none') return 'none';
+      if (activeStroke.type === 'solid') return activeStroke.color;
+      if (activeStroke.type === 'linearGradient' || activeStroke.type === 'radialGradient') {
+        return `url(#${idPrefix}_stroke_grad)`;
+      }
+    }
+    return strokeColor || '#000000';
+  };
   const previewStrokeWidth = strokeWidth ?? 1;
 
   // Marquee selection preview
@@ -2991,37 +4596,40 @@ export const Stage: React.FC = () => {
       className={styles.stageContainer}
       onMouseDown={handleContainerMouseDown}
     >
-      {/* Scene Graph Breadcrumbs Bar (Scene 1 > [Group] > [Child]) */}
-      <div className={styles.stageBreadcrumbBar}>
-        <button
-          type="button"
-          className={`${styles.breadcrumbItem} ${
-            isolationStack.length === 0 ? styles.currentCrumb : ''
-          }`}
-          onClick={() => editorActions.exitToIsolationLevel(-1)}
-          title="Root Scene (Scene 1)"
-        >
-          🎬 Scene 1
-        </button>
-        {isolationStack.map((crumb, idx) => {
-          const isCurrent = idx === isolationStack.length - 1;
-          return (
-            <React.Fragment key={crumb.symbolId + idx}>
-              <span className={styles.breadcrumbDivider}>›</span>
-              <button
-                type="button"
-                className={`${styles.breadcrumbItem} ${
-                  isCurrent ? styles.currentCrumb : ''
-                }`}
-                onClick={() => editorActions.exitToIsolationLevel(idx)}
-                title={`Component: ${crumb.name}`}
-              >
-                ❖ [{crumb.name}]
-              </button>
-            </React.Fragment>
-          );
-        })}
-        {isolationStack.length > 0 && (
+      {/* Scene Graph Breadcrumbs Bar (only shown when in Component Isolation mode) */}
+      {isolationStack.length > 0 && (
+        <div className={styles.stageBreadcrumbBar}>
+          <button
+            type="button"
+            className={styles.breadcrumbItem}
+            onClick={() => editorActions.exitToIsolationLevel(-1)}
+            title={`Return to ${activeArtboard?.name || 'Artboard'}`}
+          >
+            ← {activeArtboard?.name || 'Stage'}
+          </button>
+          {isolationStack.map((crumb, idx) => {
+            const isCurrent = idx === isolationStack.length - 1;
+            return (
+              <React.Fragment key={crumb.symbolId + idx}>
+                <span className={styles.breadcrumbDivider}>›</span>
+                <button
+                  type="button"
+                  className={`${styles.breadcrumbItem} ${
+                    isCurrent ? styles.currentCrumb : ''
+                  }`}
+                  onClick={() => editorActions.exitToIsolationLevel(idx)}
+                  title={`Clip: ${crumb.name}`}
+                >
+                  ❖ [{crumb.name}]
+                  {isCurrent && (
+                    <span style={{ fontSize: 10, opacity: 0.75, marginLeft: 4 }}>
+                      ({width}×{height})
+                    </span>
+                  )}
+                </button>
+              </React.Fragment>
+            );
+          })}
           <button
             type="button"
             className={styles.exitIsolationBtn}
@@ -3030,8 +4638,35 @@ export const Stage: React.FC = () => {
           >
             ↖ Return to Parent
           </button>
+        </div>
+      )}
+
+      {/* Active Locale Preview Banner (shown when previewing a non-default translation) */}
+      {previewLocale &&
+        previewLocale.toLowerCase().replace(/_/g, '-') !==
+          (doc.i18n?.defaultLocale || 'en').toLowerCase().replace(/_/g, '-') && (
+          <div
+            className={styles.localePreviewPill}
+            data-testid="locale-preview-pill"
+            title="Artboard is currently previewing translations for this locale"
+          >
+            <span>
+              🌐 Previewing: <strong>{previewLocale.toUpperCase()}</strong>
+            </span>
+            <span style={{ fontSize: 10, opacity: 0.85 }}>
+              Editing text modifies this translation
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                editorActions.setPreviewLocale(doc.i18n?.defaultLocale || 'en')
+              }
+              title="Return to default document language"
+            >
+              Reset to {(doc.i18n?.defaultLocale || 'en').toUpperCase()}
+            </button>
+          </div>
         )}
-      </div>
       <div
         className={styles.stageMatte}
         style={{
@@ -3054,6 +4689,30 @@ export const Stage: React.FC = () => {
           onDoubleClick={handleCanvasDoubleClick}
           onContextMenu={handleStageContextMenu}
         >
+          {/* Registration Point Crosshair in Isolation Mode */}
+          {isolationStack.length > 0 && currentIsolatedSymbol && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${currentIsolatedSymbol.registration?.x ?? Math.round(width / 2)}px`,
+                top: `${currentIsolatedSymbol.registration?.y ?? Math.round(height / 2)}px`,
+                width: 14,
+                height: 14,
+                transform: 'translate(-50%, -50%)',
+                pointerEvents: 'none',
+                zIndex: 90,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              title="Clip Registration Point (Center)"
+            >
+              <div style={{ position: 'absolute', width: 14, height: 1.5, background: '#3b82f6', opacity: 0.8 }} />
+              <div style={{ position: 'absolute', width: 1.5, height: 14, background: '#3b82f6', opacity: 0.8 }} />
+              <div style={{ width: 6, height: 6, borderRadius: '50%', border: '1.5px solid #3b82f6', opacity: 0.9 }} />
+            </div>
+          )}
+
           {/* SVG ClipPaths for Mask Layers */}
           {(() => {
             const fps = doc.stage.fps || 24;
@@ -3251,15 +4910,39 @@ export const Stage: React.FC = () => {
                   const bounds = getElementBounds(displayEl);
                   const elMatrix = Matrix2D.fromTransform(effectiveTransform);
                   const finalMatrix = parentMatrix ? parentMatrix.multiply(elMatrix) : elMatrix;
-                  const cssTransform = finalMatrix.toCSS();
+                  let cssTransform = finalMatrix.toCSS();
+
+                  const rx = effectiveTransform.rotateX ? Math.round(effectiveTransform.rotateX * 1000) / 1000 : 0;
+                  const ry = effectiveTransform.rotateY ? Math.round(effectiveTransform.rotateY * 1000) / 1000 : 0;
+                  const persp = effectiveTransform.perspective ? Math.round(effectiveTransform.perspective * 1000) / 1000 : 800;
+                  const has3D = rx !== 0 || ry !== 0;
+
+                  if (has3D) {
+                    const ox =
+                      effectiveTransform.originX !== undefined
+                        ? effectiveTransform.originX
+                        : bounds.x + bounds.width / 2;
+                    const oy =
+                      effectiveTransform.originY !== undefined
+                        ? effectiveTransform.originY
+                        : bounds.y + bounds.height / 2;
+
+                    if (ox !== 0 || oy !== 0) {
+                      cssTransform = `perspective(${persp}px) ${cssTransform} translate(${Math.round(ox * 1000) / 1000}px, ${Math.round(oy * 1000) / 1000}px) rotateX(${rx}deg) rotateY(${ry}deg) translate(${Math.round(-ox * 1000) / 1000}px, ${Math.round(-oy * 1000) / 1000}px)`;
+                    } else {
+                      cssTransform = `perspective(${persp}px) ${cssTransform} rotateX(${rx}deg) rotateY(${ry}deg)`;
+                    }
+                  }
 
                   return (
                     <div
                       key={el.id}
+                      data-el-id={el.id}
                       className={`${styles.elementWrapper} ${isSelected ? styles.selected : ''}`}
                       style={{
                         transform: cssTransform,
                         opacity: effectiveAlpha,
+                        transformStyle: 'preserve-3d',
                       }}
                       onMouseDown={(e) => handleElementMouseDown(e, displayEl)}
                       onDoubleClick={(e) => handleElementDoubleClick(e, displayEl)}
@@ -3529,6 +5212,166 @@ export const Stage: React.FC = () => {
                             >
                               <CrosshairIcon size={14} strokeWidth={2.2} className={styles.pivotIcon} />
                             </div>
+
+                            {/* Illustrator-style Live Corner Bullseye Handles for Rectangles */}
+                            {displayEl.type === 'shape' &&
+                              (Boolean((displayEl as ShapeElement).rectConfig) ||
+                                displayEl.id.startsWith('rect_') ||
+                                (displayEl as any).shapeType === 'rectangle') &&
+                              !(displayEl as ShapeElement).isCustomizedPath &&
+                              boxW >= 28 &&
+                              boxH >= 28 &&
+                              (() => {
+                                const shapeEl = displayEl as ShapeElement;
+                                const rc = shapeEl.rectConfig;
+                                const radii = normalizeCornerRadii(
+                                  rc?.cornerRadius ?? 0,
+                                  Math.min(bounds.width, bounds.height) / 2
+                                );
+                                const maxInsetX = Math.max(12, boxW / 2 - 4);
+                                const maxInsetY = Math.max(12, boxH / 2 - 4);
+                                const corners: Array<{
+                                  key: 'tl' | 'tr' | 'br' | 'bl';
+                                  r: number;
+                                  left: number;
+                                  top: number;
+                                }> = [
+                                  {
+                                    key: 'tl',
+                                    r: radii.tl,
+                                    left: Math.min(maxInsetX, Math.max(14, radii.tl * absScaleX + 10)),
+                                    top: Math.min(maxInsetY, Math.max(14, radii.tl * absScaleY + 10)),
+                                  },
+                                  {
+                                    key: 'tr',
+                                    r: radii.tr,
+                                    left:
+                                      boxW -
+                                      Math.min(maxInsetX, Math.max(14, radii.tr * absScaleX + 10)),
+                                    top: Math.min(maxInsetY, Math.max(14, radii.tr * absScaleY + 10)),
+                                  },
+                                  {
+                                    key: 'br',
+                                    r: radii.br,
+                                    left:
+                                      boxW -
+                                      Math.min(maxInsetX, Math.max(14, radii.br * absScaleX + 10)),
+                                    top:
+                                      boxH -
+                                      Math.min(maxInsetY, Math.max(14, radii.br * absScaleY + 10)),
+                                  },
+                                  {
+                                    key: 'bl',
+                                    r: radii.bl,
+                                    left: Math.min(maxInsetX, Math.max(14, radii.bl * absScaleX + 10)),
+                                    top:
+                                      boxH -
+                                      Math.min(maxInsetY, Math.max(14, radii.bl * absScaleY + 10)),
+                                  },
+                                ];
+                                return corners.map((c) => (
+                                  <div
+                                    key={c.key}
+                                    className={styles.liveCornerHandle}
+                                    style={{
+                                      left: `${c.left}px`,
+                                      top: `${c.top}px`,
+                                      transform: `translate(-50%, -50%) ${unskewCSS} scale(${invZoom})`,
+                                    }}
+                                    onMouseDown={(e) =>
+                                      handleCornerRadiusMouseDown(e, shapeEl, c.key, bounds)
+                                    }
+                                    title={`Live Corner Radius (${Math.round(c.r)}px) — Drag inward/outward to round corners, Shift+Drag for single corner, Option/Alt+Click to cycle Round / Inverted / Chamfer`}
+                                    data-testid={`live-corner-handle-${c.key}`}
+                                  >
+                                    <div className={styles.liveCornerDot} />
+                                  </div>
+                                ));
+                              })()}
+
+                            {/* Illustrator-style Live Corner Bullseye Handles for Arbitrary Vector Shapes (Pen paths, Custom Rectangles, Polygons, Stars) */}
+                            {displayEl.type === 'shape' &&
+                              !(
+                                (Boolean((displayEl as ShapeElement).rectConfig) ||
+                                  displayEl.id.startsWith('rect_') ||
+                                  (displayEl as any).shapeType === 'rectangle') &&
+                                !(displayEl as ShapeElement).isCustomizedPath
+                              ) &&
+                              !(
+                                Boolean((displayEl as ShapeElement).ovalConfig) &&
+                                !(displayEl as ShapeElement).isCustomizedPath
+                              ) &&
+                              (() => {
+                                const shapeEl = displayEl as ShapeElement;
+                                const isStar =
+                                  (Boolean(shapeEl.starConfig) ||
+                                    shapeEl.id.startsWith('poly_') ||
+                                    (shapeEl as any).shapeType === 'star') &&
+                                  !shapeEl.isCustomizedPath;
+
+                                let rawD = shapeEl.basePathD || shapeEl.paths?.[0]?.d || '';
+                                if (isStar && shapeEl.starConfig) {
+                                  const sc = shapeEl.starConfig;
+                                  const outerR =
+                                    sc.outerRadius ??
+                                    Math.max(8, Math.max(bounds.width, bounds.height) / 2);
+                                  const cx = sc.cx ?? (shapeEl.transform.originX || outerR);
+                                  const cy = sc.cy ?? (shapeEl.transform.originY || outerR);
+                                  rawD = generatePolygonStarPath(
+                                    cx,
+                                    cy,
+                                    outerR,
+                                    sc.points ?? 5,
+                                    sc.pointRatio ?? 0.5,
+                                    sc.startAngle ?? -Math.PI / 2,
+                                    0
+                                  );
+                                }
+                                if (!rawD) return null;
+                                const sharpVertices = getSharpCornerVertices(rawD);
+                                if (sharpVertices.length === 0) return null;
+
+                                return sharpVertices.map((v) => {
+                                  const vR =
+                                    shapeEl.pathAnchorRadii?.[v.index] ??
+                                    shapeEl.pathCornerRadius ??
+                                    shapeEl.starConfig?.cornerRadius ??
+                                    0;
+                                  const insetDist = Math.min(
+                                    v.maxRadius,
+                                    Math.max(12, vR + 12)
+                                  );
+                                  const left =
+                                    (v.x - bounds.x + v.bisectorX * insetDist) * absScaleX;
+                                  const top =
+                                    (v.y - bounds.y + v.bisectorY * insetDist) * absScaleY;
+
+                                  return (
+                                    <div
+                                      key={v.index}
+                                      className={styles.liveCornerHandle}
+                                      style={{
+                                        left: `${left}px`,
+                                        top: `${top}px`,
+                                        transform: `translate(-50%, -50%) ${unskewCSS} scale(${invZoom})`,
+                                      }}
+                                      onMouseDown={(e) =>
+                                        handleVectorCornerMouseDown(
+                                          e,
+                                          shapeEl,
+                                          v.index,
+                                          { x: v.bisectorX, y: v.bisectorY },
+                                          v.maxRadius
+                                        )
+                                      }
+                                      title={`Vector Live Corner #${v.index + 1} (${Math.round(vR)}px) — Drag inward/outward to round corners, Shift+Drag for single vertex, Option/Alt+Click to cycle Round / Inverted / Chamfer`}
+                                      data-testid={`vertex-corner-handle-${v.index}`}
+                                    >
+                                      <div className={styles.liveCornerDot} />
+                                    </div>
+                                  );
+                                });
+                              })()}
                           </div>
                         );
                       })()}
@@ -3757,13 +5600,190 @@ export const Stage: React.FC = () => {
             );
           })()}
 
-          {/* Subselect Tool Anchor Points & Bézier Handles Overlay */}
+          {/* Subselect Tool Anchor Points, Segment Midpoint '+' Handles & Bézier Handles Overlay */}
           {activeTool === 'subselect' && subselectShape && (
             <svg className={styles.subselectOverlay}>
               {subselectShape.paths.map((path, pathIdx) => {
-                const parsed = parseSvgPath(path.d);
+                const rawD =
+                  pathIdx === 0 && subselectShape!.basePathD
+                    ? subselectShape!.basePathD
+                    : path.d;
+                const parsed = parseSvgPath(rawD);
+                const segCount = parsed.closed
+                  ? parsed.anchors.length
+                  : Math.max(0, parsed.anchors.length - 1);
+
                 return (
                   <g key={pathIdx}>
+                    {/* Interactive Path Segments & Midpoint '+' Add-Point Handles */}
+                    {Array.from({ length: segCount }).map((_, segIdx) => {
+                      const a0 = parsed.anchors[segIdx];
+                      const a1 = parsed.anchors[(segIdx + 1) % parsed.anchors.length];
+                      if (!a0 || !a1) return null;
+
+                      const p0Stage = elementLocalToStage(
+                        a0.x,
+                        a0.y,
+                        subselectShape!.transform
+                      );
+                      const p1Stage = elementLocalToStage(
+                        a1.x,
+                        a1.y,
+                        subselectShape!.transform
+                      );
+
+                      const c1 = a0.handleOut ?? { x: a0.x, y: a0.y };
+                      const c2 = a1.handleIn ?? { x: a1.x, y: a1.y };
+                      const midLocal =
+                        a0.handleOut || a1.handleIn
+                          ? {
+                              x: 0.125 * a0.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * a1.x,
+                              y: 0.125 * a0.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * a1.y,
+                            }
+                          : {
+                              x: (a0.x + a1.x) / 2,
+                              y: (a0.y + a1.y) / 2,
+                            };
+                      const midStage = elementLocalToStage(
+                        midLocal.x,
+                        midLocal.y,
+                        subselectShape!.transform
+                      );
+
+                      const handleInsertOnSegment = (e: React.MouseEvent, tVal?: number) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        const { x, y } = getStageCoordinates(e);
+
+                        // Safety guard: If clicking near ANY handle or anchor of this shape, do NOT insert a new point!
+                        // Delegate directly to the handle or anchor instead so users never accidentally add points when aiming for handles.
+                        for (let idx = 0; idx < parsed.anchors.length; idx++) {
+                          const a = parsed.anchors[idx];
+                          const aSt = elementLocalToStage(a.x, a.y, subselectShape!.transform);
+                          if (Math.hypot(x - aSt.x, y - aSt.y) <= 14 * invZoom) {
+                            handleAnchorMouseDown(e, subselectShape!, pathIdx, idx, a);
+                            return;
+                          }
+                          if (a.handleIn) {
+                            const hInSt = elementLocalToStage(a.handleIn.x, a.handleIn.y, subselectShape!.transform);
+                            if (Math.hypot(x - hInSt.x, y - hInSt.y) <= 20 * invZoom) {
+                              handleHandleMouseDown(e, subselectShape!, pathIdx, idx, 'in');
+                              return;
+                            }
+                          }
+                          if (a.handleOut) {
+                            const hOutSt = elementLocalToStage(a.handleOut.x, a.handleOut.y, subselectShape!.transform);
+                            if (Math.hypot(x - hOutSt.x, y - hOutSt.y) <= 20 * invZoom) {
+                              handleHandleMouseDown(e, subselectShape!, pathIdx, idx, 'out');
+                              return;
+                            }
+                          }
+                        }
+
+                        let effectiveT = tVal ?? 0.5;
+                        if (tVal === undefined) {
+                          const localClick = stageToElementLocal(
+                            x,
+                            y,
+                            subselectShape!.transform
+                          );
+                          const closest = findClosestPointOnPathSegments(rawD, localClick);
+                          if (closest && closest.segmentIndex === segIdx) {
+                            effectiveT = closest.t;
+                          }
+                        }
+                        const newAnchorIdx = editorActions.insertPathAnchor(
+                          subselectShape!.id,
+                          pathIdx,
+                          segIdx,
+                          effectiveT
+                        );
+                        if (newAnchorIdx !== null) {
+                          editorActions.setSubselectedAnchor({
+                            shapeId: subselectShape!.id,
+                            pathIndex: pathIdx,
+                            anchorIndex: newAnchorIdx,
+                          });
+                          // Read updated shape from store so the user can immediately drag the newly created point!
+                          const latestTl = getActiveTimeline(
+                            useEditorStore.getState().doc,
+                            isolationStack
+                          );
+                          for (const l of latestTl.layers) {
+                            const kf =
+                              findKeyframeAtTime(l, currentTime) ??
+                              findKeyframeAt(l, currentFrame);
+                            const updatedShape = kf?.elements.find(
+                              (it) => it.id === subselectShape!.id && it.type === 'shape'
+                            ) as ShapeElement | undefined;
+                            if (updatedShape) {
+                              const nextRawD =
+                                pathIdx === 0 && updatedShape.basePathD
+                                  ? updatedShape.basePathD
+                                  : updatedShape.paths[pathIdx].d;
+                              setDragState({
+                                type: 'subselect_drag_anchor',
+                                startX: x,
+                                startY: y,
+                                currentX: x,
+                                currentY: y,
+                                subselectShapeId: updatedShape.id,
+                                subselectPathIndex: pathIdx,
+                                subselectAnchorIndex: newAnchorIdx,
+                                initialAnchorPos: midLocal,
+                                initialPathD: nextRawD,
+                                initialTransforms: {},
+                              });
+                              break;
+                            }
+                          }
+                        }
+                      };
+
+                      const c1Stage = a0.handleOut
+                        ? elementLocalToStage(a0.handleOut.x, a0.handleOut.y, subselectShape!.transform)
+                        : p0Stage;
+                      const c2Stage = a1.handleIn
+                        ? elementLocalToStage(a1.handleIn.x, a1.handleIn.y, subselectShape!.transform)
+                        : p1Stage;
+                      const isCurved = Boolean(a0.handleOut || a1.handleIn);
+
+                      return (
+                        <g key={`seg_${segIdx}`}>
+                          {/* Invisible hit path allowing clicking anywhere on the segment edge to add an anchor with handles */}
+                          {isCurved ? (
+                            <path
+                              d={`M ${p0Stage.x} ${p0Stage.y} C ${c1Stage.x} ${c1Stage.y} ${c2Stage.x} ${c2Stage.y} ${p1Stage.x} ${p1Stage.y}`}
+                              fill="none"
+                              stroke="transparent"
+                              strokeWidth={16 * invZoom}
+                              style={{ pointerEvents: 'stroke', cursor: 'crosshair' }}
+                              data-testid="subselect-segment-hit"
+                              data-segment-index={segIdx}
+                              onMouseDown={(e) => handleInsertOnSegment(e)}
+                            >
+                              <title>Click anywhere to add an anchor point with handles</title>
+                            </path>
+                          ) : (
+                            <line
+                              x1={p0Stage.x}
+                              y1={p0Stage.y}
+                              x2={p1Stage.x}
+                              y2={p1Stage.y}
+                              stroke="transparent"
+                              strokeWidth={16 * invZoom}
+                              style={{ pointerEvents: 'stroke', cursor: 'crosshair' }}
+                              data-testid="subselect-segment-hit"
+                              data-segment-index={segIdx}
+                              onMouseDown={(e) => handleInsertOnSegment(e)}
+                            >
+                              <title>Click anywhere to add an anchor point with handles</title>
+                            </line>
+                          )}
+                        </g>
+                      );
+                    })}
+
                     {parsed.anchors.map((anchor, aIdx) => {
                       const anchorStage = elementLocalToStage(
                         anchor.x,
@@ -3797,18 +5817,15 @@ export const Stage: React.FC = () => {
                           {/* Selected Anchor Bézier Handle Lines & Circles */}
                           {isAnchorSelected && handleInStage && (
                             <>
+                              {/* Generous invisible line hit stroke along handle stick (constant screen size) */}
                               <line
                                 x1={anchorStage.x}
                                 y1={anchorStage.y}
                                 x2={handleInStage.x}
                                 y2={handleInStage.y}
-                                className={styles.subselectHandleLine}
-                              />
-                              <circle
-                                cx={handleInStage.x}
-                                cy={handleInStage.y}
-                                r={3.5}
-                                className={styles.subselectHandleCircle}
+                                stroke="transparent"
+                                strokeWidth={16 * invZoom}
+                                style={{ cursor: 'pointer', pointerEvents: 'stroke' }}
                                 onMouseDown={(e) =>
                                   handleHandleMouseDown(
                                     e,
@@ -3819,23 +5836,66 @@ export const Stage: React.FC = () => {
                                   )
                                 }
                               />
+                              <line
+                                x1={anchorStage.x}
+                                y1={anchorStage.y}
+                                x2={handleInStage.x}
+                                y2={handleInStage.y}
+                                className={styles.subselectHandleLine}
+                                strokeWidth={1.2 * invZoom}
+                                vectorEffect="non-scaling-stroke"
+                                style={{ pointerEvents: 'none' }}
+                              />
+                              {/* Zoom-invariant handle endpoint group */}
+                              <g transform={`translate(${handleInStage.x}, ${handleInStage.y}) scale(${invZoom})`}>
+                                {/* Generous invisible circle hit area (radius 12) around handle tip */}
+                                <circle
+                                  cx={0}
+                                  cy={0}
+                                  r={12}
+                                  fill="transparent"
+                                  style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                                  data-testid="subselect-handle-in"
+                                  onMouseDown={(e) =>
+                                    handleHandleMouseDown(
+                                      e,
+                                      subselectShape!,
+                                      pathIdx,
+                                      aIdx,
+                                      'in'
+                                    )
+                                  }
+                                />
+                                <circle
+                                  cx={0}
+                                  cy={0}
+                                  r={3.8}
+                                  className={styles.subselectHandleCircle}
+                                  onMouseDown={(e) =>
+                                    handleHandleMouseDown(
+                                      e,
+                                      subselectShape!,
+                                      pathIdx,
+                                      aIdx,
+                                      'in'
+                                    )
+                                  }
+                                />
+                              </g>
                             </>
                           )}
 
                           {isAnchorSelected && handleOutStage && (
                             <>
+                              {/* Generous invisible line hit stroke along handle stick (constant screen size) */}
                               <line
                                 x1={anchorStage.x}
                                 y1={anchorStage.y}
                                 x2={handleOutStage.x}
                                 y2={handleOutStage.y}
-                                className={styles.subselectHandleLine}
-                              />
-                              <circle
-                                cx={handleOutStage.x}
-                                cy={handleOutStage.y}
-                                r={3.5}
-                                className={styles.subselectHandleCircle}
+                                stroke="transparent"
+                                strokeWidth={16 * invZoom}
+                                style={{ cursor: 'pointer', pointerEvents: 'stroke' }}
                                 onMouseDown={(e) =>
                                   handleHandleMouseDown(
                                     e,
@@ -3846,32 +5906,135 @@ export const Stage: React.FC = () => {
                                   )
                                 }
                               />
+                              <line
+                                x1={anchorStage.x}
+                                y1={anchorStage.y}
+                                x2={handleOutStage.x}
+                                y2={handleOutStage.y}
+                                className={styles.subselectHandleLine}
+                                strokeWidth={1.2 * invZoom}
+                                vectorEffect="non-scaling-stroke"
+                                style={{ pointerEvents: 'none' }}
+                              />
+                              {/* Zoom-invariant handle endpoint group */}
+                              <g transform={`translate(${handleOutStage.x}, ${handleOutStage.y}) scale(${invZoom})`}>
+                                {/* Generous invisible circle hit area (radius 12) around handle tip */}
+                                <circle
+                                  cx={0}
+                                  cy={0}
+                                  r={12}
+                                  fill="transparent"
+                                  style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                                  data-testid="subselect-handle-out"
+                                  onMouseDown={(e) =>
+                                    handleHandleMouseDown(
+                                      e,
+                                      subselectShape!,
+                                      pathIdx,
+                                      aIdx,
+                                      'out'
+                                    )
+                                  }
+                                />
+                                <circle
+                                  cx={0}
+                                  cy={0}
+                                  r={3.8}
+                                  className={styles.subselectHandleCircle}
+                                  onMouseDown={(e) =>
+                                    handleHandleMouseDown(
+                                      e,
+                                      subselectShape!,
+                                      pathIdx,
+                                      aIdx,
+                                      'out'
+                                    )
+                                  }
+                                />
+                              </g>
                             </>
                           )}
 
-                          {/* Anchor Node (Square) */}
-                          <rect
-                            x={anchorStage.x - 3.5}
-                            y={anchorStage.y - 3.5}
-                            width={7}
-                            height={7}
-                            className={
-                              isAnchorSelected
-                                ? styles.subselectAnchorSelected
-                                : styles.subselectAnchor
-                            }
-                            data-testid="subselect-anchor"
-                            data-anchor-index={aIdx}
-                            onMouseDown={(e) =>
-                              handleAnchorMouseDown(
-                                e,
-                                subselectShape!,
-                                pathIdx,
-                                aIdx,
-                                anchor
-                              )
-                            }
-                          />
+                          {/* Anchor Node: Circle for Smooth Point, Square for Corner Point (Zoom Invariant) */}
+                          <g transform={`translate(${anchorStage.x}, ${anchorStage.y}) scale(${invZoom})`}>
+                            {/* Generous invisible hit area (radius 10) around anchor node */}
+                            <circle
+                              cx={0}
+                              cy={0}
+                              r={10}
+                              fill="transparent"
+                              style={{ cursor: 'pointer', pointerEvents: 'all' }}
+                              onMouseDown={(e) =>
+                                handleAnchorMouseDown(
+                                  e,
+                                  subselectShape!,
+                                  pathIdx,
+                                  aIdx,
+                                  anchor
+                                )
+                              }
+                            />
+                            {(() => {
+                              const pointType =
+                                subselectShape!.pathAnchorPointTypes?.[aIdx] ??
+                                anchor.pointType ??
+                                (anchor.handleIn && anchor.handleOut ? 'smooth' : 'corner');
+                              const isSmooth = pointType === 'smooth';
+
+                              return isSmooth ? (
+                                <circle
+                                  cx={0}
+                                  cy={0}
+                                  r={3.8}
+                                  className={
+                                    isAnchorSelected
+                                      ? styles.subselectAnchorSelected
+                                      : styles.subselectAnchor
+                                  }
+                                  data-testid="subselect-anchor"
+                                  data-anchor-index={aIdx}
+                                  data-point-type="smooth"
+                                  onMouseDown={(e) =>
+                                    handleAnchorMouseDown(
+                                      e,
+                                      subselectShape!,
+                                      pathIdx,
+                                      aIdx,
+                                      anchor
+                                    )
+                                  }
+                                >
+                                  <title>Smooth Point (Click to toggle to Corner)</title>
+                                </circle>
+                              ) : (
+                                <rect
+                                  x={-3.5}
+                                  y={-3.5}
+                                  width={7}
+                                  height={7}
+                                  className={
+                                    isAnchorSelected
+                                      ? styles.subselectAnchorSelected
+                                      : styles.subselectAnchor
+                                  }
+                                  data-testid="subselect-anchor"
+                                  data-anchor-index={aIdx}
+                                  data-point-type="corner"
+                                  onMouseDown={(e) =>
+                                    handleAnchorMouseDown(
+                                      e,
+                                      subselectShape!,
+                                      pathIdx,
+                                      aIdx,
+                                      anchor
+                                    )
+                                  }
+                                >
+                                  <title>Corner Point (Click to toggle to Smooth)</title>
+                                </rect>
+                              );
+                            })()}
+                          </g>
                         </g>
                       );
                     })}
@@ -3888,7 +6051,8 @@ export const Stage: React.FC = () => {
                 d={formatSvgPath(penAnchors, false)}
                 fill="none"
                 stroke="#3b82f6"
-                strokeWidth="2"
+                strokeWidth={2 * invZoom}
+                vectorEffect="non-scaling-stroke"
               />
               {penHoverPoint && (
                 <line
@@ -3897,8 +6061,8 @@ export const Stage: React.FC = () => {
                   x2={penHoverPoint.x}
                   y2={penHoverPoint.y}
                   stroke="#3b82f6"
-                  strokeWidth="1.5"
-                  strokeDasharray="3 3"
+                  strokeWidth={1.5 * invZoom}
+                  strokeDasharray={`${3 * invZoom} ${3 * invZoom}`}
                 />
               )}
               {penAnchors.map((p, idx) => {
@@ -3914,13 +6078,17 @@ export const Stage: React.FC = () => {
                           x2={p.handleIn.x}
                           y2={p.handleIn.y}
                           className={styles.subselectHandleLine}
+                          strokeWidth={1.2 * invZoom}
+                          vectorEffect="non-scaling-stroke"
                         />
-                        <circle
-                          cx={p.handleIn.x}
-                          cy={p.handleIn.y}
-                          r={3}
-                          fill="#38bdf8"
-                        />
+                        <g transform={`translate(${p.handleIn.x}, ${p.handleIn.y}) scale(${invZoom})`}>
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={3}
+                            fill="#38bdf8"
+                          />
+                        </g>
                       </>
                     )}
                     {p.handleOut && (
@@ -3931,23 +6099,29 @@ export const Stage: React.FC = () => {
                           x2={p.handleOut.x}
                           y2={p.handleOut.y}
                           className={styles.subselectHandleLine}
+                          strokeWidth={1.2 * invZoom}
+                          vectorEffect="non-scaling-stroke"
                         />
-                        <circle
-                          cx={p.handleOut.x}
-                          cy={p.handleOut.y}
-                          r={3}
-                          fill="#38bdf8"
-                        />
+                        <g transform={`translate(${p.handleOut.x}, ${p.handleOut.y}) scale(${invZoom})`}>
+                          <circle
+                            cx={0}
+                            cy={0}
+                            r={3}
+                            fill="#38bdf8"
+                          />
+                        </g>
                       </>
                     )}
-                    <circle
-                      cx={p.x}
-                      cy={p.y}
-                      r={isFirst ? 5.5 : 4}
-                      fill={isFirst ? '#3b82f6' : '#ffffff'}
-                      stroke="#0f172a"
-                      strokeWidth="1.5"
-                    />
+                    <g transform={`translate(${p.x}, ${p.y}) scale(${invZoom})`}>
+                      <circle
+                        cx={0}
+                        cy={0}
+                        r={isFirst ? 5.5 : 4}
+                        fill={isFirst ? '#3b82f6' : '#ffffff'}
+                        stroke="#0f172a"
+                        strokeWidth={1.5}
+                      />
+                    </g>
                   </g>
                 );
               })}
@@ -3955,63 +6129,107 @@ export const Stage: React.FC = () => {
           )}
 
           {/* Live Drawing Previews */}
-          {dragState?.type === 'draw_rect' && drawPreviewStyle && (
-            <svg
-              className={styles.shapePreviewOverlay}
-              style={{
-                position: 'absolute',
-                left: `${drawPreviewStyle.left}px`,
-                top: `${drawPreviewStyle.top}px`,
-                width: `${drawPreviewStyle.width}px`,
-                height: `${drawPreviewStyle.height}px`,
-                overflow: 'visible',
-                pointerEvents: 'none',
-              }}
-              data-testid="rect-draw-preview"
-            >
-              <defs>{renderPreviewGradientDefs('rect_preview')}</defs>
-              <rect
-                x={0}
-                y={0}
-                width={drawPreviewStyle.width}
-                height={drawPreviewStyle.height}
-                fill={getPreviewFillPaint('rect_preview')}
-                stroke={previewStrokePaint}
-                strokeWidth={previewStrokeWidth}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          )}
+          {dragState?.type === 'draw_rect' && drawPreviewStyle && (() => {
+            const cornerR = dragState.rectCornerRadius ?? rectConfig?.cornerRadius ?? 0;
+            const cornerType = dragState.rectCornerType ?? rectConfig?.cornerType ?? 'round';
+            const isSimpleRound = cornerType === 'round' && typeof cornerR === 'number';
+            return (
+              <svg
+                className={styles.shapePreviewOverlay}
+                style={{
+                  position: 'absolute',
+                  left: `${drawPreviewStyle.left}px`,
+                  top: `${drawPreviewStyle.top}px`,
+                  width: `${drawPreviewStyle.width}px`,
+                  height: `${drawPreviewStyle.height}px`,
+                  overflow: 'visible',
+                  pointerEvents: 'none',
+                }}
+                data-testid="rect-draw-preview"
+              >
+                <defs>{renderPreviewGradientDefs('rect_preview')}</defs>
+                {isSimpleRound ? (
+                  <rect
+                    x={0}
+                    y={0}
+                    width={drawPreviewStyle.width}
+                    height={drawPreviewStyle.height}
+                    rx={Math.min(cornerR, drawPreviewStyle.width / 2, drawPreviewStyle.height / 2)}
+                    ry={Math.min(cornerR, drawPreviewStyle.width / 2, drawPreviewStyle.height / 2)}
+                    fill={getPreviewFillPaint('rect_preview')}
+                    stroke={getPreviewStrokePaint('rect_preview')}
+                    strokeWidth={previewStrokeWidth}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ) : (
+                  <path
+                    d={generateRoundedRectPath(
+                      drawPreviewStyle.width,
+                      drawPreviewStyle.height,
+                      cornerR,
+                      cornerType
+                    )}
+                    fill={getPreviewFillPaint('rect_preview')}
+                    stroke={getPreviewStrokePaint('rect_preview')}
+                    strokeWidth={previewStrokeWidth}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+              </svg>
+            );
+          })()}
 
-          {dragState?.type === 'draw_oval' && drawPreviewStyle && (
-            <svg
-              className={styles.shapePreviewOverlay}
-              style={{
-                position: 'absolute',
-                left: `${drawPreviewStyle.left}px`,
-                top: `${drawPreviewStyle.top}px`,
-                width: `${drawPreviewStyle.width}px`,
-                height: `${drawPreviewStyle.height}px`,
-                overflow: 'visible',
-                pointerEvents: 'none',
-              }}
-              data-testid="oval-draw-preview"
-            >
-              <defs>{renderPreviewGradientDefs('oval_preview')}</defs>
-              <ellipse
-                cx={drawPreviewStyle.width / 2}
-                cy={drawPreviewStyle.height / 2}
-                rx={drawPreviewStyle.width / 2}
-                ry={drawPreviewStyle.height / 2}
-                fill={getPreviewFillPaint('oval_preview')}
-                stroke={previewStrokePaint}
-                strokeWidth={previewStrokeWidth}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          )}
+          {dragState?.type === 'draw_oval' && drawPreviewStyle && (() => {
+            const isFullSimpleOval =
+              (ovalConfig?.innerRadiusRatio ?? 0) <= 0.005 &&
+              Math.abs((ovalConfig?.endAngle ?? 360) - (ovalConfig?.startAngle ?? 0)) >= 359.9;
+            return (
+              <svg
+                className={styles.shapePreviewOverlay}
+                style={{
+                  position: 'absolute',
+                  left: `${drawPreviewStyle.left}px`,
+                  top: `${drawPreviewStyle.top}px`,
+                  width: `${drawPreviewStyle.width}px`,
+                  height: `${drawPreviewStyle.height}px`,
+                  overflow: 'visible',
+                  pointerEvents: 'none',
+                }}
+                data-testid="oval-draw-preview"
+              >
+                <defs>{renderPreviewGradientDefs('oval_preview')}</defs>
+                {isFullSimpleOval ? (
+                  <ellipse
+                    cx={drawPreviewStyle.width / 2}
+                    cy={drawPreviewStyle.height / 2}
+                    rx={drawPreviewStyle.width / 2}
+                    ry={drawPreviewStyle.height / 2}
+                    fill={getPreviewFillPaint('oval_preview')}
+                    stroke={getPreviewStrokePaint('oval_preview')}
+                    strokeWidth={previewStrokeWidth}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ) : (
+                  <path
+                    d={generateOvalPath(
+                      drawPreviewStyle.width / 2,
+                      drawPreviewStyle.height / 2,
+                      ovalConfig
+                    )}
+                    fill={getPreviewFillPaint('oval_preview')}
+                    fillRule={(ovalConfig?.innerRadiusRatio ?? 0) > 0.005 ? 'evenodd' : undefined}
+                    stroke={getPreviewStrokePaint('oval_preview')}
+                    strokeWidth={previewStrokeWidth}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+              </svg>
+            );
+          })()}
 
           {dragState?.type === 'draw_polygon' && (() => {
             const dx = dragState.currentX - dragState.startX;
@@ -4020,6 +6238,7 @@ export const Stage: React.FC = () => {
             const radius = Math.max(8, rawRadius);
             const pts = dragState.polygonPoints ?? 5;
             const ratio = dragState.polygonStarRatio ?? 0.5;
+            const cornerR = dragState.polygonCornerRadius ?? starConfig.cornerRadius ?? 0;
             let angle = rawRadius < 4 ? -Math.PI / 2 : Math.atan2(dy, dx);
             if (dragState.shiftKey) {
               const snap = Math.PI / 12;
@@ -4032,7 +6251,8 @@ export const Stage: React.FC = () => {
               radius,
               pts,
               ratio,
-              angle
+              angle,
+              cornerR
             );
 
             return (
@@ -4044,7 +6264,7 @@ export const Stage: React.FC = () => {
                 <path
                   d={pathD}
                   fill={getPreviewFillPaint('poly_preview')}
-                  stroke={previewStrokePaint}
+                  stroke={getPreviewStrokePaint('poly_preview')}
                   strokeWidth={previewStrokeWidth}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -4052,6 +6272,70 @@ export const Stage: React.FC = () => {
               </svg>
             );
           })()}
+
+          {/* Area Text Drawing Preview */}
+          {dragState?.type === 'draw_text' && (() => {
+            const rx = Math.min(dragState.startX, dragState.currentX);
+            const ry = Math.min(dragState.startY, dragState.currentY);
+            const rw = Math.abs(dragState.currentX - dragState.startX);
+            const rh = Math.abs(dragState.currentY - dragState.startY);
+            if (rw < 5 && rh < 5) return null;
+
+            return (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${rx}px`,
+                  top: `${ry}px`,
+                  width: `${rw}px`,
+                  height: `${rh}px`,
+                  border: '1.5px dashed var(--mx-accent, #3b82f6)',
+                  backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                  pointerEvents: 'none',
+                  boxSizing: 'border-box',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  padding: '4px 6px',
+                  fontSize: '11px',
+                  fontFamily: 'var(--mx-font-sans)',
+                  color: 'var(--mx-accent, #3b82f6)',
+                  overflow: 'hidden',
+                  borderRadius: '2px',
+                  zIndex: 200,
+                }}
+                data-testid="text-area-draw-preview"
+              >
+                <span>Area Text ({rw} × {rh})</span>
+              </div>
+            );
+          })()}
+
+          {/* Live Freehand Pencil Tool Drawing Preview */}
+          {dragState?.type === 'draw_pencil' && dragState.pencilPoints && dragState.pencilPoints.length > 1 && (
+            <svg
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+                overflow: 'visible',
+                zIndex: 150,
+              }}
+              data-testid="pencil-draw-preview-svg"
+            >
+              <polyline
+                points={dragState.pencilPoints.map((p) => `${p.x},${p.y}`).join(' ')}
+                fill="none"
+                stroke={getPreviewStrokePaint('pencil_preview')}
+                strokeWidth={previewStrokeWidth}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.85}
+              />
+            </svg>
+          )}
 
           {/* Marquee Selection Box */}
           {dragState?.type === 'marquee' && marqueeStyle && (

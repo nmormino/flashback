@@ -1,23 +1,294 @@
-.propertiesContainer {
+.propertiesRoot {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100%;
+  background-color: var(--mx-bg-panel);
+  overflow: hidden;
+  font-size: var(--mx-font-size-base);
+}
+
+.propertiesHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background-color: var(--mx-bg-panel-dark);
+  border-bottom: 1px solid var(--mx-border-light);
+  gap: 10px;
+  flex-shrink: 0;
+  min-height: 32px;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.targetChip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mx-text-main);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-xs);
+  padding: 2px 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.categoryDropdown {
+  height: 24px;
+  background-color: var(--mx-bg-input);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-xs);
+  color: var(--mx-text-main);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 0 6px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+
+.categoryDropdown:focus {
+  border-color: var(--mx-accent);
+}
+
+.viewModeGroup {
+  display: flex;
+  align-items: center;
+  background: var(--mx-bg-input);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-xs);
+  padding: 1px;
+  gap: 1px;
+}
+
+.viewModeBtn {
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  color: var(--mx-text-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.viewModeBtn:hover:not(.viewModeBtnActive) {
+  color: var(--mx-text-main);
+  background: var(--mx-bg-panel-hover);
+}
+
+.viewModeBtnActive {
+  background-color: var(--mx-accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.toggleAllBtn {
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-xs);
+  color: var(--mx-text-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.toggleAllBtn:hover {
+  color: var(--mx-text-main);
+  border-color: var(--mx-accent);
+}
+
+.propertiesBody {
   display: flex;
   flex: 1;
-  padding: 10px 16px;
-  background-color: var(--mx-bg-panel);
-  gap: 20px;
-  overflow-x: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.verticalTabsRail {
+  display: flex;
+  flex-direction: column;
+  width: 140px;
+  background-color: var(--mx-bg-panel-dark);
+  border-right: 1px solid var(--mx-border-light);
+  padding: 6px 4px;
+  gap: 2px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.verticalTabBtn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  border-radius: var(--mx-radius-xs);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--mx-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+  width: 100%;
+}
+
+.verticalTabBtn:hover {
+  background: var(--mx-bg-panel-hover);
+  color: var(--mx-text-main);
+}
+
+.verticalTabBtn.activeTab {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.35);
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+.verticalTabLabelArea {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabCountBadge {
+  font-size: 9.5px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 8px;
+  color: var(--mx-text-subtle);
+}
+
+.propertiesContentArea {
+  display: flex;
+  flex: 1;
+  padding: 8px 12px;
+  gap: 12px;
+  overflow: auto;
   align-items: flex-start;
+  align-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.propertiesContainer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: 100%;
+  background-color: var(--mx-bg-panel);
+  overflow: hidden;
   font-size: var(--mx-font-size-base);
 }
 
 .propSection {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-width: 150px;
+  min-width: 280px;
+  max-width: 440px;
   background-color: var(--mx-bg-panel-dark);
   border: 1px solid var(--mx-border-light);
   border-radius: var(--mx-radius-md);
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.accordionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background-color: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--mx-border-light);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.12s ease;
+}
+
+.accordionHeader:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.accordionTitleArea {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mx-text-main);
+}
+
+.accordionChevron {
+  display: flex;
+  align-items: center;
+  color: var(--mx-text-muted);
+}
+
+.accordionRightArea {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.accordionSummaryPill {
+  font-size: 10px;
+  font-family: var(--mx-font-mono, monospace);
+  color: var(--mx-text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accordionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 8px 12px;
+}
+
+.collapsedSection .accordionHeader {
+  border-bottom: none;
+}
+
+.hiddenSection {
+  display: none !important;
 }
 
 .sectionTitle {

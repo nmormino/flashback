@@ -25,6 +25,11 @@ import type {
   LayerKind,
   Easing,
   Artboard,
+  CornerType,
+  RectCornerRadius,
+  RectCornerTypes,
+  RectConfig,
+  OvalConfig,
 } from '@flashback/runtime';
 import {
   serialize,
@@ -34,7 +39,29 @@ import {
   type ScriptSource,
 } from '@flashback/serializer';
 import { createDefaultDocument } from './defaultDoc';
-import { generatePolygonStarPath, getShapeBounds } from '../utils/shapeGenerators';
+import {
+  generatePolygonStarPath,
+  generateRoundedRectPath,
+  generateOvalPath,
+  getShapeBounds,
+  applyCornerRadiusToPath,
+  getUniformCornerRadius,
+  getUniformCornerType,
+} from '../utils/shapeGenerators';
+import {
+  insertPointOnPathSegment,
+  deletePathAnchor as deleteAnchorFromPathD,
+  parseSvgPath,
+  openPath,
+  closePath,
+  isPathClosed,
+  slicePathAtPoint,
+  fitCurveToPoints,
+  samplePointsFromPath,
+  toggleAnchorPointType,
+  getAnchorPointType,
+  type Vector2D,
+} from '../utils/bezier';
 
 export function createEmptyDoc(name = 'Untitled'): EditorDocument {
   const doc = createDefaultDocument();
@@ -42,7 +69,7 @@ export function createEmptyDoc(name = 'Untitled'): EditorDocument {
   return doc;
 }
 
-export type EditorTool = 'select' | 'subselect' | 'rect' | 'oval' | 'polygon' | 'pen' | 'text' | 'hand';
+export type EditorTool = 'select' | 'subselect' | 'rect' | 'oval' | 'polygon' | 'pen' | 'text' | 'hand' | 'pencil';
 
 export type EditorLayer = EditorDocument['root']['layers'][number];
 export type EditorKeyframe = EditorLayer['keyframes'][number];
@@ -80,6 +107,7 @@ export interface EditorState {
   fillColor: string;
   activeFill: Fill;
   strokeColor: string;
+  activeStroke: Fill;
   strokeWidth: number;
   editingTextElId: string | null;
   textSelection: { elementId: string; start: number; end: number } | null;
@@ -107,7 +135,21 @@ export interface EditorState {
   activeBreakpointId?: string | null;
   scriptTriggerFocus: 'auto' | 'keyframe' | 'element';
   liveKeyframeScriptsEnabled: boolean;
-  starConfig: { points: number; pointRatio: number };
+  isLibraryOpen: boolean;
+  libraryPosition: { x: number; y: number };
+  isLocalizationOpen: boolean;
+  localizationPosition: { x: number; y: number };
+  starConfig: { points: number; pointRatio: number; cornerRadius?: number };
+  rectConfig: { cornerRadius: number | RectCornerRadius; cornerType: CornerType | RectCornerTypes };
+  ovalConfig: { innerRadiusRatio: number; startAngle: number; endAngle: number };
+  pencilConfig: {
+    smoothness: number;
+    fillNewStrokes?: boolean;
+    keepSelected?: boolean;
+    editSelectedPaths?: boolean;
+  };
+  isPencilOptionsOpen: boolean;
+  subselectedAnchor: { shapeId: string; pathIndex: number; anchorIndex: number } | null;
 }
 
 const MAX_HISTORY = 50;
@@ -228,6 +270,7 @@ export function createInitialState(initialDoc: EditorDocument = createDefaultDoc
     fillColor: '#0066cc',
     activeFill: { type: 'solid', color: '#0066cc' },
     strokeColor: '#000000',
+    activeStroke: { type: 'solid', color: '#000000' },
     strokeWidth: 1,
     editingTextElId: null,
     textSelection: null,
@@ -251,7 +294,27 @@ export function createInitialState(initialDoc: EditorDocument = createDefaultDoc
     activeBreakpointId: null,
     scriptTriggerFocus: 'auto',
     liveKeyframeScriptsEnabled: true,
-    starConfig: { points: 5, pointRatio: 0.5 },
+    isLibraryOpen: true,
+    libraryPosition: {
+      x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 300) : 720,
+      y: 60,
+    },
+    isLocalizationOpen: false,
+    localizationPosition: {
+      x: typeof window !== 'undefined' ? Math.max(20, Math.round(window.innerWidth / 2 - 320)) : 260,
+      y: 70,
+    },
+    starConfig: { points: 5, pointRatio: 0.5, cornerRadius: 0 },
+    rectConfig: { cornerRadius: 0, cornerType: 'round' },
+    ovalConfig: { innerRadiusRatio: 0, startAngle: 0, endAngle: 360 },
+    pencilConfig: {
+      smoothness: 50,
+      fillNewStrokes: false,
+      keepSelected: true,
+      editSelectedPaths: true,
+    },
+    isPencilOptionsOpen: false,
+    subselectedAnchor: null,
   };
 }
 
@@ -701,25 +764,334 @@ export const editorActions = {
 
 
 
-  setStarConfig(config: Partial<{ points: number; pointRatio: number }>): void {
+  setStarConfig(config: Partial<{ points: number; pointRatio: number; cornerRadius?: number }>): void {
     state = {
       ...state,
       starConfig: {
         points: config.points !== undefined ? Math.max(3, Math.min(64, Math.round(config.points))) : state.starConfig.points,
         pointRatio: config.pointRatio !== undefined ? Math.max(0.05, Math.min(3.0, config.pointRatio)) : state.starConfig.pointRatio,
+        cornerRadius: config.cornerRadius !== undefined ? Math.max(0, config.cornerRadius) : (state.starConfig.cornerRadius ?? 0),
       },
     };
     notify();
   },
 
+  setRectConfig(config: Partial<{ width?: number; height?: number; cornerRadius: number | RectCornerRadius; cornerType: CornerType | RectCornerTypes }>): void {
+    state = {
+      ...state,
+      rectConfig: {
+        cornerRadius: config.cornerRadius !== undefined ? config.cornerRadius : state.rectConfig.cornerRadius,
+        cornerType: config.cornerType !== undefined ? config.cornerType : state.rectConfig.cornerType,
+      },
+    };
+    notify();
+  },
+
+  setOvalConfig(config: Partial<{ innerRadiusRatio: number; startAngle: number; endAngle: number }>): void {
+    state = {
+      ...state,
+      ovalConfig: {
+        innerRadiusRatio:
+          config.innerRadiusRatio !== undefined
+            ? Math.max(0, Math.min(0.92, config.innerRadiusRatio))
+            : state.ovalConfig.innerRadiusRatio,
+        startAngle:
+          config.startAngle !== undefined
+            ? Math.max(0, Math.min(360, config.startAngle))
+            : state.ovalConfig.startAngle,
+        endAngle:
+          config.endAngle !== undefined
+            ? Math.max(0, Math.min(360, config.endAngle))
+            : state.ovalConfig.endAngle,
+      },
+    };
+    notify();
+  },
+
+  setPencilConfig(
+    config: Partial<{
+      smoothness: number;
+      fillNewStrokes: boolean;
+      keepSelected: boolean;
+      editSelectedPaths: boolean;
+    }>
+  ): void {
+    const nextSmoothness =
+      config.smoothness !== undefined
+        ? Math.max(0, Math.min(100, config.smoothness))
+        : state.pencilConfig.smoothness;
+
+    state = {
+      ...state,
+      pencilConfig: {
+        ...state.pencilConfig,
+        ...config,
+        smoothness: nextSmoothness,
+      },
+    };
+
+    // If smoothness changed and an element is currently selected, re-smooth the selected path live!
+    if (config.smoothness !== undefined && state.selectedElementIds.length > 0) {
+      editorActions.reSmoothSelectedShape(nextSmoothness);
+    } else {
+      notify();
+    }
+  },
+
+  setPencilOptionsOpen(open: boolean): void {
+    state = { ...state, isPencilOptionsOpen: open };
+    notify();
+  },
+
+  reSmoothSelectedShape(smoothness: number): void {
+    if (state.selectedElementIds.length === 0) return;
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let modified = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+
+      for (const el of kf.elements) {
+        if (state.selectedElementIds.includes(el.id) && el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const currentD = shape.basePathD || shape.paths?.[0]?.d;
+          if (!currentD) continue;
+
+          let pointsToFit: Vector2D[] = (shape as any).rawPoints;
+          if (!pointsToFit || pointsToFit.length < 2) {
+            pointsToFit = samplePointsFromPath(currentD, 12);
+          }
+
+          if (pointsToFit && pointsToFit.length >= 2) {
+            const closed = isPathClosed(currentD);
+            const fitted = fitCurveToPoints(pointsToFit, smoothness, closed ? 99999 : 0);
+            if (fitted && fitted.d) {
+              shape.paths = shape.paths.map((p, idx) =>
+                idx === 0 ? { ...p, d: fitted.d } : p
+              );
+              if (shape.basePathD) {
+                shape.basePathD = fitted.d;
+              }
+              shape.isCustomizedPath = true;
+              shape.pencilSmoothness = smoothness;
+              modified = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (modified) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  openShapePath(elementId?: string): void {
+    const targetId = elementId || state.selectedElementIds[0];
+    if (!targetId) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    for (const layer of tl.layers) {
+      const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const el = kf.elements.find((e) => e.id === targetId);
+      if (el && el.type === 'shape') {
+        const shape = el as ShapeElement;
+        const newPaths = shape.paths.map((p) => ({
+          ...p,
+          d: openPath(p.d),
+        }));
+        shape.paths = newPaths;
+        state = { ...state, doc };
+        notify();
+        return;
+      }
+    }
+  },
+
+  closeShapePath(elementId?: string): void {
+    const targetId = elementId || state.selectedElementIds[0];
+    if (!targetId) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    for (const layer of tl.layers) {
+      const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const el = kf.elements.find((e) => e.id === targetId);
+      if (el && el.type === 'shape') {
+        const shape = el as ShapeElement;
+        const newPaths = shape.paths.map((p) => ({
+          ...p,
+          d: closePath(p.d),
+        }));
+        shape.paths = newPaths;
+        state = { ...state, doc };
+        notify();
+        return;
+      }
+    }
+  },
+
+  togglePathClosed(elementId?: string): void {
+    const targetId = elementId || state.selectedElementIds[0];
+    if (!targetId) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    for (const layer of tl.layers) {
+      const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const el = kf.elements.find((e) => e.id === targetId);
+      if (el && el.type === 'shape') {
+        const shape = el as ShapeElement;
+        const firstPath = shape.paths[0];
+        const isClosed = isPathClosed(firstPath?.d || '');
+        const newPaths = shape.paths.map((p) => ({
+          ...p,
+          d: isClosed ? openPath(p.d) : closePath(p.d),
+        }));
+        shape.paths = newPaths;
+        state = { ...state, doc };
+        notify();
+        return;
+      }
+    }
+  },
+
+  slicePathAtPoint(elementId: string, pt: Vector2D): void {
+    if (!elementId) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    for (const layer of tl.layers) {
+      const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const el = kf.elements.find((e) => e.id === elementId);
+      if (el && el.type === 'shape') {
+        const shape = el as ShapeElement;
+        const newPaths = shape.paths.map((p) => ({
+          ...p,
+          d: slicePathAtPoint(p.d, pt),
+        }));
+        shape.paths = newPaths;
+        state = { ...state, doc };
+        notify();
+        return;
+      }
+    }
+  },
+
+  setSubselectedAnchor(anchor: { shapeId: string; pathIndex: number; anchorIndex: number } | null): void {
+    state = { ...state, subselectedAnchor: anchor };
+    notify();
+  },
+
+  togglePathAnchorPointType(shapeId: string, anchorIndex: number, pathIndex = 0): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    for (const layer of tl.layers) {
+      const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const el = kf.elements.find((e) => e.id === shapeId);
+      if (el && el.type === 'shape') {
+        const shape = el as ShapeElement;
+        const baseD = pathIndex === 0 && shape.basePathD ? shape.basePathD : shape.paths[pathIndex]?.d;
+        if (!baseD) return;
+
+        const currentPointTypes = shape.pathAnchorPointTypes || {};
+        const { d: newD, newType } = toggleAnchorPointType(baseD, anchorIndex);
+
+        shape.paths = shape.paths.map((p, idx) =>
+          idx === pathIndex ? { ...p, d: newD } : p
+        );
+        if (pathIndex === 0 && shape.basePathD) {
+          shape.basePathD = newD;
+        }
+        shape.pathAnchorPointTypes = {
+          ...currentPointTypes,
+          [anchorIndex]: newType,
+        };
+        shape.isCustomizedPath = true;
+
+        state = { ...state, doc };
+        notify();
+        return;
+      }
+    }
+  },
+
+  setPathAnchorPointType(shapeId: string, anchorIndex: number, pointType: 'smooth' | 'corner', pathIndex = 0): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    for (const layer of tl.layers) {
+      const kf = findKeyframeAtTime(layer, state.currentTime, fps) ?? findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const el = kf.elements.find((e) => e.id === shapeId);
+      if (el && el.type === 'shape') {
+        const shape = el as ShapeElement;
+        const baseD = pathIndex === 0 && shape.basePathD ? shape.basePathD : shape.paths[pathIndex]?.d;
+        if (!baseD) return;
+
+        const currentPointTypes = shape.pathAnchorPointTypes || {};
+        const { d: newD, newType } = toggleAnchorPointType(baseD, anchorIndex, pointType);
+
+        shape.paths = shape.paths.map((p, idx) =>
+          idx === pathIndex ? { ...p, d: newD } : p
+        );
+        if (pathIndex === 0 && shape.basePathD) {
+          shape.basePathD = newD;
+        }
+        shape.pathAnchorPointTypes = {
+          ...currentPointTypes,
+          [anchorIndex]: newType,
+        };
+        shape.isCustomizedPath = true;
+
+        state = { ...state, doc };
+        notify();
+        return;
+      }
+    }
+  },
+
   setFillColor(color: string): void {
-    state = { ...state, fillColor: color, activeFill: { type: 'solid', color } };
+    const isTransparent =
+      color === 'transparent' || color === 'none' || color === 'rgba(0,0,0,0)';
+    state = {
+      ...state,
+      fillColor: isTransparent ? 'transparent' : color,
+      activeFill: isTransparent ? { type: 'none' } : { type: 'solid', color },
+    };
     notify();
   },
 
   setActiveFill(fill: Fill): void {
     const primaryColor =
-      fill.type === 'solid'
+      fill.type === 'none'
+        ? 'transparent'
+        : fill.type === 'solid'
         ? fill.color
         : fill.type === 'linearGradient' || fill.type === 'radialGradient'
         ? fill.stops[0]?.color || state.fillColor
@@ -767,7 +1139,26 @@ export const editorActions = {
   },
 
   setStrokeColor(color: string): void {
-    state = { ...state, strokeColor: color };
+    const isTransparent =
+      color === 'transparent' || color === 'none' || color === 'rgba(0,0,0,0)';
+    state = {
+      ...state,
+      strokeColor: isTransparent ? 'transparent' : color,
+      activeStroke: isTransparent ? { type: 'none' } : { type: 'solid', color },
+    };
+    notify();
+  },
+
+  setActiveStroke(fill: Fill): void {
+    const primaryColor =
+      fill.type === 'none'
+        ? 'transparent'
+        : fill.type === 'solid'
+        ? fill.color
+        : fill.type === 'linearGradient' || fill.type === 'radialGradient'
+        ? fill.stops[0]?.color || state.strokeColor
+        : state.strokeColor;
+    state = { ...state, activeStroke: fill, strokeColor: primaryColor };
     notify();
   },
 
@@ -808,6 +1199,36 @@ export const editorActions = {
 
   setAddFontModalOpen(open: boolean): void {
     state = { ...state, addFontModalOpen: open };
+    notify();
+  },
+
+  setLibraryOpen(open: boolean): void {
+    state = { ...state, isLibraryOpen: open };
+    notify();
+  },
+
+  toggleLibrary(): void {
+    state = { ...state, isLibraryOpen: !state.isLibraryOpen };
+    notify();
+  },
+
+  setLibraryPosition(pos: { x: number; y: number }): void {
+    state = { ...state, libraryPosition: pos };
+    notify();
+  },
+
+  setLocalizationOpen(open: boolean): void {
+    state = { ...state, isLocalizationOpen: open };
+    notify();
+  },
+
+  toggleLocalization(): void {
+    state = { ...state, isLocalizationOpen: !state.isLocalizationOpen };
+    notify();
+  },
+
+  setLocalizationPosition(pos: { x: number; y: number }): void {
+    state = { ...state, localizationPosition: pos };
     notify();
   },
 
@@ -1411,6 +1832,23 @@ export const editorActions = {
     notify();
   },
 
+  loadDocument(doc: EditorDocument): void {
+    editorActions.stop();
+    pushHistorySnapshot();
+    state = {
+      ...state,
+      doc: deepCloneDoc(doc),
+      selectedLayerId: doc.root.layers[0]?.id || null,
+      selectedFrameIndex: 0,
+      selectedTime: 0,
+      selectedElementIds: [],
+      currentFrame: 0,
+      currentTime: 0,
+      isolationStack: [],
+    };
+    notify();
+  },
+
   exportToJS(format: 'esm' | 'json' = 'esm'): string {
     return serialize(state.doc, { defineAnimation: false, format });
   },
@@ -1822,6 +2260,24 @@ export const editorActions = {
       type: 'motion',
       easing: { type: 'linear' },
     };
+
+    if (sortedKfs.length === 1) {
+      if (targetKf.duration < 24) {
+        targetKf.duration = 24;
+        targetKf.durationTime = 24 / fps;
+      }
+      const endFrame = targetKf.index + targetKf.duration;
+      const endTime = endFrame / fps;
+      const endKf: EditorKeyframe = {
+        id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        index: endFrame,
+        time: endTime,
+        duration: 1,
+        durationTime: 1 / fps,
+        elements: fastClone(targetKf.elements),
+      };
+      layer.keyframes.push(endKf);
+    }
 
     state = { ...state, doc };
     notify();
@@ -2442,6 +2898,13 @@ export const editorActions = {
       kf = newKf;
     }
 
+    const isolatedSym =
+      state.isolationStack.length > 0
+        ? doc.library.symbols[state.isolationStack[state.isolationStack.length - 1].symbolId]
+        : undefined;
+    const stageW = isolatedSym?.width || doc.stage.width || 550;
+    const stageH = isolatedSym?.height || doc.stage.height || 400;
+
     const bitmapEl: BitmapElement = {
       id: `el_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       type: 'bitmap',
@@ -2452,15 +2915,15 @@ export const editorActions = {
       alpha: 1,
       visible: true,
       transform: {
-        x: Math.round(((doc.stage.width || 550) - w) / 2),
-        y: Math.round(((doc.stage.height || 400) - h) / 2),
+        x: Math.round((stageW - w) / 2),
+        y: Math.round((stageH - h) / 2),
         scaleX: 1,
         scaleY: 1,
         rotation: 0,
         skewX: 0,
         skewY: 0,
-        originX: 0,
-        originY: 0,
+        originX: Math.round(w / 2),
+        originY: Math.round(h / 2),
       },
     };
 
@@ -2557,7 +3020,7 @@ export const editorActions = {
       const elIndex = kf.elements.findIndex((e) => e.id === id);
       if (elIndex >= 0) {
         let targetKf = kf;
-        if (state.isPlaying) {
+        if (state.isPlaying || kf.tween?.type === 'motion') {
           const kfTime = getKeyframeTime(kf, fps);
           const targetTime = state.currentTime;
           const targetFrame = Math.round(targetTime * fps);
@@ -2621,14 +3084,185 @@ export const editorActions = {
       if (!kf) continue;
       const elIndex = kf.elements.findIndex((e) => e.id === id);
       if (elIndex >= 0) {
-        const targetEl = kf.elements[elIndex];
-        if (targetEl.type === 'bitmap' && (targetEl as any).bitmapId && props.src && doc.library?.bitmaps?.[(targetEl as any).bitmapId]) {
-          doc.library.bitmaps[(targetEl as any).bitmapId].src = props.src;
+        let targetKf = kf;
+        if (state.isPlaying || kf.tween?.type === 'motion') {
+          const kfTime = getKeyframeTime(kf, fps);
+          const targetTime = state.currentTime;
+          const targetFrame = Math.round(targetTime * fps);
+          if (targetTime > kfTime + 0.001 && targetFrame > kf.index) {
+            const splitOffsetFrames = targetFrame - kf.index;
+            const originalDurationFrames = kf.duration;
+            const originalDurationTime = getKeyframeDurationTime(kf, fps);
+            const splitOffsetTime = targetTime - kfTime;
+
+            kf.duration = splitOffsetFrames;
+            kf.durationTime = splitOffsetTime;
+
+            const newKf: EditorKeyframe = {
+              id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              index: targetFrame,
+              time: targetTime,
+              duration: Math.max(1, originalDurationFrames - splitOffsetFrames),
+              durationTime: Math.max(0.04, originalDurationTime - splitOffsetTime),
+              elements: fastClone(kf.elements),
+              tween: kf.tween ? fastClone(kf.tween) : undefined,
+            };
+
+            const kfIdx = layer.keyframes.indexOf(kf);
+            layer.keyframes.splice(kfIdx + 1, 0, newKf);
+            targetKf = newKf;
+          }
         }
+        const targetEl = targetKf.elements.find((e) => e.id === id);
+        if (targetEl) {
+          if (targetEl.type === 'bitmap' && (targetEl as any).bitmapId && props.src && doc.library?.bitmaps?.[(targetEl as any).bitmapId]) {
+            doc.library.bitmaps[(targetEl as any).bitmapId].src = props.src;
+          }
+          Object.assign(targetEl, props);
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  convertTextType(
+    elementId: string,
+    targetType: 'point' | 'area' | 'path',
+    options?: { pathData?: string; pathId?: string }
+  ): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type !== 'text') break;
+        const textEl = el as TextElement;
+
+        if (targetType === 'point') {
+          kf.elements[elIndex] = {
+            ...textEl,
+            textType: 'point',
+            multiline: false,
+            width: 0,
+            height: 0,
+            pathConfig: undefined,
+          };
+        } else if (targetType === 'area') {
+          kf.elements[elIndex] = {
+            ...textEl,
+            textType: 'area',
+            multiline: true,
+            width: textEl.width && textEl.width > 0 ? textEl.width : 220,
+            height: textEl.height && textEl.height > 0 ? textEl.height : 60,
+            pathConfig: undefined,
+          };
+        } else if (targetType === 'path') {
+          const defaultPath =
+            options?.pathData ||
+            textEl.pathConfig?.pathData ||
+            'M 0 50 Q 150 0 300 50';
+          kf.elements[elIndex] = {
+            ...textEl,
+            textType: 'path',
+            multiline: false,
+            pathConfig: {
+              pathId: options?.pathId || textEl.pathConfig?.pathId,
+              pathData: defaultPath,
+              startOffset: textEl.pathConfig?.startOffset ?? 0,
+            },
+          };
+        }
+        updated = true;
+        break;
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  attachTextToPath(
+    textId: string,
+    pathData: string,
+    pathId?: string,
+    startOffset = 0
+  ): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === textId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type !== 'text') break;
+        const textEl = el as TextElement;
         kf.elements[elIndex] = {
-          ...targetEl,
-          ...props,
-        } as any;
+          ...textEl,
+          textType: 'path',
+          pathConfig: {
+            pathId,
+            pathData,
+            startOffset,
+          },
+        };
+        updated = true;
+        break;
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  detachTextFromPath(textId: string): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === textId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type !== 'text') break;
+        const textEl = el as TextElement;
+        kf.elements[elIndex] = {
+          ...textEl,
+          textType: 'point',
+          multiline: false,
+          pathConfig: undefined,
+        };
         updated = true;
         break;
       }
@@ -2642,7 +3276,7 @@ export const editorActions = {
 
   updateStarShape(
     elementId: string,
-    config: { points?: number; pointRatio?: number },
+    config: { points?: number; pointRatio?: number; cornerRadius?: number },
     options?: { skipHistory?: boolean; force?: boolean }
   ): void {
     const doc = deepCloneDoc(state.doc);
@@ -2675,23 +3309,63 @@ export const editorActions = {
           const cy = prevConfig.cy ?? (shape.transform.originY || outerRadius);
           const startAngle = prevConfig.startAngle ?? -Math.PI / 2;
 
+          const prevPoints = prevConfig.points ?? 5;
           const points =
             config.points !== undefined
               ? Math.max(3, Math.min(64, Math.round(config.points)))
-              : (prevConfig.points ?? 5);
+              : prevPoints;
           const pointRatio =
             config.pointRatio !== undefined
               ? Math.max(0.05, Math.min(3.0, config.pointRatio))
               : (prevConfig.pointRatio ?? 0.5);
+          const nextCornerRadius =
+            config.cornerRadius !== undefined
+              ? Math.max(0, Math.min(100, config.cornerRadius))
+              : (prevConfig.cornerRadius !== undefined && prevConfig.cornerRadius > 0
+                  ? prevConfig.cornerRadius
+                  : (shape.pathCornerRadius ?? prevConfig.cornerRadius ?? 0));
 
-          const newD = generatePolygonStarPath(
+          const unroundedStarD = generatePolygonStarPath(
             cx,
             cy,
             outerRadius,
             points,
             pointRatio,
-            startAngle
+            startAngle,
+            0
           );
+
+          let nextAnchorRadii = shape.pathAnchorRadii;
+          let nextAnchorTypes = shape.pathAnchorTypes;
+          if (config.points !== undefined && config.points !== prevPoints) {
+            nextAnchorRadii = undefined;
+            nextAnchorTypes = undefined;
+          }
+
+          let newD: string;
+          if (
+            (shape.pathCornerType && shape.pathCornerType !== 'round') ||
+            nextAnchorRadii ||
+            nextAnchorTypes
+          ) {
+            newD = applyCornerRadiusToPath(
+              unroundedStarD,
+              nextCornerRadius,
+              shape.pathCornerType ?? 'round',
+              nextAnchorRadii,
+              nextAnchorTypes
+            );
+          } else {
+            newD = generatePolygonStarPath(
+              cx,
+              cy,
+              outerRadius,
+              points,
+              pointRatio,
+              startAngle,
+              nextCornerRadius
+            );
+          }
 
           const updatedStarConfig = {
             ...prevConfig,
@@ -2699,6 +3373,7 @@ export const editorActions = {
             pointRatio,
             outerRadius,
             startAngle,
+            cornerRadius: nextCornerRadius,
             cx,
             cy,
           };
@@ -2717,6 +3392,10 @@ export const editorActions = {
             ...shape,
             paths: newPaths,
             starConfig: updatedStarConfig,
+            basePathD: unroundedStarD,
+            pathCornerRadius: nextCornerRadius,
+            pathAnchorRadii: nextAnchorRadii,
+            pathAnchorTypes: nextAnchorTypes,
           } as any;
 
           updated = true;
@@ -2763,6 +3442,17 @@ export const editorActions = {
           const startAngle = prevConfig.startAngle ?? -Math.PI / 2;
           const points = prevConfig.points ?? 5;
           const pointRatio = prevConfig.pointRatio ?? 0.5;
+          const cornerRadius = prevConfig.cornerRadius ?? shape.pathCornerRadius ?? 0;
+
+          const unroundedStarD = generatePolygonStarPath(
+            cx,
+            cy,
+            outerRadius,
+            points,
+            pointRatio,
+            startAngle,
+            0
+          );
 
           const newD = generatePolygonStarPath(
             cx,
@@ -2770,7 +3460,8 @@ export const editorActions = {
             outerRadius,
             points,
             pointRatio,
-            startAngle
+            startAngle,
+            cornerRadius
           );
 
           const updatedStarConfig = {
@@ -2779,6 +3470,7 @@ export const editorActions = {
             pointRatio,
             outerRadius,
             startAngle,
+            cornerRadius,
             cx,
             cy,
           };
@@ -2797,9 +3489,735 @@ export const editorActions = {
             ...shape,
             paths: newPaths,
             starConfig: updatedStarConfig,
+            basePathD: unroundedStarD,
+            pathCornerRadius: cornerRadius,
+            pathCornerType: undefined,
+            pathAnchorRadii: undefined,
+            pathAnchorTypes: undefined,
             isCustomizedPath: false,
           } as any;
 
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  updateRectShape(
+    elementId: string,
+    config: {
+      width?: number;
+      height?: number;
+      cornerRadius?: number | RectCornerRadius;
+      cornerType?: CornerType | RectCornerTypes;
+    },
+    options?: { skipHistory?: boolean; force?: boolean }
+  ): void {
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          if (!options?.force && shape.isCustomizedPath) {
+            return;
+          }
+          if (!options?.skipHistory) {
+            pushHistorySnapshot();
+          }
+          const prevConfig: Partial<RectConfig> = shape.rectConfig || {};
+          const bounds = getShapeBounds(shape);
+          const width = Math.max(8, config.width ?? prevConfig.width ?? bounds.width);
+          const height = Math.max(8, config.height ?? prevConfig.height ?? bounds.height);
+          const cornerRadius =
+            config.cornerRadius !== undefined
+              ? config.cornerRadius
+              : (prevConfig.cornerRadius ?? 0);
+          const cornerType: CornerType | RectCornerTypes =
+            config.cornerType ?? prevConfig.cornerType ?? 'round';
+
+          const newD = generateRoundedRectPath(
+            width,
+            height,
+            cornerRadius,
+            cornerType,
+            bounds.x,
+            bounds.y
+          );
+
+          const updatedRectConfig: RectConfig = {
+            width,
+            height,
+            cornerRadius,
+            cornerType,
+          };
+
+          const newPaths = [...shape.paths];
+          if (newPaths.length > 0) {
+            newPaths[0] = { ...newPaths[0], d: newD };
+          } else {
+            newPaths.push({
+              d: newD,
+              fill: state.activeFill,
+            });
+          }
+
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            rectConfig: updatedRectConfig,
+          };
+
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  resetRectShapeToParametric(
+    elementId: string,
+    options?: { skipHistory?: boolean }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const prevConfig: Partial<RectConfig> = shape.rectConfig || {};
+          const bounds = getShapeBounds(shape);
+          const width = Math.max(8, prevConfig.width ?? bounds.width);
+          const height = Math.max(8, prevConfig.height ?? bounds.height);
+          const cornerRadius = prevConfig.cornerRadius ?? 0;
+          const cornerType: CornerType | RectCornerTypes = prevConfig.cornerType ?? 'round';
+
+          const newD = generateRoundedRectPath(width, height, cornerRadius, cornerType, 0, 0);
+
+          const newPaths = [...shape.paths];
+          if (newPaths.length > 0) {
+            newPaths[0] = { ...newPaths[0], d: newD };
+          }
+
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            rectConfig: { width, height, cornerRadius, cornerType },
+            basePathD: undefined,
+            pathCornerRadius: undefined,
+            pathAnchorRadii: undefined,
+            pathAnchorTypes: undefined,
+            isCustomizedPath: false,
+          };
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  /**
+   * Inserts a new anchor point along segment `segmentIndex` of path `pathIndex` at parameter `t` (default 0.5).
+   * If the shape was a parametric rectangle/star, converts its base polygon so the user can freely manipulate
+   * the new anchor point while preserving Live Corner Radius support!
+   */
+  insertPathAnchor(
+    elementId: string,
+    pathIndex = 0,
+    segmentIndex = 0,
+    t = 0.5,
+    options?: { skipHistory?: boolean }
+  ): number | null {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let insertedIdx: number | null = null;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const targetPath = shape.paths[pathIndex];
+          if (!targetPath) break;
+
+          // Determine the un-rounded base path if we're editing pathIndex === 0
+          let currentBaseD = pathIndex === 0 && shape.basePathD ? shape.basePathD : targetPath.d;
+          let carriedRadius = shape.pathCornerRadius ?? 0;
+          let carriedType: CornerType = shape.pathCornerType ?? 'round';
+
+          if (pathIndex === 0 && !shape.basePathD) {
+            if (shape.rectConfig && !shape.isCustomizedPath) {
+              const bounds = getShapeBounds(shape);
+              const w = shape.rectConfig.width ?? bounds.width;
+              const h = shape.rectConfig.height ?? bounds.height;
+              currentBaseD = generateRoundedRectPath(w, h, 0, 'round', bounds.x, bounds.y);
+              carriedRadius = getUniformCornerRadius(shape.rectConfig.cornerRadius);
+              carriedType = getUniformCornerType(shape.rectConfig.cornerType);
+            } else if (shape.starConfig && !shape.isCustomizedPath) {
+              const sc = shape.starConfig;
+              const bounds = getShapeBounds(shape);
+              const outerR = sc.outerRadius ?? Math.max(8, Math.max(bounds.width, bounds.height) / 2);
+              const cx = sc.cx ?? (shape.transform.originX || outerR);
+              const cy = sc.cy ?? (shape.transform.originY || outerR);
+              currentBaseD = generatePolygonStarPath(
+                cx,
+                cy,
+                outerR,
+                sc.points ?? 5,
+                sc.pointRatio ?? 0.5,
+                sc.startAngle ?? -Math.PI / 2,
+                0
+              );
+              carriedRadius = sc.cornerRadius ?? 0;
+            }
+          }
+
+          const res = insertPointOnPathSegment(currentBaseD, segmentIndex, t);
+          if (res.insertedAnchorIndex < 0) break;
+          insertedIdx = res.insertedAnchorIndex;
+
+          // Shift per-anchor radius/type indices after segmentIndex
+          let nextAnchorRadii: Record<number, number> | undefined;
+          if (shape.pathAnchorRadii) {
+            nextAnchorRadii = {};
+            for (const [kStr, val] of Object.entries(shape.pathAnchorRadii)) {
+              const k = Number(kStr);
+              nextAnchorRadii[k > segmentIndex ? k + 1 : k] = val;
+            }
+          }
+          let nextAnchorTypes: Record<number, CornerType> | undefined;
+          if (shape.pathAnchorTypes) {
+            nextAnchorTypes = {};
+            for (const [kStr, val] of Object.entries(shape.pathAnchorTypes)) {
+              const k = Number(kStr);
+              nextAnchorTypes[k > segmentIndex ? k + 1 : k] = val;
+            }
+          }
+
+          const finalD =
+            pathIndex === 0
+              ? applyCornerRadiusToPath(
+                  res.d,
+                  carriedRadius,
+                  carriedType,
+                  nextAnchorRadii,
+                  nextAnchorTypes
+                )
+              : res.d;
+
+          const newPaths = [...shape.paths];
+          newPaths[pathIndex] = { ...targetPath, d: finalD };
+
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            basePathD: pathIndex === 0 ? res.d : shape.basePathD,
+            pathCornerRadius: carriedRadius,
+            pathCornerType: carriedType,
+            pathAnchorRadii: nextAnchorRadii,
+            pathAnchorTypes: nextAnchorTypes,
+            isCustomizedPath: true,
+          };
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+    return insertedIdx;
+  },
+
+  deletePathAnchor(
+    elementId: string,
+    pathIndex = 0,
+    anchorIndex = 0,
+    options?: { skipHistory?: boolean }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+    let resultingD = '';
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const targetPath = shape.paths[pathIndex];
+          if (!targetPath) break;
+
+          const sourceD = pathIndex === 0 && shape.basePathD ? shape.basePathD : targetPath.d;
+          const parsed = parseSvgPath(sourceD);
+
+          // If the path only has 2 or fewer points, deleting the anchor removes the entire shape
+          if (parsed.anchors.length <= 2) {
+            kf.elements.splice(elIndex, 1);
+            state = {
+              ...state,
+              doc,
+              selectedElementIds: state.selectedElementIds.filter((id) => id !== elementId),
+              subselectedAnchor: null,
+            };
+            notify();
+            return;
+          }
+
+          const newBaseD = deleteAnchorFromPathD(sourceD, anchorIndex);
+          if (newBaseD === sourceD) break;
+
+          const finalD =
+            pathIndex === 0
+              ? applyCornerRadiusToPath(
+                  newBaseD,
+                  shape.pathCornerRadius ?? 0,
+                  shape.pathCornerType ?? 'round',
+                  shape.pathAnchorRadii,
+                  shape.pathAnchorTypes
+                )
+              : newBaseD;
+
+          const newPaths = [...shape.paths];
+          newPaths[pathIndex] = { ...targetPath, d: finalD };
+
+          const shiftRecordKeys = <T>(rec?: Record<number, T>): Record<number, T> | undefined => {
+            if (!rec) return undefined;
+            const res: Record<number, T> = {};
+            for (const [kStr, v] of Object.entries(rec)) {
+              const k = Number(kStr);
+              if (k < anchorIndex) res[k] = v;
+              else if (k > anchorIndex) res[k - 1] = v;
+            }
+            return res;
+          };
+
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            basePathD: pathIndex === 0 ? newBaseD : shape.basePathD,
+            pathAnchorPointTypes: shiftRecordKeys(shape.pathAnchorPointTypes),
+            pathAnchorRadii: shiftRecordKeys(shape.pathAnchorRadii),
+            pathAnchorTypes: shiftRecordKeys(shape.pathAnchorTypes),
+            isCustomizedPath: true,
+          };
+          updated = true;
+          resultingD = newBaseD;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      let nextSubselectedAnchor = state.subselectedAnchor;
+      if (
+        state.subselectedAnchor?.shapeId === elementId &&
+        state.subselectedAnchor.pathIndex === pathIndex
+      ) {
+        const remainingCount = parseSvgPath(resultingD).anchors.length;
+        if (remainingCount > 0) {
+          const nextIdx = Math.min(anchorIndex, remainingCount - 1);
+          nextSubselectedAnchor = { shapeId: elementId, pathIndex, anchorIndex: nextIdx };
+        } else {
+          nextSubselectedAnchor = null;
+        }
+      }
+
+      state = { ...state, doc, subselectedAnchor: nextSubselectedAnchor };
+      notify();
+    }
+  },
+
+  /**
+   * Adjusts Live Corner Radius and Corner Style on ANY vector shape (rectangles, polygons, stars,
+   * Pen paths, or custom paths with added anchor points).
+   */
+  updateShapeCornerRadius(
+    elementId: string,
+    config: {
+      cornerRadius?: number;
+      cornerType?: CornerType;
+      anchorRadii?: Record<number, number>;
+      anchorTypes?: Record<number, CornerType>;
+    },
+    options?: { skipHistory?: boolean }
+  ): void {
+    const tl0 = getActiveTimeline(state.doc, state.isolationStack);
+    const fps0 = state.doc.stage.fps || 24;
+    let foundShape: ShapeElement | undefined;
+    for (const layer of tl0.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps0) ??
+        findKeyframeAt(layer, state.currentFrame);
+      const el = kf?.elements.find((e) => e.id === elementId);
+      if (el && el.type === 'shape') {
+        foundShape = el as ShapeElement;
+        break;
+      }
+    }
+    if (!foundShape) return;
+
+    // 1. If uncustomized parametric rectangle and no per-anchor overrides, delegate to updateRectShape
+    if (
+      (foundShape.rectConfig || foundShape.id.startsWith('rect_')) &&
+      !foundShape.isCustomizedPath &&
+      !config.anchorRadii &&
+      !config.anchorTypes
+    ) {
+      editorActions.updateRectShape(
+        elementId,
+        {
+          cornerRadius: config.cornerRadius,
+          cornerType: config.cornerType,
+        },
+        options
+      );
+      return;
+    }
+
+    // 2. If uncustomized parametric star with standard 'round' corners and no per-anchor overrides
+    if (
+      (foundShape.starConfig || foundShape.id.startsWith('poly_') || (foundShape as any).shapeType === 'star') &&
+      !foundShape.isCustomizedPath &&
+      (config.cornerType ?? foundShape.pathCornerType ?? 'round') === 'round' &&
+      !config.anchorRadii &&
+      !config.anchorTypes &&
+      config.cornerRadius !== undefined
+    ) {
+      editorActions.updateStarShape(
+        elementId,
+        { cornerRadius: config.cornerRadius },
+        options
+      );
+      return;
+    }
+
+    // 3. Universal vector shape corner filleting (Pen paths, customized rectangles with added points, stars, etc.)
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const isStar =
+            (Boolean(shape.starConfig) ||
+              shape.id.startsWith('poly_') ||
+              (shape as any).shapeType === 'star') &&
+            !shape.isCustomizedPath;
+
+          let baseD: string;
+          let starParams:
+            | {
+                sc: Partial<NonNullable<ShapeElement['starConfig']>>;
+                pts: number;
+                ratio: number;
+                outerR: number;
+                cx: number;
+                cy: number;
+                startAngle: number;
+              }
+            | undefined;
+
+          if (isStar) {
+            const sc: Partial<NonNullable<ShapeElement['starConfig']>> =
+              shape.starConfig || {};
+            const bounds = getShapeBounds(shape);
+            const outerR =
+              sc.outerRadius ??
+              Math.max(8, Math.max(bounds.width, bounds.height) / 2);
+            const cx = sc.cx ?? (shape.transform.originX || outerR);
+            const cy = sc.cy ?? (shape.transform.originY || outerR);
+            const pts = sc.points ?? 5;
+            const ratio = sc.pointRatio ?? 0.5;
+            const startAngle = sc.startAngle ?? -Math.PI / 2;
+            starParams = { sc, pts, ratio, outerR, cx, cy, startAngle };
+            baseD = generatePolygonStarPath(
+              cx,
+              cy,
+              outerR,
+              pts,
+              ratio,
+              startAngle,
+              0
+            );
+          } else if (shape.basePathD) {
+            baseD = shape.basePathD;
+          } else if (shape.rectConfig && !shape.isCustomizedPath) {
+            const bounds = getShapeBounds(shape);
+            const w = shape.rectConfig.width ?? bounds.width;
+            const h = shape.rectConfig.height ?? bounds.height;
+            baseD = generateRoundedRectPath(w, h, 0, 'round', bounds.x, bounds.y);
+          } else {
+            baseD = shape.paths[0]?.d ?? '';
+          }
+
+          const nextRadius =
+            config.cornerRadius !== undefined
+              ? Math.max(0, config.cornerRadius)
+              : (shape.pathCornerRadius ?? shape.starConfig?.cornerRadius ?? 0);
+          const nextType: CornerType =
+            config.cornerType ?? shape.pathCornerType ?? 'round';
+          const nextAnchorRadii =
+            config.anchorRadii !== undefined ? config.anchorRadii : shape.pathAnchorRadii;
+          const nextAnchorTypes =
+            config.anchorTypes !== undefined ? config.anchorTypes : shape.pathAnchorTypes;
+
+          const newD = applyCornerRadiusToPath(
+            baseD,
+            nextRadius,
+            nextType,
+            nextAnchorRadii,
+            nextAnchorTypes
+          );
+
+          const newPaths = [...shape.paths];
+          if (newPaths.length > 0) {
+            newPaths[0] = { ...newPaths[0], d: newD };
+          }
+
+          let updatedStarConfig = shape.starConfig;
+          if (isStar && starParams) {
+            updatedStarConfig = {
+              ...starParams.sc,
+              points: starParams.pts,
+              pointRatio: starParams.ratio,
+              outerRadius: starParams.outerR,
+              startAngle: starParams.startAngle,
+              cornerRadius: nextRadius,
+              cx: starParams.cx,
+              cy: starParams.cy,
+            };
+          }
+
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            basePathD: baseD,
+            pathCornerRadius: nextRadius,
+            pathCornerType: nextType,
+            pathAnchorRadii: nextAnchorRadii,
+            pathAnchorTypes: nextAnchorTypes,
+            ...(isStar ? { starConfig: updatedStarConfig } : {}),
+          };
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  updateOvalShape(
+    elementId: string,
+    config: {
+      rx?: number;
+      ry?: number;
+      innerRadiusRatio?: number;
+      startAngle?: number;
+      endAngle?: number;
+    },
+    options?: { skipHistory?: boolean; force?: boolean }
+  ): void {
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          if (!options?.force && shape.isCustomizedPath) {
+            return;
+          }
+          if (!options?.skipHistory) {
+            pushHistorySnapshot();
+          }
+          const prevConfig: Partial<OvalConfig> = shape.ovalConfig || {};
+          const bounds = getShapeBounds(shape);
+          const rx = Math.max(4, config.rx ?? prevConfig.rx ?? bounds.width / 2);
+          const ry = Math.max(4, config.ry ?? prevConfig.ry ?? bounds.height / 2);
+          const innerRadiusRatio = Math.max(
+            0,
+            Math.min(0.92, config.innerRadiusRatio ?? prevConfig.innerRadiusRatio ?? 0)
+          );
+          const startAngle = Math.max(
+            0,
+            Math.min(360, config.startAngle ?? prevConfig.startAngle ?? 0)
+          );
+          const endAngle = Math.max(
+            0,
+            Math.min(360, config.endAngle ?? prevConfig.endAngle ?? 360)
+          );
+
+          const updatedOvalConfig: OvalConfig = {
+            rx,
+            ry,
+            innerRadiusRatio,
+            startAngle,
+            endAngle,
+          };
+
+          const newD = generateOvalPath(rx, ry, updatedOvalConfig);
+          const newPaths = [...shape.paths];
+          if (newPaths.length > 0) {
+            newPaths[0] = {
+              ...newPaths[0],
+              d: newD,
+              fillRule: innerRadiusRatio > 0.005 ? 'evenodd' : newPaths[0].fillRule,
+            };
+          } else {
+            newPaths.push({
+              d: newD,
+              fill: state.activeFill,
+              fillRule: innerRadiusRatio > 0.005 ? 'evenodd' : undefined,
+            });
+          }
+
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            ovalConfig: updatedOvalConfig,
+          };
+          updated = true;
+          break;
+        }
+      }
+    }
+
+    if (updated) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  resetOvalShapeToParametric(
+    elementId: string,
+    options?: { skipHistory?: boolean }
+  ): void {
+    if (!options?.skipHistory) {
+      pushHistorySnapshot();
+    }
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let updated = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const elIndex = kf.elements.findIndex((e) => e.id === elementId);
+      if (elIndex >= 0) {
+        const el = kf.elements[elIndex];
+        if (el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const prevConfig: Partial<OvalConfig> = shape.ovalConfig || {};
+          const bounds = getShapeBounds(shape);
+          const rx = Math.max(4, prevConfig.rx ?? bounds.width / 2);
+          const ry = Math.max(4, prevConfig.ry ?? bounds.height / 2);
+          const innerRadiusRatio = prevConfig.innerRadiusRatio ?? 0;
+          const startAngle = prevConfig.startAngle ?? 0;
+          const endAngle = prevConfig.endAngle ?? 360;
+          const updatedOvalConfig: OvalConfig = {
+            rx,
+            ry,
+            innerRadiusRatio,
+            startAngle,
+            endAngle,
+          };
+          const newD = generateOvalPath(rx, ry, updatedOvalConfig);
+          const newPaths = [...shape.paths];
+          if (newPaths.length > 0) {
+            newPaths[0] = { ...newPaths[0], d: newD };
+          }
+          kf.elements[elIndex] = {
+            ...shape,
+            paths: newPaths,
+            ovalConfig: updatedOvalConfig,
+            isCustomizedPath: false,
+          };
           updated = true;
           break;
         }
@@ -2848,23 +4266,39 @@ export const editorActions = {
 
           let newD = '';
           let newStarConfig: any = undefined;
+          let newRectConfig: RectConfig | undefined = undefined;
+          let newOvalConfig: OvalConfig | undefined = undefined;
 
           if (targetType === 'circle') {
             const rX = bw / 2;
             const rY = bh / 2;
             newD = `M ${bx} ${by + rY} a ${rX} ${rY} 0 1 0 ${bw} 0 a ${rX} ${rY} 0 1 0 ${-bw} 0 Z`;
+            newOvalConfig = {
+              rx: rX,
+              ry: rY,
+              innerRadiusRatio: 0,
+              startAngle: 0,
+              endAngle: 360,
+            };
           } else if (targetType === 'rectangle') {
-            newD = `M ${bx} ${by} L ${bx + bw} ${by} L ${bx + bw} ${by + bh} L ${bx} ${by + bh} Z`;
+            newD = generateRoundedRectPath(bw, bh, 0, 'round', bx, by);
+            newRectConfig = {
+              width: bw,
+              height: bh,
+              cornerRadius: 0,
+              cornerType: 'round',
+            };
           } else if (targetType === 'star') {
             const outerRadius = Math.max(bw, bh) / 2;
             const cx = bx + bw / 2;
             const cy = by + bh / 2;
-            newD = generatePolygonStarPath(cx, cy, outerRadius, 5, 0.5, -Math.PI / 2);
+            newD = generatePolygonStarPath(cx, cy, outerRadius, 5, 0.5, -Math.PI / 2, 0);
             newStarConfig = {
               points: 5,
               pointRatio: 0.5,
               outerRadius,
               startAngle: -Math.PI / 2,
+              cornerRadius: 0,
               cx,
               cy,
             };
@@ -2881,12 +4315,22 @@ export const editorActions = {
           };
 
           if (newStarConfig) {
-            (morphedShape as any).starConfig = newStarConfig;
+            morphedShape.starConfig = newStarConfig;
           } else {
-            delete (morphedShape as any).starConfig;
+            delete morphedShape.starConfig;
+          }
+          if (newRectConfig) {
+            morphedShape.rectConfig = newRectConfig;
+          } else {
+            delete morphedShape.rectConfig;
+          }
+          if (newOvalConfig) {
+            morphedShape.ovalConfig = newOvalConfig;
+          } else {
+            delete morphedShape.ovalConfig;
           }
           (morphedShape as any).shapeType = targetType;
-          (morphedShape as any).isCustomizedPath = false;
+          morphedShape.isCustomizedPath = false;
 
           kf.elements[elIndex] = morphedShape;
           updated = true;
@@ -3046,6 +4490,14 @@ export const editorActions = {
   },
 
   deleteSelectedElements(): void {
+    if (state.subselectedAnchor) {
+      editorActions.deletePathAnchor(
+        state.subselectedAnchor.shapeId,
+        state.subselectedAnchor.pathIndex ?? 0,
+        state.subselectedAnchor.anchorIndex
+      );
+      return;
+    }
     if (state.selectedElementIds.length === 0) return;
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
@@ -3062,6 +4514,7 @@ export const editorActions = {
       ...state,
       doc,
       selectedElementIds: [],
+      subselectedAnchor: null,
     };
     notify();
   },
@@ -3704,11 +5157,81 @@ export const editorActions = {
     notify();
   },
 
-  convertToComponent(elementId: string, name: string, kind: SymbolKind = 'movieclip'): void {
-    editorActions.convertToSymbol(elementId, name, kind);
+  convertToComponent(
+    elementId: string,
+    name: string,
+    kind: SymbolKind = 'movieclip',
+    width?: number,
+    height?: number,
+    registrationPoint?: { x: number; y: number }
+  ): void {
+    editorActions.convertToSymbol(elementId, name, kind, width, height, registrationPoint);
   },
 
-  convertToSymbol(elementId: string, name: string, kind: SymbolKind = 'movieclip'): void {
+  createEmptyClip(
+    name?: string,
+    width = 100,
+    height = 100,
+    registrationPoint?: { x: number; y: number }
+  ): string {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const clipIndex = Object.keys(doc.library.symbols).length + 1;
+    const clipName = name?.trim() || `Clip ${clipIndex}`;
+    const symbolId = `sym_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const regX = registrationPoint?.x ?? Math.round(width / 2);
+    const regY = registrationPoint?.y ?? Math.round(height / 2);
+
+    const newSymbol: EditorSymbol = {
+      id: symbolId,
+      name: clipName,
+      kind: 'movieclip',
+      registration: { x: regX, y: regY },
+      width,
+      height,
+      timeline: {
+        frameCount: 12,
+        layers: [
+          {
+            id: `sym_layer_${Date.now()}`,
+            name: 'Layer 1',
+            kind: 'normal',
+            visible: true,
+            locked: false,
+            keyframes: [
+              {
+                id: `sym_kf_${Date.now()}`,
+                index: 0,
+                duration: 12,
+                elements: [],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    doc.library.symbols[symbolId] = newSymbol;
+    state = {
+      ...state,
+      doc,
+      isolationStack: [...state.isolationStack, { symbolId, name: clipName }],
+      currentFrame: 0,
+      currentTime: 0,
+      selectedElementIds: [],
+    };
+    notify();
+    return symbolId;
+  },
+
+  convertToSymbol(
+    elementId: string,
+    name: string,
+    kind: SymbolKind = 'movieclip',
+    width?: number,
+    height?: number,
+    registrationPoint?: { x: number; y: number }
+  ): void {
     pushHistorySnapshot();
     const doc = deepCloneDoc(state.doc);
     const tl = getActiveTimeline(doc, state.isolationStack);
@@ -3728,14 +5251,34 @@ export const editorActions = {
 
     if (!targetEl || !targetKf) return;
 
+    let estWidth = 100;
+    let estHeight = 100;
+    if (targetEl.type === 'text') {
+      estWidth = (targetEl as any).width || 120;
+      estHeight = (targetEl as any).height || 28;
+    } else if (targetEl.type === 'bitmap') {
+      estWidth = (targetEl as any).width || 200;
+      estHeight = (targetEl as any).height || 150;
+    } else if (targetEl.type === 'instance') {
+      const instSym = doc.library.symbols[(targetEl as any).symbolId];
+      estWidth = instSym?.width || 100;
+      estHeight = instSym?.height || 100;
+    }
+    const symWidth = width ?? estWidth;
+    const symHeight = height ?? estHeight;
+    const regX = registrationPoint?.x ?? Math.round(symWidth / 2);
+    const regY = registrationPoint?.y ?? Math.round(symHeight / 2);
+
     const symbolId = `sym_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const innerElement: EditorElement = {
       ...fastClone(targetEl),
       id: `el_inner_${Date.now()}`,
       transform: {
         ...targetEl.transform,
-        x: 0,
-        y: 0,
+        x: regX,
+        y: regY,
+        originX: targetEl.transform.originX ?? regX,
+        originY: targetEl.transform.originY ?? regY,
       },
     };
 
@@ -3743,7 +5286,9 @@ export const editorActions = {
       id: symbolId,
       name,
       kind,
-      registration: { x: 0, y: 0 },
+      registration: { x: regX, y: regY },
+      width: symWidth,
+      height: symHeight,
       timeline: {
         frameCount: 1,
         layers: [
@@ -3775,6 +5320,8 @@ export const editorActions = {
       instanceName: name.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_'),
       transform: {
         ...targetEl.transform,
+        originX: regX,
+        originY: regY,
       },
       alpha: targetEl.alpha ?? 1,
       visible: targetEl.visible ?? true,
@@ -4446,6 +5993,9 @@ export const editorActions = {
     const sym = state.doc.library.symbols[symbolId];
     if (!sym) return;
 
+    const regX = sym.registration?.x ?? Math.round((sym.width || 100) / 2);
+    const regY = sym.registration?.y ?? Math.round((sym.height || 100) / 2);
+
     const instance: EditorElement = {
       id: `instance_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       type: 'instance',
@@ -4462,8 +6012,8 @@ export const editorActions = {
         rotation: 0,
         skewX: 0,
         skewY: 0,
-        originX: sym.registration?.x ?? 0,
-        originY: sym.registration?.y ?? 0,
+        originX: regX,
+        originY: regY,
       },
       alpha: 1,
       visible: true,
@@ -4622,6 +6172,240 @@ export const editorActions = {
     if (doc.i18n?.locales) {
       for (const loc of Object.keys(doc.i18n.locales)) {
         delete doc.i18n.locales[loc][key];
+      }
+    }
+    const unbind = (elements: EditorElement[]) => {
+      for (const el of elements) {
+        if (el.type === 'text' && (el as TextElement).i18nKey === key) {
+          delete (el as TextElement).i18nKey;
+        }
+      }
+    };
+    for (const l of doc.root?.layers || []) {
+      for (const kf of l.keyframes || []) unbind(kf.elements);
+    }
+    for (const sym of Object.values(doc.library?.symbols || {})) {
+      for (const l of sym.timeline?.layers || []) {
+        for (const kf of l.keyframes || []) unbind(kf.elements);
+      }
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  addI18nLocale(locale: string): void {
+    const loc = locale.trim();
+    if (!loc) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (!doc.i18n) {
+      doc.i18n = {
+        defaultLocale: 'en',
+        locales: { en: {} },
+      };
+    }
+    if (!doc.i18n.locales[loc]) {
+      doc.i18n.locales[loc] = {};
+    }
+    state = { ...state, doc, previewLocale: loc };
+    notify();
+  },
+
+  removeI18nLocale(locale: string): void {
+    const loc = locale.trim();
+    if (!loc) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (doc.i18n?.locales?.[loc]) {
+      delete doc.i18n.locales[loc];
+    }
+    const nextPreview =
+      state.previewLocale === loc ? doc.i18n?.defaultLocale || 'en' : state.previewLocale;
+    state = { ...state, doc, previewLocale: nextPreview };
+    notify();
+  },
+
+  addI18nStringKey(key: string, defaultValue = ''): void {
+    const cleanKey = key.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (!cleanKey) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (!doc.i18n) {
+      doc.i18n = {
+        defaultLocale: 'en',
+        locales: { en: {} },
+      };
+    }
+    const defLoc = doc.i18n.defaultLocale || 'en';
+    if (!doc.i18n.locales[defLoc]) {
+      doc.i18n.locales[defLoc] = {};
+    }
+    if (doc.i18n.locales[defLoc][cleanKey] === undefined) {
+      doc.i18n.locales[defLoc][cleanKey] = defaultValue;
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  renameI18nStringKey(oldKey: string, newKey: string): void {
+    const cleanNew = newKey.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (!oldKey || !cleanNew || oldKey === cleanNew) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (doc.i18n?.locales) {
+      for (const loc of Object.keys(doc.i18n.locales)) {
+        if (doc.i18n.locales[loc]?.[oldKey] !== undefined) {
+          doc.i18n.locales[loc][cleanNew] = doc.i18n.locales[loc][oldKey];
+          delete doc.i18n.locales[loc][oldKey];
+        }
+      }
+    }
+    const updateElements = (elements: EditorElement[]) => {
+      for (const el of elements) {
+        if (el.type === 'text' && (el as TextElement).i18nKey === oldKey) {
+          (el as TextElement).i18nKey = cleanNew;
+        }
+      }
+    };
+    for (const l of doc.root?.layers || []) {
+      for (const kf of l.keyframes || []) updateElements(kf.elements);
+    }
+    for (const sym of Object.values(doc.library?.symbols || {})) {
+      for (const l of sym.timeline?.layers || []) {
+        for (const kf of l.keyframes || []) updateElements(kf.elements);
+      }
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  bindElementToI18nKey(elementId: string, key: string | null): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const cleanKey = key ? key.trim().replace(/[^a-zA-Z0-9_-]/g, '_') : undefined;
+
+    let targetText: string | undefined;
+    const updateElements = (elements: EditorElement[]) => {
+      for (const el of elements) {
+        if (el.id === elementId && el.type === 'text') {
+          (el as TextElement).i18nKey = cleanKey;
+          targetText = (el as TextElement).text;
+        }
+      }
+    };
+    for (const l of doc.root?.layers || []) {
+      for (const kf of l.keyframes || []) updateElements(kf.elements);
+    }
+    for (const sym of Object.values(doc.library?.symbols || {})) {
+      for (const l of sym.timeline?.layers || []) {
+        for (const kf of l.keyframes || []) updateElements(kf.elements);
+      }
+    }
+    if (cleanKey && targetText !== undefined) {
+      if (!doc.i18n) {
+        doc.i18n = { defaultLocale: 'en', locales: { en: {} } };
+      }
+      const defLoc = doc.i18n.defaultLocale || 'en';
+      if (!doc.i18n.locales[defLoc]) doc.i18n.locales[defLoc] = {};
+      if (doc.i18n.locales[defLoc][cleanKey] === undefined) {
+        doc.i18n.locales[defLoc][cleanKey] = targetText;
+      }
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  autoExtractI18nStrings(): number {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (!doc.i18n) {
+      doc.i18n = { defaultLocale: 'en', locales: { en: {} } };
+    }
+    const defLoc = doc.i18n.defaultLocale || 'en';
+    if (!doc.i18n.locales[defLoc]) doc.i18n.locales[defLoc] = {};
+
+    let count = 0;
+    const processElements = (elements: EditorElement[]) => {
+      for (const el of elements) {
+        if (el.type === 'text') {
+          const txt = el as TextElement;
+          if (!txt.i18nKey) {
+            const raw = (txt.text || 'text').trim().toLowerCase();
+            const slug =
+              raw
+                .slice(0, 20)
+                .replace(/[^a-z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '') || 'text';
+            let candidateKey = slug;
+            let counter = 1;
+            while (doc.i18n!.locales[defLoc][candidateKey] !== undefined) {
+              candidateKey = `${slug}_${counter++}`;
+            }
+            txt.i18nKey = candidateKey;
+            doc.i18n!.locales[defLoc][candidateKey] = txt.text || '';
+            count++;
+          } else {
+            if (doc.i18n!.locales[defLoc][txt.i18nKey] === undefined) {
+              doc.i18n!.locales[defLoc][txt.i18nKey] = txt.text || '';
+            }
+          }
+        }
+      }
+    };
+
+    for (const l of doc.root?.layers || []) {
+      for (const kf of l.keyframes || []) processElements(kf.elements);
+    }
+    for (const sym of Object.values(doc.library?.symbols || {})) {
+      for (const l of sym.timeline?.layers || []) {
+        for (const kf of l.keyframes || []) processElements(kf.elements);
+      }
+    }
+
+    state = { ...state, doc };
+    notify();
+    return count;
+  },
+
+  importI18nJson(jsonInput: string | Record<string, any>): void {
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    if (!doc.i18n) {
+      doc.i18n = { defaultLocale: 'en', locales: { en: {} } };
+    }
+    let data: any = jsonInput;
+    if (typeof jsonInput === 'string') {
+      try {
+        data = JSON.parse(jsonInput);
+      } catch (err) {
+        console.error('Failed to parse i18n JSON:', err);
+        return;
+      }
+    }
+    if (!data || typeof data !== 'object') return;
+
+    if (data.locales && typeof data.locales === 'object') {
+      if (data.defaultLocale) doc.i18n.defaultLocale = String(data.defaultLocale);
+      for (const [loc, map] of Object.entries(data.locales)) {
+        if (!doc.i18n.locales[loc]) doc.i18n.locales[loc] = {};
+        if (map && typeof map === 'object') {
+          Object.assign(doc.i18n.locales[loc], map);
+        }
+      }
+    } else {
+      const firstVal = Object.values(data)[0];
+      const isNested = firstVal && typeof firstVal === 'object' && !Array.isArray(firstVal);
+      if (isNested) {
+        for (const [loc, map] of Object.entries(data)) {
+          if (!doc.i18n.locales[loc]) doc.i18n.locales[loc] = {};
+          if (map && typeof map === 'object') {
+            Object.assign(doc.i18n.locales[loc], map);
+          }
+        }
+      } else {
+        const targetLoc = state.previewLocale || doc.i18n.defaultLocale || 'en';
+        if (!doc.i18n.locales[targetLoc]) doc.i18n.locales[targetLoc] = {};
+        Object.assign(doc.i18n.locales[targetLoc], data);
       }
     }
     state = { ...state, doc };

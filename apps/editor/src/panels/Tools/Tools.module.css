@@ -162,3 +162,240 @@
   cursor: pointer;
 }
 
+.noneFillSwatch {
+  background-color: #ffffff !important;
+  background-image:
+    linear-gradient(45deg, #cbd5e1 25%, transparent 25%),
+    linear-gradient(-45deg, #cbd5e1 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #cbd5e1 75%),
+    linear-gradient(-45deg, transparent 75%, #cbd5e1 75%),
+    linear-gradient(to top left, transparent calc(50% - 1px), #ef4444 calc(50% - 1px), #ef4444 calc(50% + 1px), transparent calc(50% + 1px)) !important;
+  background-size: 6px 6px, 6px 6px, 6px 6px, 6px 6px, 100% 100% !important;
+  background-position: 0 0, 0 3px, 3px -3px, -3px 0px, 0 0 !important;
+}
+
+/* Floating Pencil Tool Options Window */
+.pencilOptionsWindow {
+  position: fixed;
+  width: 260px;
+  background-color: var(--mx-bg-panel, #1e2128);
+  border: 1px solid var(--mx-border-light, #2e3440);
+  border-radius: var(--mx-radius-lg, 8px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  z-index: 1000;
+  overflow: hidden;
+  user-select: none;
+  font-family: var(--mx-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+}
+
+.optionsHeader {
+  height: 32px;
+  background-color: var(--mx-bg-panel-dark, #16181d);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--mx-border-light, #2e3440);
+  cursor: grab;
+}
+
+.optionsHeader:active {
+  cursor: grabbing;
+}
+
+.optionsHeaderTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mx-text-main, #eceff4);
+}
+
+.closeWindowBtn {
+  background: transparent;
+  border: none;
+  color: var(--mx-text-muted, #7e889b);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s ease;
+}
+
+.closeWindowBtn:hover {
+  background-color: var(--mx-bg-panel-hover, #2a2e39);
+  color: var(--mx-text-main, #ffffff);
+}
+
+.optionsBody {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.liveSelectedNotice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #60a5fa;
+  background-color: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.liveNoticeDot {
+  font-size: 8px;
+  animation: pulseDot 1.5s infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.optionsSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.optionsRowHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.optionsLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mx-text-muted, #a3be8c);
+}
+
+.smoothnessValueBadge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mx-accent, #3b82f6);
+  background-color: rgba(59, 130, 246, 0.12);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.sliderContainer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sliderEndpoint {
+  font-size: 9px;
+  color: var(--mx-text-muted, #7e889b);
+  width: 44px;
+}
+
+.sliderEndpoint:last-child {
+  text-align: right;
+}
+
+.optionsSlider {
+  flex: 1;
+  accent-color: var(--mx-accent, #3b82f6);
+  cursor: pointer;
+  height: 4px;
+}
+
+.presetButtonGroup {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.presetBtn {
+  flex: 1;
+  padding: 3px 0;
+  background-color: var(--mx-bg-panel-dark, #16181d);
+  border: 1px solid var(--mx-border-light, #2e3440);
+  border-radius: 3px;
+  font-size: 9px;
+  color: var(--mx-text-muted, #94a3b8);
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.presetBtn:hover {
+  background-color: var(--mx-bg-panel-hover, #2a2e39);
+  color: var(--mx-text-main, #ffffff);
+}
+
+.presetBtn.activePreset {
+  background-color: rgba(59, 130, 246, 0.2);
+  border-color: var(--mx-accent, #3b82f6);
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+.checkboxSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--mx-border-light, #2e3440);
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--mx-text-main, #eceff4);
+  cursor: pointer;
+}
+
+.checkboxLabel input[type='checkbox'] {
+  accent-color: var(--mx-accent, #3b82f6);
+  cursor: pointer;
+}
+
+.optionsFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--mx-border-light, #2e3440);
+}
+
+.resetBtn {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--mx-border-light, #2e3440);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--mx-text-muted, #94a3b8);
+  cursor: pointer;
+}
+
+.resetBtn:hover {
+  background-color: var(--mx-bg-panel-hover, #2a2e39);
+  color: var(--mx-text-main, #ffffff);
+}
+
+.doneBtn {
+  padding: 4px 12px;
+  background-color: var(--mx-accent, #3b82f6);
+  border: none;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.doneBtn:hover {
+  background-color: var(--mx-accent-hover, #2563eb);
+}
+

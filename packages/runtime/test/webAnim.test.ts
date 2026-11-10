@@ -369,6 +369,8 @@ describe('WebAnim Custom Element (<web-anim>)', () => {
         'reduced-motion',
         'poster-frame',
         'locale',
+        'strings',
+        'translations',
       ]);
     });
 
@@ -431,6 +433,148 @@ describe('WebAnim Custom Element (<web-anim>)', () => {
       el.setAttribute('locale', 'en');
       expect(el.locale).toBe('en');
       expect(el.root.vars.__locale).toBe('en');
+    });
+
+    it('supports case-insensitive locale matching like EN-US and en-US', () => {
+      const i18nDoc: AnimDocument = {
+        ...interactiveBallDoc,
+        root: {
+          ...interactiveBallDoc.root,
+          layers: [
+            {
+              id: 'text-layer',
+              name: 'Text',
+              keyframes: [
+                {
+                  index: 0,
+                  duration: 24,
+                  elements: [
+                    {
+                      id: 'txt-1',
+                      type: 'text',
+                      text: 'Default Hello',
+                      i18nKey: 'welcome_msg',
+                      transform: { x: 50, y: 50 },
+                      fontId: 'default',
+                      fontSize: 16,
+                      color: '#ffffff',
+                      selectable: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        i18n: {
+          defaultLocale: 'en-US',
+          locales: {
+            'en-US': { welcome_msg: 'Welcome to Flashback' },
+            'es-ES': { welcome_msg: 'Bienvenido a Flashback' },
+          },
+        },
+      };
+
+      const el = document.createElement('web-anim') as WebAnim;
+      el.setAttribute('locale', 'EN-US');
+      container.appendChild(el);
+      el.animation = i18nDoc;
+
+      const txtEl = el.shadowRoot?.querySelector('[data-el-id="txt-1"]');
+      expect(txtEl?.textContent).toBe('Welcome to Flashback');
+
+      // Switch to ES-ES (all uppercase)
+      el.setAttribute('locale', 'ES-ES');
+      expect(txtEl?.textContent).toBe('Bienvenido a Flashback');
+    });
+
+    it('supports getTextStrings() and setTextStrings() for third-party CMS dynamic translation swapping', () => {
+      const i18nDoc: AnimDocument = {
+        ...interactiveBallDoc,
+        root: {
+          ...interactiveBallDoc.root,
+          layers: [
+            {
+              id: 'text-layer',
+              name: 'Text',
+              keyframes: [
+                {
+                  index: 0,
+                  duration: 24,
+                  elements: [
+                    {
+                      id: 'txt-1',
+                      type: 'text',
+                      text: 'Buy Now',
+                      i18nKey: 'cta_button',
+                      transform: { x: 50, y: 50 },
+                      fontId: 'default',
+                      fontSize: 16,
+                      color: '#ffffff',
+                      selectable: false,
+                    },
+                    {
+                      id: 'txt-2',
+                      type: 'text',
+                      text: 'Summer Sale',
+                      i18nKey: 'headline',
+                      transform: { x: 50, y: 80 },
+                      fontId: 'default',
+                      fontSize: 20,
+                      color: '#ffffff',
+                      selectable: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        i18n: {
+          defaultLocale: 'en-US',
+          locales: {
+            'en-US': { cta_button: 'Buy Now', headline: 'Summer Sale' },
+            'fr-FR': { cta_button: 'Acheter maintenant', headline: 'Soldes d’été' },
+          },
+        },
+      };
+
+      const el = document.createElement('web-anim') as WebAnim;
+      el.setAttribute('locale', 'en-US');
+      container.appendChild(el);
+      el.animation = i18nDoc;
+
+      // 1. Check getTextStrings()
+      const stringsEn = el.getTextStrings();
+      expect(stringsEn).toEqual({
+        cta_button: 'Buy Now',
+        headline: 'Summer Sale',
+      });
+
+      const stringsFr = el.getTextStrings('fr-FR');
+      expect(stringsFr).toEqual({
+        cta_button: 'Acheter maintenant',
+        headline: 'Soldes d’été',
+      });
+
+      // 2. Test setTextStrings({ ... }) CMS injection
+      const txt1 = el.shadowRoot?.querySelector('[data-el-id="txt-1"]');
+      const txt2 = el.shadowRoot?.querySelector('[data-el-id="txt-2"]');
+      expect(txt1?.textContent).toBe('Buy Now');
+      expect(txt2?.textContent).toBe('Summer Sale');
+
+      // Swap strings via document.querySelector('#anim').setTextStrings({...})
+      el.setTextStrings({
+        cta_button: 'Claim 50% Off Today!',
+        headline: 'Black Friday Sale',
+      });
+
+      expect(txt1?.textContent).toBe('Claim 50% Off Today!');
+      expect(txt2?.textContent).toBe('Black Friday Sale');
+
+      // 3. Test passing strings attribute as JSON prop
+      el.setAttribute('strings', JSON.stringify({ cta_button: 'Shop Flash Deal' }));
+      expect(txt1?.textContent).toBe('Shop Flash Deal');
     });
   });
 });

@@ -5,4 +5,4 @@ export { colorTransformToMatrix, colorTransformToCSS, colorTransformToSVGFilter,
 export { createShapeSVG, renderShape } from './shape';
 export { renderBitmap } from './bitmap';
 export { renderVideo, parseVideoEmbedUrl, type ParsedVideoEmbed } from './video';
-export { renderText, setTextContent, sanitizeHTML, type TextVariableBinding, type TextRenderOptions } from './text';
+export { renderText, setTextContent, sanitizeHTML, resolveI18nText, type TextVariableBinding, type TextRenderOptions } from './text';

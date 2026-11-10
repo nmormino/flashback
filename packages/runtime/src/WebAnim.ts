@@ -10,6 +10,7 @@ import { TimelinePipeline, Timeline } from './player/Timeline';
 import { Ticker } from './player/Ticker';
 import { DomRenderer } from './render/DomRenderer';
 import { fillToCSS } from './render/fills';
+import { resolveI18nText } from './render/text';
 
 const STAGE_STYLES = `
   :host {
@@ -89,6 +90,8 @@ export class WebAnim extends HTMLElementBase {
     'reduced-motion',
     'poster-frame',
     'locale',
+    'strings',
+    'translations',
   ];
 
   private _animation: AnimDocument | null = null;
@@ -176,6 +179,15 @@ export class WebAnim extends HTMLElementBase {
       if (this._pipeline) this._pipeline.root.vars.__locale = this._locale;
       this._renderer?.setLocale(this._locale);
       this._renderer?.syncTextVariables();
+    } else if (name === 'strings' || name === 'translations') {
+      if (newValue) {
+        try {
+          const parsed = JSON.parse(newValue);
+          this.setTextStrings(parsed);
+        } catch (err) {
+          console.warn(`[web-anim] Failed to parse ${name} attribute JSON:`, err);
+        }
+      }
     }
   }
 
@@ -229,6 +241,143 @@ export class WebAnim extends HTMLElementBase {
     if (this._pipeline) this._pipeline.root.vars.__locale = val;
     this._renderer?.setLocale(val);
     this._renderer?.syncTextVariables();
+  }
+
+  /**
+   * Keyed strings dictionary for the current active locale.
+   * Getting returns `getTextStrings()`.
+   * Setting merges the object or parses JSON string via `setTextStrings()`.
+   */
+  public get strings(): Record<string, string> {
+    return this.getTextStrings();
+  }
+
+  public set strings(val: Record<string, any> | string) {
+    if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val);
+        this.setTextStrings(parsed);
+      } catch (err) {
+        console.warn('[web-anim] Failed to parse strings property JSON:', err);
+      }
+    } else if (val && typeof val === 'object') {
+      this.setTextStrings(val);
+    }
+  }
+
+  /**
+   * Full multi-locale dictionary (`doc.i18n.locales`).
+   */
+  public get translations(): Record<string, Record<string, string>> {
+    return this._animation?.i18n?.locales || {};
+  }
+
+  public set translations(val: Record<string, Record<string, string>> | string) {
+    if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val);
+        this.setTextStrings(parsed);
+      } catch (err) {
+        console.warn('[web-anim] Failed to parse translations property JSON:', err);
+      }
+    } else if (val && typeof val === 'object') {
+      this.setTextStrings(val);
+    }
+  }
+
+  /**
+   * Returns a keyed map of all localized text strings for the specified locale (or current active locale).
+   * Perfect for extracting all translatable strings from the component.
+   *
+   * Example:
+   *   const strings = document.querySelector('#animation-id').getTextStrings();
+   */
+  public getTextStrings(locale?: string): Record<string, string> {
+    const loc = locale || this.locale;
+    const result: Record<string, string> = {};
+    const doc = this._animation;
+    if (!doc) return result;
+
+    // Collect all i18nKeys present in document text elements
+    const collectFromElements = (elements: any[]) => {
+      for (const el of elements || []) {
+        if (el?.type === 'text' && el.i18nKey) {
+          const translated = resolveI18nText(doc, loc, el.i18nKey);
+          result[el.i18nKey] = translated !== undefined ? translated : (el.text || '');
+        }
+      }
+    };
+
+    for (const layer of doc.root?.layers || []) {
+      for (const kf of layer.keyframes || []) {
+        collectFromElements(kf.elements);
+      }
+    }
+    for (const sym of Object.values(doc.library?.symbols || {})) {
+      for (const layer of sym.timeline?.layers || []) {
+        for (const kf of layer.keyframes || []) {
+          collectFromElements(kf.elements);
+        }
+      }
+    }
+
+    // Also include any extra keys defined in doc.i18n.locales for this locale
+    const locales = doc.i18n?.locales || {};
+    const normTarget = loc.toLowerCase().replace(/_/g, '-');
+    for (const [k, map] of Object.entries(locales)) {
+      if (k.toLowerCase().replace(/_/g, '-') === normTarget && map) {
+        Object.assign(result, map);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Swaps out or updates text strings at runtime (e.g. from a third-party CMS).
+   *
+   * Example:
+   *   document.querySelector('#animation-id').setTextStrings({ headline: 'New Headline' });
+   */
+  public setTextStrings(
+    strings: Record<string, any>,
+    locale?: string
+  ): void {
+    if (!this._animation) return;
+    if (!this._animation.i18n) {
+      this._animation.i18n = {
+        defaultLocale: this._locale || 'en',
+        locales: {},
+      };
+    }
+
+    const targetLocale = locale || this.locale;
+    const firstVal = Object.values(strings)[0];
+    const isNested = firstVal && typeof firstVal === 'object' && !Array.isArray(firstVal);
+
+    if (isNested) {
+      for (const [locKey, map] of Object.entries(strings)) {
+        if (!this._animation.i18n.locales[locKey]) {
+          this._animation.i18n.locales[locKey] = {};
+        }
+        Object.assign(this._animation.i18n.locales[locKey], map);
+      }
+    } else {
+      const normTarget = targetLocale.toLowerCase().replace(/_/g, '-');
+      let matchingLocKey =
+        Object.keys(this._animation.i18n.locales).find(
+          (k) => k.toLowerCase().replace(/_/g, '-') === normTarget
+        ) || targetLocale;
+
+      if (!this._animation.i18n.locales[matchingLocKey]) {
+        this._animation.i18n.locales[matchingLocKey] = {};
+      }
+      Object.assign(this._animation.i18n.locales[matchingLocKey], strings);
+    }
+
+    // Sync DomRenderer and emit stringschange event
+    this._renderer?.syncTextVariables();
+    this.dispatchEvent(new CustomEvent('stringschange', { detail: { strings, locale: targetLocale } }));
   }
 
   public get src(): string | null {
@@ -526,6 +675,24 @@ export class WebAnim extends HTMLElementBase {
     // 2. Create DomRenderer inside the ShadowRoot
     this._renderer = new DomRenderer(this._viewportEl, { doc, locale: this._locale });
     this._renderer.attach(this._pipeline.root);
+
+    // Apply any initial strings or translations attributes passed as props
+    const stringsAttr = this.getAttribute('strings');
+    if (stringsAttr) {
+      try {
+        this.setTextStrings(JSON.parse(stringsAttr));
+      } catch {
+        /* ignore invalid initial JSON */
+      }
+    }
+    const transAttr = this.getAttribute('translations');
+    if (transAttr) {
+      try {
+        this.setTextStrings(JSON.parse(transAttr));
+      } catch {
+        /* ignore invalid initial JSON */
+      }
+    }
 
     // 3. Create Ticker
     this._ticker = new Ticker({

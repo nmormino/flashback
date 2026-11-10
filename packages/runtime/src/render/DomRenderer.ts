@@ -3,13 +3,14 @@ import type { DisplayObject } from '../display/DisplayObject';
 import { MovieClip } from '../display/MovieClip';
 import type { RendererHooks } from '../display/types';
 import { Matrix2D } from '../math/Matrix2D';
+import { cleanNumber } from '../player/easing';
 import { SVG_NS, createIdScope, type IdScope } from './fills';
 import { filtersToCSS } from './filters';
 import { colorTransformToCSS, colorTransformToSVGFilter } from './colorTransform';
 import { renderShape } from './shape';
 import { renderBitmap } from './bitmap';
 import { renderVideo } from './video';
-import { renderText, setTextContent, type TextVariableBinding } from './text';
+import { renderText, setTextContent, resolveI18nText, type TextVariableBinding } from './text';
 
 export interface DomRendererOptions {
   /** Used to index element definitions by id (shapes/text/bitmaps) and resolve assets. */
@@ -193,9 +194,10 @@ export class DomRenderer implements RendererHooks {
       if (!content) continue;
 
       let textVal: string | undefined;
-      if (def.i18nKey && this.opts.doc?.i18n?.locales?.[this.locale]?.[def.i18nKey] !== undefined) {
-        textVal = this.opts.doc.i18n.locales[this.locale][def.i18nKey];
-      } else if (def.variable) {
+      if (def.i18nKey) {
+        textVal = resolveI18nText(this.opts.doc, this.locale, def.i18nKey);
+      }
+      if (textVal === undefined && def.variable) {
         const v = this.bindingFor(obj).get(def.variable);
         if (v !== undefined) textVal = String(v);
       }
@@ -215,13 +217,17 @@ export class DomRenderer implements RendererHooks {
     if (rec) {
       let css = m.toCSS();
       const t = target.currentDef?.transform;
-      if (t && (t.rotateX || t.rotateY || t.perspective)) {
-        const parts: string[] = [];
-        if (t.perspective) parts.push(`perspective(${t.perspective}px)`);
-        parts.push(css);
-        if (t.rotateX) parts.push(`rotateX(${t.rotateX}deg)`);
-        if (t.rotateY) parts.push(`rotateY(${t.rotateY}deg)`);
-        css = parts.join(' ');
+      if (t && (t.rotateX || t.rotateY)) {
+        const rx = t.rotateX ? cleanNumber(t.rotateX) : 0;
+        const ry = t.rotateY ? cleanNumber(t.rotateY) : 0;
+        const persp = t.perspective ? cleanNumber(t.perspective) : 800;
+        const ox = t.originX ?? 0;
+        const oy = t.originY ?? 0;
+        if (ox !== 0 || oy !== 0) {
+          css = `perspective(${persp}px) ${css} translate(${cleanNumber(ox)}px, ${cleanNumber(oy)}px) rotateX(${rx}deg) rotateY(${ry}deg) translate(${cleanNumber(-ox)}px, ${cleanNumber(-oy)}px)`;
+        } else {
+          css = `perspective(${persp}px) ${css} rotateX(${rx}deg) rotateY(${ry}deg)`;
+        }
       }
       rec.wrapper.style.transform = css;
     }
@@ -341,6 +347,20 @@ export class DomRenderer implements RendererHooks {
         if (target.currentDef.letterSpacing !== prevDef.letterSpacing) {
           content.style.letterSpacing =
             target.currentDef.letterSpacing !== undefined ? `${target.currentDef.letterSpacing}px` : '';
+        }
+        const textPath = content.querySelector('textPath');
+        if (textPath && target.currentDef.pathConfig?.startOffset !== prevDef.pathConfig?.startOffset) {
+          const off =
+            target.currentDef.pathConfig?.startOffset !== undefined
+              ? `${target.currentDef.pathConfig.startOffset}%`
+              : '0%';
+          textPath.setAttribute('startOffset', off);
+        }
+        if (target.currentDef.pathConfig?.pathData !== prevDef.pathConfig?.pathData) {
+          const pathEl = content.querySelector('defs path');
+          if (pathEl && target.currentDef.pathConfig?.pathData) {
+            pathEl.setAttribute('d', target.currentDef.pathConfig.pathData);
+          }
         }
       }
     }
@@ -557,8 +577,8 @@ export class DomRenderer implements RendererHooks {
 
   private createText(obj: DisplayObject, def: TextElement): HTMLElement {
     let localeText: string | undefined;
-    if (def.i18nKey && this.opts.doc?.i18n?.locales?.[this.locale]?.[def.i18nKey] !== undefined) {
-      localeText = this.opts.doc.i18n.locales[this.locale][def.i18nKey];
+    if (def.i18nKey) {
+      localeText = resolveI18nText(this.opts.doc, this.locale, def.i18nKey);
     }
     return renderText(this.doc, def, {
       library: this.library,

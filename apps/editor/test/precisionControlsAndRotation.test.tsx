@@ -8,7 +8,9 @@ import {
 import {
   computeInterpolatedTransform,
   scaleSvgPathD,
+  Stage,
 } from '../src/panels/Stage/Stage';
+import { Properties } from '../src/panels/Properties/Properties';
 import {
   editorActions,
   getEditorState,
@@ -430,6 +432,87 @@ describe('Precision Controls, Math Input & Unbounded Rotation', () => {
       const midT = computeInterpolatedTransform(kf1El, updatedKf2El, 0.5);
       expect(midT.originX).toBe(25);
       expect(midT.originY).toBe(20);
+    });
+  });
+
+  describe('5. 3D Tilt & Perspective Canvas Impact & Properties Controls', () => {
+    it('applies 3D tilt and perspective to element CSS transform on Stage and updates via Properties panel', async () => {
+      (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = createRoot(container);
+
+      // Create test element
+      const rectEl: ShapeElement = {
+        id: 'tilt_rect',
+        type: 'shape',
+        transform: {
+          x: 100,
+          y: 80,
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+          skewX: 0,
+          skewY: 0,
+          originX: 50,
+          originY: 40,
+        },
+        paths: [{ d: 'M 0 0 L 100 0 L 100 80 L 0 80 Z' }],
+        alpha: 1,
+        visible: true,
+      };
+
+      await act(async () => {
+        editorActions.addElement(rectEl);
+        editorActions.selectElement('tilt_rect');
+        root.render(
+          <div>
+            <Stage />
+            <Properties />
+          </div>
+        );
+      });
+
+      // Initially, elementWrapper should have 2D matrix
+      const elWrapper = container.querySelector('[data-el-id="tilt_rect"]') as HTMLElement;
+      expect(elWrapper).not.toBeNull();
+      expect(elWrapper.style.transform).toContain('matrix');
+      expect(elWrapper.style.transform).not.toContain('rotateX');
+
+      // Update 3D tilt X and Y via store / Properties
+      await act(async () => {
+        editorActions.updateElementTransform('tilt_rect', {
+          rotateX: 30,
+          rotateY: -20,
+          perspective: 600,
+        });
+      });
+
+      // Now elWrapper must reflect perspective(600px), rotateX(30deg), and rotateY(-20deg)
+      expect(elWrapper.style.transform).toContain('perspective(600px)');
+      expect(elWrapper.style.transform).toContain('rotateX(30deg)');
+      expect(elWrapper.style.transform).toContain('rotateY(-20deg)');
+
+      // Updating perspective from 600px to 300px updates the transform
+      await act(async () => {
+        editorActions.updateElementTransform('tilt_rect', {
+          perspective: 300,
+        });
+      });
+      expect(elWrapper.style.transform).toContain('perspective(300px)');
+
+      // Reset 3D tilt
+      await act(async () => {
+        editorActions.updateElementTransform('tilt_rect', {
+          rotateX: 0,
+          rotateY: 0,
+        });
+      });
+      expect(elWrapper.style.transform).not.toContain('rotateX');
+      expect(elWrapper.style.transform).not.toContain('rotateY');
+
+      root.unmount();
+      container.remove();
     });
   });
 });

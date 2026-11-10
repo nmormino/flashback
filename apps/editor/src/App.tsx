@@ -4,7 +4,9 @@ import { useEditorStore, editorActions } from './state/editorStore';
 
 export const App: React.FC = () => {
   const selectedElementIds = useEditorStore((s) => s.selectedElementIds);
+  const subselectedAnchor = useEditorStore((s) => s.subselectedAnchor);
   const editingTextElId = useEditorStore((s) => s.editingTextElId);
+  const activeTool = useEditorStore((s) => s.activeTool);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -68,6 +70,24 @@ export const App: React.FC = () => {
         }
       }
 
+      // Toggle Strings & Localization Window: Ctrl+Shift+L / Cmd+Shift+L
+      if (modKey && e.shiftKey && e.key.toLowerCase() === 'l') {
+        if (!isInput) {
+          e.preventDefault();
+          editorActions.toggleLocalization();
+          return;
+        }
+      }
+
+      // Toggle Clips & Assets Window: Ctrl+L / Cmd+L
+      if (modKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+        if (!isInput) {
+          e.preventDefault();
+          editorActions.toggleLibrary();
+          return;
+        }
+      }
+
       // If user is focused on an input/textarea, do not capture single key shortcuts
       if (isInput) return;
 
@@ -112,9 +132,9 @@ export const App: React.FC = () => {
         return;
       }
 
-      // 9. Delete / Backspace: Delete selected elements
+      // 9. Delete / Backspace: Delete selected anchor point or selected elements
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedElementIds.length > 0) {
+        if (subselectedAnchor !== null || selectedElementIds.length > 0) {
           e.preventDefault();
           editorActions.deleteSelectedElements();
           return;
@@ -132,8 +152,8 @@ export const App: React.FC = () => {
         return;
       }
 
-      // 11. Tool Shortcuts (when not modifier-keyed)
-      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      // 11. Tool Shortcuts (when not modifier-keyed, not in text tool, and not editing text)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && activeTool !== 'text' && editingTextElId === null) {
         switch (e.key.toLowerCase()) {
           case 'v':
             editorActions.setActiveTool('select');
@@ -156,6 +176,9 @@ export const App: React.FC = () => {
           case 'p':
             editorActions.setActiveTool('pen');
             break;
+          case 'n':
+            editorActions.setActiveTool('pencil');
+            break;
           case 'h':
             editorActions.setActiveTool('hand');
             break;
@@ -167,7 +190,7 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedElementIds, editingTextElId]);
+  }, [selectedElementIds, editingTextElId, activeTool]);
 
   return <Workspace />;
 };

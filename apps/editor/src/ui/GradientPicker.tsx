@@ -90,6 +90,7 @@ export const GRADIENT_PRESETS: Array<{ name: string; fill: Fill }> = [
 ];
 
 const SOLID_PALETTE = [
+  'transparent',
   '#000000',
   '#334155',
   '#64748b',
@@ -117,14 +118,23 @@ export const GradientPicker: React.FC<GradientPickerProps> = ({
   title = 'Fill & Gradient',
   anchorRef,
 }) => {
-  const currentType =
-    fill?.type === 'linearGradient' || fill?.type === 'radialGradient' || fill?.type === 'solid'
-      ? fill.type
-      : 'solid';
+  const isTransparent =
+    fill?.type === 'none' ||
+    (fill?.type === 'solid' && (fill.color === 'transparent' || fill.color === 'none'));
 
-  const [activeTab, setActiveTab] = useState<'solid' | 'linearGradient' | 'radialGradient'>(
+  const currentType = isTransparent
+    ? 'none'
+    : fill?.type === 'linearGradient' || fill?.type === 'radialGradient' || fill?.type === 'solid'
+    ? fill.type
+    : 'solid';
+
+  const [activeTab, setActiveTab] = useState<'none' | 'solid' | 'linearGradient' | 'radialGradient'>(
     currentType
   );
+
+  useEffect(() => {
+    setActiveTab(currentType);
+  }, [currentType]);
 
   const [selectedStopIdx, setSelectedStopIdx] = useState<number>(0);
   const [draggingStopIdx, setDraggingStopIdx] = useState<number | null>(null);
@@ -281,10 +291,17 @@ export const GradientPicker: React.FC<GradientPickerProps> = ({
   }, [isDraggingAngle, currentStops, onChange]);
 
   // Switch tabs
-  const handleSelectTab = (tab: 'solid' | 'linearGradient' | 'radialGradient') => {
+  const handleSelectTab = (tab: 'none' | 'solid' | 'linearGradient' | 'radialGradient') => {
     setActiveTab(tab);
-    if (tab === 'solid') {
-      const color = currentStops[selectedStopIdx]?.color ?? solidColor;
+    if (tab === 'none') {
+      onChange({ type: 'none' });
+    } else if (tab === 'solid') {
+      const color =
+        currentStops[selectedStopIdx]?.color && currentStops[selectedStopIdx].color !== 'transparent'
+          ? currentStops[selectedStopIdx].color
+          : solidColor !== 'transparent' && solidColor !== 'none'
+          ? solidColor
+          : '#3b82f6';
       onChange({ type: 'solid', color });
     } else if (tab === 'linearGradient') {
       onChange({
@@ -445,10 +462,20 @@ export const GradientPicker: React.FC<GradientPickerProps> = ({
         )}
       </div>
 
-      {/* Mode Tabs: [ Solid ] [ Linear Gradient ] [ Radial Gradient ] */}
+      {/* Mode Tabs: [ None ] [ Solid ] [ Linear Gradient ] [ Radial Gradient ] */}
       <div className={styles.modeTabs}>
         <button
           type="button"
+          data-testid="tab-none"
+          className={`${styles.modeTab} ${activeTab === 'none' ? styles.active : ''}`}
+          onClick={() => handleSelectTab('none')}
+          title="No Fill (Transparent)"
+        >
+          ⃠ None
+        </button>
+        <button
+          type="button"
+          data-testid="tab-solid"
           className={`${styles.modeTab} ${activeTab === 'solid' ? styles.active : ''}`}
           onClick={() => handleSelectTab('solid')}
         >
@@ -456,53 +483,124 @@ export const GradientPicker: React.FC<GradientPickerProps> = ({
         </button>
         <button
           type="button"
+          data-testid="tab-linearGradient"
           className={`${styles.modeTab} ${activeTab === 'linearGradient' ? styles.active : ''}`}
           onClick={() => handleSelectTab('linearGradient')}
         >
-          Linear Gradient
+          Linear
         </button>
         <button
           type="button"
+          data-testid="tab-radialGradient"
           className={`${styles.modeTab} ${activeTab === 'radialGradient' ? styles.active : ''}`}
           onClick={() => handleSelectTab('radialGradient')}
         >
-          Radial Gradient
+          Radial
         </button>
       </div>
+
+      {/* None / Transparent Mode */}
+      {activeTab === 'none' && (
+        <div className={styles.noneSection} data-testid="none-section">
+          <div className={styles.nonePreviewCard}>
+            <div className={styles.checkerboardIconLarge} />
+            <div>
+              <div style={{ fontWeight: 600, color: 'var(--mx-text-bright, #fff)', fontSize: 13, marginBottom: 2 }}>
+                Transparent / No Fill
+              </div>
+              <div style={{ color: 'var(--mx-text-muted, #94a3b8)', fontSize: 11 }}>
+                Element interior is completely transparent
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <button
+              type="button"
+              className={styles.switchModeQuickBtn}
+              onClick={() => handleSelectTab('solid')}
+            >
+              Add Solid Color
+            </button>
+            <button
+              type="button"
+              className={styles.switchModeQuickBtn}
+              onClick={() => handleSelectTab('linearGradient')}
+            >
+              Add Gradient
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Solid Color Mode */}
       {activeTab === 'solid' && (
         <div className={styles.solidColorSection}>
-          <div className={styles.stopDetailsRow}>
+          <div className={styles.stopDetailsRow} style={{ justifyContent: 'space-between' }}>
             <div className={styles.stopColorPickerWrap}>
-              <div className={styles.stopColorPreview} style={{ backgroundColor: solidColor }}>
+              <div
+                className={styles.stopColorPreview}
+                style={{ backgroundColor: isTransparent ? 'transparent' : solidColor }}
+              >
                 <input
                   type="color"
                   className={styles.hiddenColorInput}
-                  value={solidColor.length === 7 ? solidColor : '#3b82f6'}
+                  value={solidColor.length === 7 && solidColor.startsWith('#') ? solidColor : '#3b82f6'}
                   onChange={(e) => onChange({ type: 'solid', color: e.target.value })}
                 />
               </div>
               <input
                 type="text"
                 className={styles.hexInput}
-                value={solidColor}
-                onChange={(e) => onChange({ type: 'solid', color: e.target.value })}
+                value={isTransparent ? 'transparent' : solidColor}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'transparent' || val === 'none') {
+                    onChange({ type: 'none' });
+                  } else {
+                    onChange({ type: 'solid', color: val });
+                  }
+                }}
               />
             </div>
+
+            <button
+              type="button"
+              className={`${styles.transparentPreselectBtn} ${isTransparent ? styles.active : ''}`}
+              onClick={() => {
+                handleSelectTab('none');
+              }}
+              data-testid="transparent-preselect-btn"
+              title="Preselect Transparent (No Fill)"
+            >
+              <div className={styles.checkerboardIcon} />
+              <span>Transparent</span>
+            </button>
           </div>
 
           <div className={styles.solidPaletteGrid}>
-            {SOLID_PALETTE.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={styles.solidSwatchBtn}
-                style={{ backgroundColor: c }}
-                onClick={() => onChange({ type: 'solid', color: c })}
-                title={c}
-              />
-            ))}
+            {SOLID_PALETTE.map((c) => {
+              const isItemTransparent = c === 'transparent';
+              const isSelected = isItemTransparent
+                ? isTransparent
+                : !isTransparent && solidColor.toLowerCase() === c.toLowerCase();
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  data-testid={isItemTransparent ? 'transparent-palette-swatch' : undefined}
+                  className={`${styles.solidSwatchBtn} ${isItemTransparent ? styles.checkerboardSwatch : ''} ${isSelected ? styles.selectedSwatch : ''}`}
+                  style={isItemTransparent ? undefined : { backgroundColor: c }}
+                  onClick={() => {
+                    if (isItemTransparent) {
+                      onChange({ type: 'none' });
+                    } else {
+                      onChange({ type: 'solid', color: c });
+                    }
+                  }}
+                  title={isItemTransparent ? 'Transparent (None)' : c}
+                />
+              );
+            })}
           </div>
         </div>
       )}

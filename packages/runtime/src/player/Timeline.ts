@@ -386,6 +386,18 @@ export function interpolateElement(
       sTxt.color && eTxt.color && sTxt.color !== eTxt.color
         ? interpolateColorString(sTxt.color, eTxt.color, t)
         : sTxt.color;
+
+    let pathConfig = sTxt.pathConfig || eTxt.pathConfig;
+    if (sTxt.pathConfig && eTxt.pathConfig) {
+      const sOffset = sTxt.pathConfig.startOffset ?? 0;
+      const eOffset = eTxt.pathConfig.startOffset ?? 0;
+      const startOffset = lerp(sOffset, eOffset, t);
+      pathConfig = {
+        ...sTxt.pathConfig,
+        startOffset,
+      };
+    }
+
     return {
       ...sTxt,
       transform: interpolatedTransform,
@@ -395,6 +407,7 @@ export function interpolateElement(
       ...(sTxt.letterSpacing !== undefined || eTxt.letterSpacing !== undefined
         ? { letterSpacing: lerp(sTxt.letterSpacing ?? 0, eTxt.letterSpacing ?? 0, t) }
         : {}),
+      ...(pathConfig ? { pathConfig } : {}),
     };
   }
 

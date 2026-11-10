@@ -12,7 +12,6 @@ import {
   FolderOpen,
   FolderPlus,
   Layers,
-  Sparkles,
   Eye,
   EyeOff,
   Lock,
@@ -1750,51 +1749,6 @@ export const Timeline: React.FC = () => {
         <div className={styles.statusItem} title="Real-time display performance monitor">
           <span className={styles.statusLabel}>Display:</span>
           <span>{browserFps} FPS</span>
-        </div>
-
-        {/* Quick Action Pills */}
-        <div className={styles.actionPills}>
-          <button
-            type="button"
-            className={styles.actionPillBtn}
-            onClick={() => editorActions.addFolder()}
-            title="Create Nestable Group / Folder"
-          >
-            <FolderPlus size={12} />
-            <span>+ Group</span>
-          </button>
-          <button
-            type="button"
-            className={styles.actionPillBtn}
-            onClick={() => editorActions.insertKeyframe()}
-            title="Insert Keyframe at current timestamp (F6)"
-          >
-            <Plus size={12} />
-            <span>Keyframe (F6)</span>
-          </button>
-          <button
-            type="button"
-            className={styles.actionPillBtn}
-            onClick={() => editorActions.insertBlankKeyframe()}
-            title="Insert Blank Keyframe (F7)"
-          >
-            <Plus size={12} />
-            <span>Blank (F7)</span>
-          </button>
-          <button
-            type="button"
-            className={styles.actionPillBtn}
-            onClick={() => {
-              const target = selectedLayerId ?? activeTl.layers[0]?.id;
-              if (target) {
-                editorActions.createMotionTween(target, currentTime);
-              }
-            }}
-            title="Create Fluid Motion Tween"
-          >
-            <Sparkles size={12} />
-            <span>Tween</span>
-          </button>
         </div>
       </div>
     </div>

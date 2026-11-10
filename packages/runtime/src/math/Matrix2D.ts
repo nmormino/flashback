@@ -259,7 +259,12 @@ export function transformToCSS(transform: Partial<Transform>): string {
   const ry = transform.rotateY ? cleanNumber(transform.rotateY) : 0;
   if (rx !== 0 || ry !== 0) {
     const persp = transform.perspective ? cleanNumber(transform.perspective) : 800;
-    return `perspective(${persp}px) rotateX(${rx}deg) rotateY(${ry}deg) ${baseMatrix}`;
+    const ox = transform.originX ?? 0;
+    const oy = transform.originY ?? 0;
+    if (ox !== 0 || oy !== 0) {
+      return `perspective(${persp}px) ${baseMatrix} translate(${cleanNumber(ox)}px, ${cleanNumber(oy)}px) rotateX(${rx}deg) rotateY(${ry}deg) translate(${cleanNumber(-ox)}px, ${cleanNumber(-oy)}px)`;
+    }
+    return `perspective(${persp}px) ${baseMatrix} rotateX(${rx}deg) rotateY(${ry}deg)`;
   }
   return baseMatrix;
 }
