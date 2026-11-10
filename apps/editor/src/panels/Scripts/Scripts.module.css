@@ -646,6 +646,74 @@
   box-shadow: 0 0 0 1px var(--clamp-color, #f59e0b);
 }
 
+.nestedBlockStack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.nestedBlockStack .clampBlock,
+.nestedBlockStack .stackBlock {
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.addNestedBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.addNestedBtn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  color: #e5e7eb;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.addNestedBtn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.addNestedSelect {
+  background-color: #1c1d22;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 12px;
+  color: #9ca3af;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.addNestedSelect:hover,
+.addNestedSelect:focus {
+  border-style: solid;
+  border-color: #fff;
+  color: #fff;
+  background-color: #24262d;
+}
+
+.emptyCavityHint {
+  font-size: 10px;
+  color: #6b7280;
+  font-style: italic;
+}
+
 /* Middle divider bar for else / default */
 .clampMiddleBar {
   background-color: var(--clamp-color, #f59e0b);

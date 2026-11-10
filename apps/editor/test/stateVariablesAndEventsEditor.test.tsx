@@ -422,6 +422,36 @@ describe('Editor State & Variables, Custom Events, and Script Blocks', () => {
       expect(blocks[5].type).toBe('do_while');
       expect(blocks[5].params.condition).toBe('this.rotation < 180');
     });
+
+    it('supports arbitrary nesting: loops nested inside if conditions and compile cleanly', () => {
+      const nestedCode = `
+        if (this.state.score >= 100) {
+          for (let i = 0; i < 5; i++) {
+            this.x += 10;
+          }
+        }
+      `;
+
+      const parsed = parseJSIntoBlocks(nestedCode);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].type).toBe('if_condition');
+      expect(parsed[0].params.thenBlocks).toHaveLength(1);
+
+      const nestedLoop = parsed[0].params.thenBlocks[0];
+      expect(nestedLoop.type).toBe('repeat_times');
+      expect(nestedLoop.params.times).toBe(5);
+      expect(nestedLoop.params.indexVar).toBe('i');
+      expect(nestedLoop.params.bodyBlocks).toHaveLength(1);
+      expect(nestedLoop.params.bodyBlocks[0].type).toBe('move_by');
+      expect(nestedLoop.params.bodyBlocks[0].params.dx).toBe(10);
+
+      const recompiled = compileBlocksToJS(parsed);
+      expect(recompiled).toContain('if (this.state.score >= 100) {');
+      expect(recompiled).toContain('  for (let i = 0; i < 5; i++) {');
+      expect(recompiled).toContain('    this.x += 10;');
+      expect(recompiled).toContain('  }');
+      expect(recompiled).toContain('}');
+    });
   });
 
   describe('Scripts Panel UI (Variables View & Code Toggle)', () => {
@@ -540,6 +570,65 @@ describe('Editor State & Variables, Custom Events, and Script Blocks', () => {
       expect(loopClamp.textContent).toContain('↳ loop body:');
       // Loop footer arrow
       expect(loopClamp.textContent).toContain('↺');
+    });
+
+    it('allows nesting a loop inside an if statement via cavity + Loop button and compiles cleanly', async () => {
+      // Create element and select it
+      const text = createSampleText('btn-nested', 'Swat Button');
+      const layer = getActiveTimeline(getEditorState().doc).layers[0];
+      const kf = layer.keyframes[0];
+      kf.elements.push(text);
+      editorActions.selectElement('btn-nested');
+
+      await act(async () => {
+        root.render(<Scripts />);
+      });
+
+      // 1. Add If Condition block to stack
+      const ifBtn = container.querySelector(
+        'button[data-block-type="if_condition"]'
+      ) as HTMLButtonElement;
+      expect(ifBtn).not.toBeNull();
+
+      await act(async () => {
+        ifBtn.click();
+      });
+
+      const parentClamp = container.querySelector('[class*="clampBlock"]');
+      expect(parentClamp).not.toBeNull();
+
+      // 2. Click "+ 🔁 Loop" inside the If block's cavity
+      const addLoopInCavityBtn = Array.from(parentClamp!.querySelectorAll('button')).find(
+        (b) => b.textContent?.includes('+ 🔁 Loop')
+      );
+      expect(addLoopInCavityBtn).toBeDefined();
+
+      await act(async () => {
+        addLoopInCavityBtn!.click();
+      });
+
+      // 3. Verify that a nested clamp block now lives inside the parent cavity
+      const nestedClamps = parentClamp!.querySelectorAll('[class*="clampBlock"]');
+      expect(nestedClamps.length).toBeGreaterThanOrEqual(1);
+
+      const nestedLoop = nestedClamps[0];
+      expect(nestedLoop.textContent).toContain('repeat');
+      expect(nestedLoop.textContent).toContain('times (as');
+      expect(nestedLoop.textContent).toContain('↳ loop body:');
+
+      // 4. Toggle Code View and verify that JavaScript compiled with nested loop
+      const toggleCodeBtn = container.querySelector(
+        '[data-testid="toggle-code-view-btn"]'
+      ) as HTMLButtonElement;
+      await act(async () => {
+        toggleCodeBtn.click();
+      });
+
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+      expect(textarea).not.toBeNull();
+      expect(textarea.value).toContain('if (this.state.score >= 100) {');
+      expect(textarea.value).toContain('for (let i = 0; i < 5; i++) {');
+      expect(textarea.value).toContain('}');
     });
   });
 });

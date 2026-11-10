@@ -193,22 +193,186 @@ export const Scripts: React.FC = () => {
     updateBlocks(nextBlocks);
   };
 
-  // Update single block param inline
-  const handleUpdateParam = (blockId: string, paramKey: string, value: any) => {
-    const nextBlocks = blocks.map((b) => {
-      if (b.id !== blockId) return b;
-      return {
-        ...b,
-        params: {
-          ...b.params,
-          [paramKey]: value,
-        },
-      };
+  // Recursive update of a block parameter anywhere in the tree
+  const updateBlockParamInTree = (
+    list: ScriptBlock[],
+    blockId: string,
+    paramKey: string,
+    value: any
+  ): ScriptBlock[] => {
+    return list.map((b) => {
+      if (b.id === blockId) {
+        return {
+          ...b,
+          params: { ...b.params, [paramKey]: value },
+        };
+      }
+      let changed = false;
+      const nextParams = { ...b.params };
+      for (const key of ['thenBlocks', 'elseBlocks', 'bodyBlocks', 'caseBlocks', 'defaultBlocks', 'actionBlocks']) {
+        if (Array.isArray(nextParams[key])) {
+          const nextList = updateBlockParamInTree(nextParams[key], blockId, paramKey, value);
+          if (nextList !== nextParams[key]) {
+            nextParams[key] = nextList;
+            changed = true;
+          }
+        }
+      }
+      return changed ? { ...b, params: nextParams } : b;
     });
+  };
+
+  const handleUpdateParam = (blockId: string, paramKey: string, value: any) => {
+    const nextBlocks = updateBlockParamInTree(blocks, blockId, paramKey, value);
     updateBlocks(nextBlocks);
   };
 
-  // Move block up or down
+  // Add block to a nested branch (e.g. thenBlocks, elseBlocks, bodyBlocks)
+  const addNestedBlock = (
+    parentBlockId: string,
+    branchKey: string,
+    type: ScriptBlockType,
+    defaultParams?: Record<string, any>
+  ) => {
+    const addInTree = (list: ScriptBlock[]): ScriptBlock[] => {
+      return list.map((b) => {
+        if (b.id === parentBlockId) {
+          const currentArr = Array.isArray(b.params[branchKey]) ? [...b.params[branchKey]] : [];
+          currentArr.push(createBlock(type, defaultParams));
+          return {
+            ...b,
+            params: {
+              ...b.params,
+              [branchKey]: currentArr,
+            },
+          };
+        }
+        let changed = false;
+        const nextParams = { ...b.params };
+        for (const key of ['thenBlocks', 'elseBlocks', 'bodyBlocks', 'caseBlocks', 'defaultBlocks', 'actionBlocks']) {
+          if (Array.isArray(nextParams[key])) {
+            const nextList = addInTree(nextParams[key]);
+            if (nextList !== nextParams[key]) {
+              nextParams[key] = nextList;
+              changed = true;
+            }
+          }
+        }
+        return changed ? { ...b, params: nextParams } : b;
+      });
+    };
+    updateBlocks(addInTree(blocks));
+  };
+
+  // Move a block within a nested branch or at top level
+  const moveBlockInBranch = (
+    parentBlockId: string | undefined,
+    branchKey: string | undefined,
+    idx: number,
+    delta: number
+  ) => {
+    if (!parentBlockId || !branchKey) {
+      moveBlock(idx, delta);
+      return;
+    }
+    const moveInTree = (list: ScriptBlock[]): ScriptBlock[] => {
+      return list.map((b) => {
+        if (b.id === parentBlockId) {
+          const currentArr = Array.isArray(b.params[branchKey]) ? [...b.params[branchKey]] : [];
+          const target = idx + delta;
+          if (target >= 0 && target < currentArr.length) {
+            const [moved] = currentArr.splice(idx, 1);
+            currentArr.splice(target, 0, moved);
+            return {
+              ...b,
+              params: { ...b.params, [branchKey]: currentArr },
+            };
+          }
+          return b;
+        }
+        let changed = false;
+        const nextParams = { ...b.params };
+        for (const key of ['thenBlocks', 'elseBlocks', 'bodyBlocks', 'caseBlocks', 'defaultBlocks', 'actionBlocks']) {
+          if (Array.isArray(nextParams[key])) {
+            const nextList = moveInTree(nextParams[key]);
+            if (nextList !== nextParams[key]) {
+              nextParams[key] = nextList;
+              changed = true;
+            }
+          }
+        }
+        return changed ? { ...b, params: nextParams } : b;
+      });
+    };
+    updateBlocks(moveInTree(blocks));
+  };
+
+  // Duplicate a block within a nested branch or at top level
+  const duplicateBlockInBranch = (
+    parentBlockId: string | undefined,
+    branchKey: string | undefined,
+    idx: number
+  ) => {
+    if (!parentBlockId || !branchKey) {
+      duplicateBlock(idx);
+      return;
+    }
+    const dupInTree = (list: ScriptBlock[]): ScriptBlock[] => {
+      return list.map((b) => {
+        if (b.id === parentBlockId) {
+          const currentArr = Array.isArray(b.params[branchKey]) ? [...b.params[branchKey]] : [];
+          if (idx >= 0 && idx < currentArr.length) {
+            const orig = currentArr[idx];
+            const copy = createBlock(orig.type, JSON.parse(JSON.stringify(orig.params)));
+            currentArr.splice(idx + 1, 0, copy);
+            return {
+              ...b,
+              params: { ...b.params, [branchKey]: currentArr },
+            };
+          }
+          return b;
+        }
+        let changed = false;
+        const nextParams = { ...b.params };
+        for (const key of ['thenBlocks', 'elseBlocks', 'bodyBlocks', 'caseBlocks', 'defaultBlocks', 'actionBlocks']) {
+          if (Array.isArray(nextParams[key])) {
+            const nextList = dupInTree(nextParams[key]);
+            if (nextList !== nextParams[key]) {
+              nextParams[key] = nextList;
+              changed = true;
+            }
+          }
+        }
+        return changed ? { ...b, params: nextParams } : b;
+      });
+    };
+    updateBlocks(dupInTree(blocks));
+  };
+
+  // Delete a block from anywhere in the tree
+  const removeBlockById = (blockId: string) => {
+    const removeFromTree = (list: ScriptBlock[]): ScriptBlock[] => {
+      return list
+        .filter((b) => b.id !== blockId)
+        .map((b) => {
+          let changed = false;
+          const nextParams = { ...b.params };
+          for (const key of ['thenBlocks', 'elseBlocks', 'bodyBlocks', 'caseBlocks', 'defaultBlocks', 'actionBlocks']) {
+            if (Array.isArray(nextParams[key])) {
+              const nextList = removeFromTree(nextParams[key]);
+              if (nextList !== nextParams[key]) {
+                nextParams[key] = nextList;
+                changed = true;
+              }
+            }
+          }
+          return changed ? { ...b, params: nextParams } : b;
+        });
+    };
+    updateBlocks(removeFromTree(blocks));
+  };
+
+  // Move block up or down at root level
   const moveBlock = (idx: number, delta: number) => {
     const targetIdx = idx + delta;
     if (targetIdx < 0 || targetIdx >= blocks.length) return;
@@ -218,7 +382,7 @@ export const Scripts: React.FC = () => {
     updateBlocks(next);
   };
 
-  // Duplicate block
+  // Duplicate block at root level
   const duplicateBlock = (idx: number) => {
     const item = blocks[idx];
     const copy = createBlock(item.type, { ...item.params });
@@ -227,7 +391,7 @@ export const Scripts: React.FC = () => {
     updateBlocks(next);
   };
 
-  // Delete block
+  // Delete block at root level
   const removeBlock = (idx: number) => {
     const next = blocks.filter((_, i) => i !== idx);
     updateBlocks(next);
@@ -381,6 +545,1097 @@ export const Scripts: React.FC = () => {
     meta: CATEGORY_METADATA[catKey],
     items: filteredCatalog.filter((b) => b.category === catKey),
   })).filter((g) => g.items.length > 0);
+
+  // Recursive Block Stack Renderer
+  const renderBlockStack = (
+    blockList: ScriptBlock[],
+    parentBlockId?: string,
+    branchKey?: string
+  ): React.ReactNode => {
+    return blockList.map((block, idx) => {
+      const catalogItem = BLOCK_CATALOG.find((b) => b.type === block.type);
+      const color = catalogItem?.color || '#3b82f6';
+      const icon = catalogItem?.icon || '⚙️';
+      const name = catalogItem?.name || block.type;
+
+      const renderBlockActions = () => (
+        <div className={styles.stackBlockActions}>
+          <button
+            type="button"
+            className={styles.blockActionBtn}
+            onClick={() => moveBlockInBranch(parentBlockId, branchKey, idx, -1)}
+            disabled={idx === 0}
+            title="Move Up"
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            className={styles.blockActionBtn}
+            onClick={() => moveBlockInBranch(parentBlockId, branchKey, idx, 1)}
+            disabled={idx === blockList.length - 1}
+            title="Move Down"
+          >
+            ▼
+          </button>
+          <button
+            type="button"
+            className={styles.blockActionBtn}
+            onClick={() => duplicateBlockInBranch(parentBlockId, branchKey, idx)}
+            title="Duplicate Block"
+          >
+            ⧉
+          </button>
+          <button
+            type="button"
+            className={`${styles.blockActionBtn} ${styles.deleteActionBtn}`}
+            onClick={() => removeBlockById(block.id)}
+            title="Delete Block"
+          >
+            ✕
+          </button>
+        </div>
+      );
+
+      // Scratch C-Block & E-Block Clamps for Control Flow and Loops
+      if (CLAMP_BLOCK_TYPES.has(block.type)) {
+        const isLoop =
+          block.type === 'for_each' ||
+          block.type === 'repeat_times' ||
+          block.type === 'while_loop' ||
+          block.type === 'do_while';
+
+        const primaryBranchKey = isLoop
+          ? 'bodyBlocks'
+          : block.type === 'switch_case'
+          ? 'caseBlocks'
+          : 'thenBlocks';
+        const primaryNestedBlocks: ScriptBlock[] = Array.isArray(
+          block.params[primaryBranchKey]
+        )
+          ? block.params[primaryBranchKey]
+          : [];
+
+        return (
+          <div
+            key={block.id}
+            className={`${styles.clampBlock} ${
+              !parentBlockId && draggedIdx === idx ? styles.stackBlockDragging : ''
+            }`}
+            style={{ '--clamp-color': color, backgroundColor: color } as any}
+            draggable={!parentBlockId}
+            onDragStart={(e) => !parentBlockId && handleDragStart(e, idx)}
+            onDragOver={(e) => !parentBlockId && handleDragOver(e, idx)}
+            onDrop={(e) => !parentBlockId && handleDrop(e, idx)}
+          >
+            {/* Clamp Header / Top Bar */}
+            <div className={styles.clampHeader}>
+              <div className={styles.clampHeaderLeft}>
+                <span className={styles.clampIcon}>{icon}</span>
+
+                {block.type === 'if_condition' && (
+                  <>
+                    <span className={styles.clampKeyword}>if</span>
+                    <input
+                      type="text"
+                      className={styles.scratchPillInput}
+                      style={{ width: 160 }}
+                      value={block.params.condition ?? 'this.state.score >= 100'}
+                      placeholder="condition"
+                      onChange={(e) =>
+                        handleUpdateParam(block.id, 'condition', e.target.value)
+                      }
+                    />
+                    <span className={styles.clampKeyword}>then</span>
+                  </>
+                )}
+
+                {block.type === 'if_else' && (
+                  <>
+                    <span className={styles.clampKeyword}>if</span>
+                    <input
+                      type="text"
+                      className={styles.scratchPillInput}
+                      style={{ width: 160 }}
+                      value={block.params.condition ?? 'this.state.score >= 100'}
+                      placeholder="condition"
+                      onChange={(e) =>
+                        handleUpdateParam(block.id, 'condition', e.target.value)
+                      }
+                    />
+                    <span className={styles.clampKeyword}>then</span>
+                  </>
+                )}
+
+                {block.type === 'switch_case' && (
+                  <>
+                    <span className={styles.clampKeyword}>switch</span>
+                    <input
+                      type="text"
+                      className={styles.scratchPillInput}
+                      style={{ width: 130 }}
+                      value={block.params.expression ?? 'this.state.level'}
+                      placeholder="expression"
+                      onChange={(e) =>
+                        handleUpdateParam(block.id, 'expression', e.target.value)
+                      }
+                    />
+                    <span className={styles.clampKeyword}>case</span>
+                    <input
+                      type="text"
+                      className={`${styles.scratchPillInput} ${styles.scratchShortPill}`}
+                      value={block.params.case1 ?? '1'}
+                      placeholder="val"
+                      onChange={(e) =>
+                        handleUpdateParam(block.id, 'case1', e.target.value)
+                      }
+                    />
+                    <span className={styles.clampKeyword}>:</span>
+                  </>
+                )}
+
+                {block.type === 'for_each' && (
+                  <>
+                    <span className={styles.clampKeyword}>for each</span>
+                    <input
+                      type="text"
+                      className={`${styles.scratchPillInput} ${styles.scratchShortPill}`}
+                      value={block.params.item ?? 'item'}
+                      placeholder="item"
+                      onChange={(e) =>
+                        handleUpdateParam(block.id, 'item', e.target.value)
+                      }
+                    />
+                    <span className={styles.clampKeyword}>in</span>
+                    <input
+                      type="text"
+                      className={styles.scratchPillInput}
+                      style={{ width: 140 }}
+                      value={block.params.array ?? '[1, 2, 3]'}
+                      placeholder="array / items"
+                      onChange={(e) =>
+                        handleUpdateParam(block.id, 'array', e.target.value)
+                      }
+                    />
+                  </>
+                )}
+
+                {block.type === 'repeat_times' && (
+                  <>
+                    <span className={styles.clampKeyword}>repeat</span>
+                    <input
+                      type="number"
+                      min={1}
+                      className={styles.scratchNumberPill}
+                      value={block.params.times ?? 5}
+                      onChange={(e) =>
+                        handleUpdateParam(
+                          block.id,
+                          'times',
+                          parseInt(e.target.value, 10) || 1
+                        )
+                      }
+                    />
+                    <span className={styles.clampKeyword}>times (as</span>
+                    <input
+                      type="text"
+                      className={`${styles.scratchPillInput} ${styles.scratchShortPill}`}
+                      value={block.params.indexVar ?? 'i'}
+                      placeholder="i"
+                      onChange={(e) =>
+                        handleUpdateParam(block.id, 'indexVar', e.target.value)
+                      }
+                    />
+                    <span className={styles.clampKeyword}>)</span>
+                  </>
+                )}
+
+                {block.type === 'while_loop' && (
+                  <>
+                    <span className={styles.clampKeyword}>while</span>
+                    <input
+                      type="text"
+                      className={styles.scratchPillInput}
+                      style={{ width: 160 }}
+                      value={block.params.condition ?? 'this.x < 300'}
+                      placeholder="condition"
+                      onChange={(e) =>
+                        handleUpdateParam(block.id, 'condition', e.target.value)
+                      }
+                    />
+                  </>
+                )}
+
+                {block.type === 'do_while' && (
+                  <>
+                    <span className={styles.clampKeyword}>repeat (do)</span>
+                  </>
+                )}
+              </div>
+
+              {renderBlockActions()}
+            </div>
+
+            {/* Primary Mouth / Cavity */}
+            <div className={styles.clampMouth}>
+              <div className={styles.clampSpine} />
+              <div className={styles.clampCavity}>
+                <div className={styles.cavityBranchHeader}>
+                  <span>
+                    ↳{' '}
+                    {isLoop
+                      ? 'loop body'
+                      : block.type === 'switch_case'
+                      ? 'case action'
+                      : 'then do'}
+                    :
+                  </span>
+                </div>
+
+                {/* Nested Blocks inside Cavity */}
+                {primaryNestedBlocks.length > 0 && (
+                  <div className={styles.nestedBlockStack}>
+                    {renderBlockStack(primaryNestedBlocks, block.id, primaryBranchKey)}
+                  </div>
+                )}
+
+                {/* Fallback text input if no nested blocks */}
+                {primaryNestedBlocks.length === 0 && (
+                  <input
+                    type="text"
+                    className={styles.scratchCavityInput}
+                    value={
+                      isLoop
+                        ? block.params.body ?? ''
+                        : block.type === 'switch_case'
+                        ? block.params.action1 ?? 'this.gotoAndPlay(1);'
+                        : block.params.thenAction ?? 'this.play();'
+                    }
+                    placeholder={
+                      isLoop
+                        ? 'loop body action or click + Loop / + Action below'
+                        : 'then action or click + Loop / + Action below'
+                    }
+                    onChange={(e) => {
+                      const key = isLoop
+                        ? 'body'
+                        : block.type === 'switch_case'
+                        ? 'action1'
+                        : 'thenAction';
+                      handleUpdateParam(block.id, key, e.target.value);
+                    }}
+                  />
+                )}
+
+                {/* Quick Add Nested Block Buttons */}
+                <div className={styles.addNestedBar}>
+                  <button
+                    type="button"
+                    className={styles.addNestedBtn}
+                    onClick={() => addNestedBlock(block.id, primaryBranchKey, 'repeat_times')}
+                    title="Nest a loop inside this block"
+                  >
+                    + 🔁 Loop
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.addNestedBtn}
+                    onClick={() => addNestedBlock(block.id, primaryBranchKey, 'if_condition')}
+                    title="Nest an if statement inside this block"
+                  >
+                    + ❓ If
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.addNestedBtn}
+                    onClick={() => addNestedBlock(block.id, primaryBranchKey, 'move_by')}
+                    title="Nest a Move By motion block"
+                  >
+                    + ↔️ Move
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.addNestedBtn}
+                    onClick={() => addNestedBlock(block.id, primaryBranchKey, 'play')}
+                    title="Nest Play action"
+                  >
+                    + ▶ Play
+                  </button>
+                  <select
+                    className={styles.addNestedSelect}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        addNestedBlock(
+                          block.id,
+                          primaryBranchKey,
+                          e.target.value as ScriptBlockType
+                        );
+                        e.target.value = '';
+                      }
+                    }}
+                  >
+                    <option value="" disabled>
+                      + Add any block...
+                    </option>
+                    <optgroup label="Loops & Control">
+                      <option value="repeat_times">🔁 Repeat N Times</option>
+                      <option value="while_loop">🔄 While Loop</option>
+                      <option value="for_each">🔂 For Each</option>
+                      <option value="do_while">🔃 Do While</option>
+                      <option value="if_condition">❓ If Condition</option>
+                      <option value="if_else">🔀 If ... Else</option>
+                    </optgroup>
+                    <optgroup label="Motion & Spawning">
+                      <option value="move_by">↔️ Move By</option>
+                      <option value="set_position">📍 Set Position</option>
+                      <option value="rotate_by">🔄 Rotate By</option>
+                      <option value="spawn_clip">🐣 Spawn Clip</option>
+                    </optgroup>
+                    <optgroup label="Variables & Events">
+                      <option value="change_state_var">📦 Change Variable (+1)</option>
+                      <option value="set_state_var">📦 Set Variable</option>
+                      <option value="emit_custom_event">📡 Emit Custom Event</option>
+                    </optgroup>
+                    <optgroup label="Timeline & Actions">
+                      <option value="play">▶ Play</option>
+                      <option value="stop">⏸ Stop</option>
+                      <option value="goto_and_play">⏩ Go to Frame & Play</option>
+                      <option value="goto_and_stop">⏸ Go to Frame & Stop</option>
+                      <option value="emit_particles">🎆 Emit Particles</option>
+                      <option value="alert">💬 Alert</option>
+                      <option value="console_log">📝 Console Log</option>
+                      <option value="custom_js">⚡ Custom JS</option>
+                    </optgroup>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Middle Bar & Second Mouth for if_else */}
+            {block.type === 'if_else' && (
+              <>
+                <div className={styles.clampMiddleBar}>
+                  <span className={styles.clampKeyword}>else</span>
+                </div>
+                <div className={styles.clampMouth}>
+                  <div className={styles.clampSpine} />
+                  <div className={styles.clampCavity}>
+                    <div className={styles.cavityBranchHeader}>
+                      <span>↳ otherwise do:</span>
+                    </div>
+                    {Array.isArray(block.params.elseBlocks) &&
+                    block.params.elseBlocks.length > 0 ? (
+                      <div className={styles.nestedBlockStack}>
+                        {renderBlockStack(
+                          block.params.elseBlocks,
+                          block.id,
+                          'elseBlocks'
+                        )}
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        className={styles.scratchCavityInput}
+                        value={block.params.elseAction ?? 'this.stop();'}
+                        placeholder="else action or click + Loop / + Action below"
+                        onChange={(e) =>
+                          handleUpdateParam(block.id, 'elseAction', e.target.value)
+                        }
+                      />
+                    )}
+                    <div className={styles.addNestedBar}>
+                      <button
+                        type="button"
+                        className={styles.addNestedBtn}
+                        onClick={() =>
+                          addNestedBlock(block.id, 'elseBlocks', 'repeat_times')
+                        }
+                      >
+                        + 🔁 Loop
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.addNestedBtn}
+                        onClick={() =>
+                          addNestedBlock(block.id, 'elseBlocks', 'stop')
+                        }
+                      >
+                        + ⏸ Stop
+                      </button>
+                      <select
+                        className={styles.addNestedSelect}
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            addNestedBlock(
+                              block.id,
+                              'elseBlocks',
+                              e.target.value as ScriptBlockType
+                            );
+                            e.target.value = '';
+                          }
+                        }}
+                      >
+                        <option value="" disabled>
+                          + Add any block...
+                        </option>
+                        <optgroup label="Loops & Control">
+                          <option value="repeat_times">🔁 Repeat N Times</option>
+                          <option value="while_loop">🔄 While Loop</option>
+                          <option value="for_each">🔂 For Each</option>
+                          <option value="if_condition">❓ If Condition</option>
+                        </optgroup>
+                        <optgroup label="Timeline & Motion">
+                          <option value="stop">⏸ Stop</option>
+                          <option value="play">▶ Play</option>
+                          <option value="move_by">↔️ Move By</option>
+                          <option value="spawn_clip">🐣 Spawn Clip</option>
+                        </optgroup>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Middle Bar & Second Mouth for switch_case */}
+            {block.type === 'switch_case' && (
+              <>
+                <div className={styles.clampMiddleBar}>
+                  <span className={styles.clampKeyword}>default:</span>
+                </div>
+                <div className={styles.clampMouth}>
+                  <div className={styles.clampSpine} />
+                  <div className={styles.clampCavity}>
+                    <div className={styles.cavityBranchHeader}>
+                      <span>↳ default action:</span>
+                    </div>
+                    {Array.isArray(block.params.defaultBlocks) &&
+                    block.params.defaultBlocks.length > 0 ? (
+                      <div className={styles.nestedBlockStack}>
+                        {renderBlockStack(
+                          block.params.defaultBlocks,
+                          block.id,
+                          'defaultBlocks'
+                        )}
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        className={styles.scratchCavityInput}
+                        value={block.params.defaultAction ?? 'this.stop();'}
+                        placeholder="default action or click + Loop / + Action below"
+                        onChange={(e) =>
+                          handleUpdateParam(
+                            block.id,
+                            'defaultAction',
+                            e.target.value
+                          )
+                        }
+                      />
+                    )}
+                    <div className={styles.addNestedBar}>
+                      <button
+                        type="button"
+                        className={styles.addNestedBtn}
+                        onClick={() =>
+                          addNestedBlock(block.id, 'defaultBlocks', 'repeat_times')
+                        }
+                      >
+                        + 🔁 Loop
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.addNestedBtn}
+                        onClick={() =>
+                          addNestedBlock(block.id, 'defaultBlocks', 'stop')
+                        }
+                      >
+                        + ⏸ Stop
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Middle Bar for do_while */}
+            {block.type === 'do_while' && (
+              <div className={styles.clampMiddleBar}>
+                <span className={styles.clampKeyword}>while</span>
+                <input
+                  type="text"
+                  className={styles.scratchPillInput}
+                  style={{ width: 160 }}
+                  value={block.params.condition ?? 'this.x < 300'}
+                  placeholder="condition"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'condition', e.target.value)
+                  }
+                />
+              </div>
+            )}
+
+            {/* Bottom Foot Bar */}
+            <div className={styles.clampFooter}>
+              {isLoop && (
+                <span className={styles.clampLoopArrow} title="Loop">
+                  ↺
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // Standard Stack Block
+      return (
+        <div
+          key={block.id}
+          className={`${styles.stackBlock} ${
+            !parentBlockId && draggedIdx === idx ? styles.stackBlockDragging : ''
+          }`}
+          style={{ '--block-color': color, backgroundColor: color } as any}
+          draggable={!parentBlockId}
+          onDragStart={(e) => !parentBlockId && handleDragStart(e, idx)}
+          onDragOver={(e) => !parentBlockId && handleDragOver(e, idx)}
+          onDrop={(e) => !parentBlockId && handleDrop(e, idx)}
+        >
+          <div className={styles.stackBlockHeader}>
+            <div className={styles.stackBlockTitleRow}>
+              <span className={styles.stackBlockIcon}>{icon}</span>
+              <span>{name}</span>
+            </div>
+
+            {renderBlockActions()}
+          </div>
+
+          {/* Inline Parameter Controls */}
+          <div className={styles.stackBlockControls}>
+            {block.type === 'alert' && (
+              <>
+                <span className={styles.paramLabel}>Alert message:</span>
+                <input
+                  type="text"
+                  className={styles.paramInput}
+                  value={block.params.message ?? ''}
+                  placeholder="Message to display"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'message', e.target.value)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'console_log' && (
+              <>
+                <span className={styles.paramLabel}>Log message:</span>
+                <input
+                  type="text"
+                  className={styles.paramInput}
+                  value={block.params.message ?? ''}
+                  placeholder="Message to log"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'message', e.target.value)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'stop' && (
+              <span className={styles.paramLabel}>
+                Stops timeline playback immediately
+              </span>
+            )}
+
+            {block.type === 'play' && (
+              <span className={styles.paramLabel}>
+                Resumes timeline animation playback
+              </span>
+            )}
+
+            {block.type === 'goto_and_play' && (
+              <>
+                <span className={styles.paramLabel}>Go to frame:</span>
+                <input
+                  type="number"
+                  min={1}
+                  className={styles.paramNumberInput}
+                  value={block.params.frame ?? 1}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'frame',
+                      parseInt(e.target.value, 10) || 1
+                    )
+                  }
+                />
+                <span className={styles.paramLabel}>and play</span>
+              </>
+            )}
+
+            {block.type === 'goto_and_stop' && (
+              <>
+                <span className={styles.paramLabel}>Go to frame:</span>
+                <input
+                  type="number"
+                  min={1}
+                  className={styles.paramNumberInput}
+                  value={block.params.frame ?? 1}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'frame',
+                      parseInt(e.target.value, 10) || 1
+                    )
+                  }
+                />
+                <span className={styles.paramLabel}>and stop</span>
+              </>
+            )}
+
+            {block.type === 'next_frame' && (
+              <span className={styles.paramLabel}>Advance by 1 frame</span>
+            )}
+
+            {block.type === 'prev_frame' && (
+              <span className={styles.paramLabel}>Step back by 1 frame</span>
+            )}
+
+            {block.type === 'wait_play' && (
+              <>
+                <span className={styles.paramLabel}>Wait</span>
+                <input
+                  type="number"
+                  min={0.1}
+                  step={0.1}
+                  className={styles.paramNumberInput}
+                  value={block.params.seconds ?? 1}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'seconds',
+                      parseFloat(e.target.value) || 1
+                    )
+                  }
+                />
+                <span className={styles.paramLabel}>sec, then play</span>
+              </>
+            )}
+
+            {block.type === 'goto_artboard' && (
+              <>
+                <span className={styles.paramLabel}>Artboard:</span>
+                <select
+                  className={styles.paramSelect}
+                  value={block.params.artboardId ?? ''}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'artboardId', e.target.value)
+                  }
+                >
+                  <option value="">(Select Artboard)</option>
+                  {artboards.map((ab: any) => (
+                    <option key={ab.id} value={ab.id}>
+                      {ab.name || ab.id}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            {block.type === 'open_url' && (
+              <>
+                <span className={styles.paramLabel}>URL:</span>
+                <input
+                  type="text"
+                  className={styles.paramInput}
+                  value={block.params.url ?? 'https://'}
+                  placeholder="https://"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'url', e.target.value)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'move_by' && (
+              <>
+                <span className={styles.paramLabel}>ΔX:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.dx ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'dx', parseFloat(e.target.value) || 0)
+                  }
+                />
+                <span className={styles.paramLabel}>ΔY:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.dy ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'dy', parseFloat(e.target.value) || 0)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'set_position' && (
+              <>
+                <span className={styles.paramLabel}>X:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.x ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'x', parseFloat(e.target.value) || 0)
+                  }
+                />
+                <span className={styles.paramLabel}>Y:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.y ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'y', parseFloat(e.target.value) || 0)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'rotate_by' && (
+              <>
+                <span className={styles.paramLabel}>Rotate:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.degrees ?? 15}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'degrees',
+                      parseFloat(e.target.value) || 0
+                    )
+                  }
+                />
+                <span className={styles.paramLabel}>deg</span>
+              </>
+            )}
+
+            {block.type === 'set_rotation' && (
+              <>
+                <span className={styles.paramLabel}>Angle:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.degrees ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'degrees',
+                      parseFloat(e.target.value) || 0
+                    )
+                  }
+                />
+                <span className={styles.paramLabel}>deg</span>
+              </>
+            )}
+
+            {block.type === 'set_scale' && (
+              <>
+                <span className={styles.paramLabel}>Scale:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.percent ?? 100}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'percent',
+                      parseFloat(e.target.value) || 100
+                    )
+                  }
+                />
+                <span className={styles.paramLabel}>%</span>
+              </>
+            )}
+
+            {block.type === 'set_opacity' && (
+              <>
+                <span className={styles.paramLabel}>Opacity:</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className={styles.paramNumberInput}
+                  value={block.params.percent ?? 100}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'percent',
+                      parseFloat(e.target.value) || 100
+                    )
+                  }
+                />
+                <span className={styles.paramLabel}>%</span>
+              </>
+            )}
+
+            {block.type === 'toggle_visible' && (
+              <span className={styles.paramLabel}>Toggles show / hide</span>
+            )}
+
+            {block.type === 'set_visible' && (
+              <>
+                <span className={styles.paramLabel}>Visible:</span>
+                <select
+                  className={styles.paramSelect}
+                  value={block.params.visible ? 'true' : 'false'}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'visible',
+                      e.target.value === 'true'
+                    )
+                  }
+                >
+                  <option value="true">True (Show)</option>
+                  <option value="false">False (Hide)</option>
+                </select>
+              </>
+            )}
+
+            {block.type === 'set_state_var' && (
+              <>
+                <span className={styles.paramLabel}>Set:</span>
+                <input
+                  type="text"
+                  list="state-var-list"
+                  className={styles.paramInput}
+                  style={{ width: 85 }}
+                  value={block.params.variable ?? 'score'}
+                  placeholder="varName"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'variable', e.target.value)
+                  }
+                />
+                <datalist id="state-var-list">
+                  {(doc.stateVariables || []).map((v) => (
+                    <option key={v.name} value={v.name} />
+                  ))}
+                </datalist>
+                <span className={styles.paramLabel}>=</span>
+                <input
+                  type="text"
+                  className={styles.paramInput}
+                  style={{ width: 85 }}
+                  value={block.params.value ?? '100'}
+                  placeholder="value"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'value', e.target.value)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'change_state_var' && (
+              <>
+                <span className={styles.paramLabel}>Change:</span>
+                <input
+                  type="text"
+                  list="state-var-list"
+                  className={styles.paramInput}
+                  style={{ width: 85 }}
+                  value={block.params.variable ?? 'score'}
+                  placeholder="varName"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'variable', e.target.value)
+                  }
+                />
+                <datalist id="state-var-list">
+                  {(doc.stateVariables || []).map((v) => (
+                    <option key={v.name} value={v.name} />
+                  ))}
+                </datalist>
+                <span className={styles.paramLabel}>by:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.delta ?? 1}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'delta',
+                      parseFloat(e.target.value) || 0
+                    )
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'emit_custom_event' && (
+              <>
+                <span className={styles.paramLabel}>Emit:</span>
+                <input
+                  type="text"
+                  className={styles.paramInput}
+                  style={{ width: 100 }}
+                  value={block.params.event ?? 'tumbleweed'}
+                  placeholder="eventName"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'event', e.target.value)
+                  }
+                />
+                <span className={styles.paramLabel}>Payload:</span>
+                <input
+                  type="text"
+                  className={styles.paramCodeInput}
+                  value={block.params.payload ?? ''}
+                  placeholder="{ count: 1 } (optional)"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'payload', e.target.value)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'on_custom_event' && (
+              <>
+                <span className={styles.paramLabel}>On:</span>
+                <input
+                  type="text"
+                  className={styles.paramInput}
+                  style={{ width: 100 }}
+                  value={block.params.event ?? 'tumbleweed'}
+                  placeholder="eventName"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'event', e.target.value)
+                  }
+                />
+                <span className={styles.paramLabel}>do:</span>
+                <input
+                  type="text"
+                  className={styles.paramCodeInput}
+                  value={block.params.action ?? 'this.play();'}
+                  placeholder="action"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'action', e.target.value)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'spawn_clip' && (
+              <>
+                <span className={styles.paramLabel}>Spawn clip:</span>
+                <input
+                  type="text"
+                  list="symbol-clip-list"
+                  className={styles.paramInput}
+                  style={{ width: 110 }}
+                  value={block.params.clipName ?? ''}
+                  placeholder="Clip name"
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'clipName', e.target.value)
+                  }
+                />
+                <datalist id="symbol-clip-list">
+                  {Object.keys(doc.library?.symbols || {}).map((name) => (
+                    <option key={name} value={name} />
+                  ))}
+                </datalist>
+                <span className={styles.paramLabel}>at X:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.x ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'x', parseFloat(e.target.value) || 0)
+                  }
+                />
+                <span className={styles.paramLabel}>Y:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.y ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'y', parseFloat(e.target.value) || 0)
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'emit_particles' && (
+              <>
+                <span className={styles.paramLabel}>Preset:</span>
+                <select
+                  className={styles.paramSelect}
+                  value={block.params.preset ?? 'splat'}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'preset', e.target.value)
+                  }
+                >
+                  <option value="splat">Splat (Bug/Impact)</option>
+                  <option value="burst">Burst (Circle)</option>
+                  <option value="confetti">Confetti (Celebration)</option>
+                  <option value="sparks">Sparks (Electric)</option>
+                  <option value="spray">Spray (Upward)</option>
+                  <option value="stream">Stream (Continuous)</option>
+                </select>
+                <span className={styles.paramLabel}>X:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.x ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'x', parseFloat(e.target.value) || 0)
+                  }
+                />
+                <span className={styles.paramLabel}>Y:</span>
+                <input
+                  type="number"
+                  className={styles.paramNumberInput}
+                  value={block.params.y ?? 0}
+                  onChange={(e) =>
+                    handleUpdateParam(block.id, 'y', parseFloat(e.target.value) || 0)
+                  }
+                />
+                <span className={styles.paramLabel}>Count:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  className={styles.paramNumberInput}
+                  value={block.params.particleCount ?? 50}
+                  onChange={(e) =>
+                    handleUpdateParam(
+                      block.id,
+                      'particleCount',
+                      parseInt(e.target.value, 10) || 50
+                    )
+                  }
+                />
+              </>
+            )}
+
+            {block.type === 'custom_js' && (
+              <input
+                type="text"
+                className={styles.paramCodeInput}
+                value={block.params.code ?? ''}
+                placeholder="// JavaScript statement"
+                onChange={(e) =>
+                  handleUpdateParam(block.id, 'code', e.target.value)
+                }
+              />
+            )}
+          </div>
+        </div>
+      );
+    });
+  };
 
   return (
     <div className={styles.actionsContainer}>
@@ -631,906 +1886,7 @@ export const Scripts: React.FC = () => {
                 </div>
               ) : (
                 <div className={styles.blockStack}>
-                  {blocks.map((block, idx) => {
-                    const catalogItem = BLOCK_CATALOG.find((b) => b.type === block.type);
-                    const color = catalogItem?.color || '#3b82f6';
-                    const icon = catalogItem?.icon || '⚙️';
-                    const name = catalogItem?.name || block.type;
-
-                    const renderBlockActions = () => (
-                      <div className={styles.stackBlockActions}>
-                        <button
-                          type="button"
-                          className={styles.blockActionBtn}
-                          onClick={() => moveBlock(idx, -1)}
-                          disabled={idx === 0}
-                          title="Move Up"
-                        >
-                          ▲
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.blockActionBtn}
-                          onClick={() => moveBlock(idx, 1)}
-                          disabled={idx === blocks.length - 1}
-                          title="Move Down"
-                        >
-                          ▼
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.blockActionBtn}
-                          onClick={() => duplicateBlock(idx)}
-                          title="Duplicate Block"
-                        >
-                          ⧉
-                        </button>
-                        <button
-                          type="button"
-                          className={`${styles.blockActionBtn} ${styles.deleteActionBtn}`}
-                          onClick={() => removeBlock(idx)}
-                          title="Delete Block"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    );
-
-                    // Scratch-Style C-Block & E-Block Clamps for Control Flow and Loops
-                    if (CLAMP_BLOCK_TYPES.has(block.type)) {
-                      const isLoop =
-                        block.type === 'for_each' ||
-                        block.type === 'repeat_times' ||
-                        block.type === 'while_loop' ||
-                        block.type === 'do_while';
-
-                      return (
-                        <div
-                          key={block.id}
-                          className={`${styles.clampBlock} ${
-                            draggedIdx === idx ? styles.stackBlockDragging : ''
-                          }`}
-                          style={{ '--clamp-color': color, backgroundColor: color } as any}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, idx)}
-                          onDragOver={(e) => handleDragOver(e, idx)}
-                          onDrop={(e) => handleDrop(e, idx)}
-                        >
-                          {/* Clamp Header / Top Bar */}
-                          <div className={styles.clampHeader}>
-                            <div className={styles.clampHeaderLeft}>
-                              <span className={styles.clampIcon}>{icon}</span>
-
-                              {block.type === 'if_condition' && (
-                                <>
-                                  <span className={styles.clampKeyword}>if</span>
-                                  <input
-                                    type="text"
-                                    className={styles.scratchPillInput}
-                                    style={{ width: 160 }}
-                                    value={block.params.condition ?? 'this.state.score >= 100'}
-                                    placeholder="condition"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'condition', e.target.value)
-                                    }
-                                  />
-                                  <span className={styles.clampKeyword}>then</span>
-                                </>
-                              )}
-
-                              {block.type === 'if_else' && (
-                                <>
-                                  <span className={styles.clampKeyword}>if</span>
-                                  <input
-                                    type="text"
-                                    className={styles.scratchPillInput}
-                                    style={{ width: 160 }}
-                                    value={block.params.condition ?? 'this.state.score >= 100'}
-                                    placeholder="condition"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'condition', e.target.value)
-                                    }
-                                  />
-                                  <span className={styles.clampKeyword}>then</span>
-                                </>
-                              )}
-
-                              {block.type === 'switch_case' && (
-                                <>
-                                  <span className={styles.clampKeyword}>switch</span>
-                                  <input
-                                    type="text"
-                                    className={styles.scratchPillInput}
-                                    style={{ width: 130 }}
-                                    value={block.params.expression ?? 'this.state.level'}
-                                    placeholder="expression"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'expression', e.target.value)
-                                    }
-                                  />
-                                  <span className={styles.clampKeyword}>case</span>
-                                  <input
-                                    type="text"
-                                    className={`${styles.scratchPillInput} ${styles.scratchShortPill}`}
-                                    value={block.params.case1 ?? '1'}
-                                    placeholder="val"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'case1', e.target.value)
-                                    }
-                                  />
-                                  <span className={styles.clampKeyword}>:</span>
-                                </>
-                              )}
-
-                              {block.type === 'for_each' && (
-                                <>
-                                  <span className={styles.clampKeyword}>for each</span>
-                                  <input
-                                    type="text"
-                                    className={`${styles.scratchPillInput} ${styles.scratchShortPill}`}
-                                    value={block.params.item ?? 'item'}
-                                    placeholder="item"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'item', e.target.value)
-                                    }
-                                  />
-                                  <span className={styles.clampKeyword}>in</span>
-                                  <input
-                                    type="text"
-                                    className={styles.scratchPillInput}
-                                    style={{ width: 140 }}
-                                    value={block.params.array ?? '[1, 2, 3]'}
-                                    placeholder="array / items"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'array', e.target.value)
-                                    }
-                                  />
-                                </>
-                              )}
-
-                              {block.type === 'repeat_times' && (
-                                <>
-                                  <span className={styles.clampKeyword}>repeat</span>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    className={styles.scratchNumberPill}
-                                    value={block.params.times ?? 5}
-                                    onChange={(e) =>
-                                      handleUpdateParam(
-                                        block.id,
-                                        'times',
-                                        parseInt(e.target.value, 10) || 1
-                                      )
-                                    }
-                                  />
-                                  <span className={styles.clampKeyword}>times (as</span>
-                                  <input
-                                    type="text"
-                                    className={`${styles.scratchPillInput} ${styles.scratchShortPill}`}
-                                    value={block.params.indexVar ?? 'i'}
-                                    placeholder="i"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'indexVar', e.target.value)
-                                    }
-                                  />
-                                  <span className={styles.clampKeyword}>)</span>
-                                </>
-                              )}
-
-                              {block.type === 'while_loop' && (
-                                <>
-                                  <span className={styles.clampKeyword}>while</span>
-                                  <input
-                                    type="text"
-                                    className={styles.scratchPillInput}
-                                    style={{ width: 160 }}
-                                    value={block.params.condition ?? 'this.x < 300'}
-                                    placeholder="condition"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'condition', e.target.value)
-                                    }
-                                  />
-                                </>
-                              )}
-
-                              {block.type === 'do_while' && (
-                                <>
-                                  <span className={styles.clampKeyword}>repeat (do)</span>
-                                </>
-                              )}
-                            </div>
-
-                            {renderBlockActions()}
-                          </div>
-
-                          {/* Primary Mouth / Cavity */}
-                          <div className={styles.clampMouth}>
-                            <div className={styles.clampSpine} />
-                            <div className={styles.clampCavity}>
-                              <div className={styles.cavityBranchHeader}>
-                                <span>↳ {isLoop ? 'loop body' : 'then do'}:</span>
-                              </div>
-                              {block.type === 'if_condition' && (
-                                <input
-                                  type="text"
-                                  className={styles.scratchCavityInput}
-                                  value={block.params.thenAction ?? 'this.play();'}
-                                  placeholder="then action"
-                                  onChange={(e) =>
-                                    handleUpdateParam(block.id, 'thenAction', e.target.value)
-                                  }
-                                />
-                              )}
-                              {block.type === 'if_else' && (
-                                <input
-                                  type="text"
-                                  className={styles.scratchCavityInput}
-                                  value={block.params.thenAction ?? 'this.play();'}
-                                  placeholder="then action"
-                                  onChange={(e) =>
-                                    handleUpdateParam(block.id, 'thenAction', e.target.value)
-                                  }
-                                />
-                              )}
-                              {block.type === 'switch_case' && (
-                                <input
-                                  type="text"
-                                  className={styles.scratchCavityInput}
-                                  value={block.params.action1 ?? 'this.gotoAndPlay(1);'}
-                                  placeholder="case action"
-                                  onChange={(e) =>
-                                    handleUpdateParam(block.id, 'action1', e.target.value)
-                                  }
-                                />
-                              )}
-                              {(block.type === 'for_each' ||
-                                block.type === 'repeat_times' ||
-                                block.type === 'while_loop' ||
-                                block.type === 'do_while') && (
-                                <input
-                                  type="text"
-                                  className={styles.scratchCavityInput}
-                                  value={block.params.body ?? ''}
-                                  placeholder="loop body actions"
-                                  onChange={(e) =>
-                                    handleUpdateParam(block.id, 'body', e.target.value)
-                                  }
-                                />
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Middle Bar & Second Mouth for if_else */}
-                          {block.type === 'if_else' && (
-                            <>
-                              <div className={styles.clampMiddleBar}>
-                                <span className={styles.clampKeyword}>else</span>
-                              </div>
-                              <div className={styles.clampMouth}>
-                                <div className={styles.clampSpine} />
-                                <div className={styles.clampCavity}>
-                                  <div className={styles.cavityBranchHeader}>
-                                    <span>↳ otherwise do:</span>
-                                  </div>
-                                  <input
-                                    type="text"
-                                    className={styles.scratchCavityInput}
-                                    value={block.params.elseAction ?? 'this.stop();'}
-                                    placeholder="else action"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'elseAction', e.target.value)
-                                    }
-                                  />
-                                </div>
-                              </div>
-                            </>
-                          )}
-
-                          {/* Middle Bar & Second Mouth for switch_case */}
-                          {block.type === 'switch_case' && (
-                            <>
-                              <div className={styles.clampMiddleBar}>
-                                <span className={styles.clampKeyword}>default:</span>
-                              </div>
-                              <div className={styles.clampMouth}>
-                                <div className={styles.clampSpine} />
-                                <div className={styles.clampCavity}>
-                                  <div className={styles.cavityBranchHeader}>
-                                    <span>↳ default action:</span>
-                                  </div>
-                                  <input
-                                    type="text"
-                                    className={styles.scratchCavityInput}
-                                    value={block.params.defaultAction ?? 'this.stop();'}
-                                    placeholder="default action"
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'defaultAction', e.target.value)
-                                    }
-                                  />
-                                </div>
-                              </div>
-                            </>
-                          )}
-
-                          {/* Middle Bar for do_while */}
-                          {block.type === 'do_while' && (
-                            <div className={styles.clampMiddleBar}>
-                              <span className={styles.clampKeyword}>while</span>
-                              <input
-                                type="text"
-                                className={styles.scratchPillInput}
-                                style={{ width: 160 }}
-                                value={block.params.condition ?? 'this.x < 300'}
-                                placeholder="condition"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'condition', e.target.value)
-                                }
-                              />
-                            </div>
-                          )}
-
-                          {/* Bottom Foot Bar */}
-                          <div className={styles.clampFooter}>
-                            {isLoop && (
-                              <span className={styles.clampLoopArrow} title="Loop">
-                                ↺
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div
-                        key={block.id}
-                        className={`${styles.stackBlock} ${
-                          draggedIdx === idx ? styles.stackBlockDragging : ''
-                        }`}
-                        style={{ '--block-color': color, backgroundColor: color } as any}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, idx)}
-                        onDragOver={(e) => handleDragOver(e, idx)}
-                        onDrop={(e) => handleDrop(e, idx)}
-                      >
-                        <div className={styles.stackBlockHeader}>
-                          <div className={styles.stackBlockTitleRow}>
-                            <span className={styles.stackBlockIcon}>{icon}</span>
-                            <span>{name}</span>
-                          </div>
-
-                          {renderBlockActions()}
-                        </div>
-
-                        {/* Inline Parameter Controls */}
-                        <div className={styles.stackBlockControls}>
-                          {block.type === 'alert' && (
-                            <>
-                              <span className={styles.paramLabel}>Alert message:</span>
-                              <input
-                                type="text"
-                                className={styles.paramInput}
-                                value={block.params.message ?? ''}
-                                placeholder="Message to display"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'message', e.target.value)
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'console_log' && (
-                            <>
-                              <span className={styles.paramLabel}>Log message:</span>
-                              <input
-                                type="text"
-                                className={styles.paramInput}
-                                value={block.params.message ?? ''}
-                                placeholder="Message to log"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'message', e.target.value)
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'stop' && (
-                            <span className={styles.paramLabel}>
-                              Stops timeline playback immediately
-                            </span>
-                          )}
-
-                          {block.type === 'play' && (
-                            <span className={styles.paramLabel}>
-                              Resumes timeline animation playback
-                            </span>
-                          )}
-
-                          {block.type === 'goto_and_play' && (
-                            <>
-                              <span className={styles.paramLabel}>Go to Frame:</span>
-                              <input
-                                type="number"
-                                min={1}
-                                className={styles.paramNumberInput}
-                                value={block.params.frame ?? 1}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'frame', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>& Play</span>
-                            </>
-                          )}
-
-                          {block.type === 'goto_and_stop' && (
-                            <>
-                              <span className={styles.paramLabel}>Go to Frame:</span>
-                              <input
-                                type="number"
-                                min={1}
-                                className={styles.paramNumberInput}
-                                value={block.params.frame ?? 1}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'frame', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>& Stop</span>
-                            </>
-                          )}
-
-                          {block.type === 'next_frame' && (
-                            <span className={styles.paramLabel}>Advances playhead by 1 frame</span>
-                          )}
-
-                          {block.type === 'prev_frame' && (
-                            <span className={styles.paramLabel}>Steps playhead back by 1 frame</span>
-                          )}
-
-                          {block.type === 'wait_play' && (
-                            <>
-                              <span className={styles.paramLabel}>Wait</span>
-                              <input
-                                type="number"
-                                min={0.1}
-                                step={0.5}
-                                className={styles.paramNumberInput}
-                                value={block.params.seconds ?? 1}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'seconds', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>seconds then Play</span>
-                            </>
-                          )}
-
-                          {block.type === 'goto_artboard' && (
-                            <>
-                              <span className={styles.paramLabel}>Artboard:</span>
-                              <select
-                                className={styles.paramSelect}
-                                value={block.params.artboardId || ''}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'artboardId', e.target.value)
-                                }
-                              >
-                                {artboards.map((ab) => (
-                                  <option key={ab.id} value={ab.id}>
-                                    {ab.name} {ab.id === activeAb.id ? '(Current)' : ''}
-                                  </option>
-                                ))}
-                              </select>
-
-                              <span className={styles.paramLabel}>Transition:</span>
-                              <select
-                                className={styles.paramSelect}
-                                value={block.params.transition || 'none'}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'transition', e.target.value)
-                                }
-                              >
-                                <option value="none">None</option>
-                                <option value="fade">Fade</option>
-                                <option value="slide">Slide</option>
-                              </select>
-
-                              {block.params.transition !== 'none' && (
-                                <>
-                                  <span className={styles.paramLabel}>Duration:</span>
-                                  <input
-                                    type="number"
-                                    min={50}
-                                    step={50}
-                                    className={styles.paramNumberInput}
-                                    value={block.params.duration ?? 300}
-                                    onChange={(e) =>
-                                      handleUpdateParam(block.id, 'duration', Number(e.target.value))
-                                    }
-                                  />
-                                  <span className={styles.paramLabel}>ms</span>
-                                </>
-                              )}
-                            </>
-                          )}
-
-                          {block.type === 'open_url' && (
-                            <>
-                              <span className={styles.paramLabel}>URL:</span>
-                              <input
-                                type="text"
-                                className={styles.paramInput}
-                                value={block.params.url || ''}
-                                placeholder="https://example.com"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'url', e.target.value)
-                                }
-                              />
-                              <select
-                                className={styles.paramSelect}
-                                value={block.params.target || '_blank'}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'target', e.target.value)
-                                }
-                              >
-                                <option value="_blank">New Tab (_blank)</option>
-                                <option value="_self">Same Tab (_self)</option>
-                              </select>
-                            </>
-                          )}
-
-                          {block.type === 'move_by' && (
-                            <>
-                              <span className={styles.paramLabel}>ΔX:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.dx ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'dx', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>ΔY:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.dy ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'dy', Number(e.target.value))
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'set_position' && (
-                            <>
-                              <span className={styles.paramLabel}>X:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.x ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'x', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>Y:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.y ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'y', Number(e.target.value))
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'rotate_by' && (
-                            <>
-                              <span className={styles.paramLabel}>Angle:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.degrees ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'degrees', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>degrees (relative)</span>
-                            </>
-                          )}
-
-                          {block.type === 'set_rotation' && (
-                            <>
-                              <span className={styles.paramLabel}>Rotation:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.degrees ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'degrees', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>degrees</span>
-                            </>
-                          )}
-
-                          {block.type === 'set_scale' && (
-                            <>
-                              <span className={styles.paramLabel}>Scale:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.percent ?? 100}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'percent', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>%</span>
-                            </>
-                          )}
-
-                          {block.type === 'set_opacity' && (
-                            <>
-                              <span className={styles.paramLabel}>Opacity:</span>
-                              <input
-                                type="number"
-                                min={0}
-                                max={100}
-                                className={styles.paramNumberInput}
-                                value={block.params.percent ?? 100}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'percent', Number(e.target.value))
-                                }
-                              />
-                              <span className={styles.paramLabel}>%</span>
-                            </>
-                          )}
-
-                          {block.type === 'toggle_visible' && (
-                            <span className={styles.paramLabel}>Toggles visible / hidden</span>
-                          )}
-
-                          {block.type === 'set_visible' && (
-                            <>
-                              <span className={styles.paramLabel}>Visibility:</span>
-                              <select
-                                className={styles.paramSelect}
-                                value={block.params.visible ? 'true' : 'false'}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'visible', e.target.value === 'true')
-                                }
-                              >
-                                <option value="true">Visible (true)</option>
-                                <option value="false">Hidden (false)</option>
-                              </select>
-                            </>
-                          )}
-
-                          {block.type === 'set_state_var' && (
-                            <>
-                              <span className={styles.paramLabel}>Set state:</span>
-                              <input
-                                type="text"
-                                list="state-var-list"
-                                className={styles.paramInput}
-                                style={{ width: 100 }}
-                                value={block.params.variable ?? 'score'}
-                                placeholder="variable"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'variable', e.target.value)
-                                }
-                              />
-                              <datalist id="state-var-list">
-                                {(doc.stateVariables || []).map((v) => (
-                                  <option key={v.name} value={v.name} />
-                                ))}
-                              </datalist>
-                              <span className={styles.paramLabel}>=</span>
-                              <input
-                                type="text"
-                                className={styles.paramInput}
-                                style={{ width: 90 }}
-                                value={block.params.value ?? ''}
-                                placeholder="value"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'value', e.target.value)
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'change_state_var' && (
-                            <>
-                              <span className={styles.paramLabel}>Change:</span>
-                              <input
-                                type="text"
-                                list="state-var-list"
-                                className={styles.paramInput}
-                                style={{ width: 100 }}
-                                value={block.params.variable ?? 'score'}
-                                placeholder="variable"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'variable', e.target.value)
-                                }
-                              />
-                              <span className={styles.paramLabel}>by:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.delta ?? 1}
-                                onChange={(e) =>
-                                  handleUpdateParam(
-                                    block.id,
-                                    'delta',
-                                    parseFloat(e.target.value) || 0
-                                  )
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'emit_custom_event' && (
-                            <>
-                              <span className={styles.paramLabel}>Emit:</span>
-                              <input
-                                type="text"
-                                className={styles.paramInput}
-                                style={{ width: 120 }}
-                                value={block.params.event ?? ''}
-                                placeholder="event_name"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'event', e.target.value)
-                                }
-                              />
-                              <span className={styles.paramLabel}>data:</span>
-                              <input
-                                type="text"
-                                className={styles.paramInput}
-                                style={{ width: 100 }}
-                                value={block.params.payload ?? ''}
-                                placeholder="payload (opt)"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'payload', e.target.value)
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'on_custom_event' && (
-                            <>
-                              <span className={styles.paramLabel}>When:</span>
-                              <input
-                                type="text"
-                                className={styles.paramInput}
-                                style={{ width: 110 }}
-                                value={block.params.event ?? ''}
-                                placeholder="event_name"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'event', e.target.value)
-                                }
-                              />
-                              <span className={styles.paramLabel}>do:</span>
-                              <input
-                                type="text"
-                                className={styles.paramCodeInput}
-                                style={{ flex: 1 }}
-                                value={block.params.action ?? 'this.play();'}
-                                placeholder="code"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'action', e.target.value)
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'spawn_clip' && (
-                            <>
-                              <span className={styles.paramLabel}>Spawn clip:</span>
-                              <input
-                                type="text"
-                                list="symbol-clip-list"
-                                className={styles.paramInput}
-                                style={{ width: 110 }}
-                                value={block.params.clipName ?? ''}
-                                placeholder="Clip name"
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'clipName', e.target.value)
-                                }
-                              />
-                              <datalist id="symbol-clip-list">
-                                {Object.keys(doc.library?.symbols || {}).map((name) => (
-                                  <option key={name} value={name} />
-                                ))}
-                              </datalist>
-                              <span className={styles.paramLabel}>at X:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.x ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'x', parseFloat(e.target.value) || 0)
-                                }
-                              />
-                              <span className={styles.paramLabel}>Y:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.y ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'y', parseFloat(e.target.value) || 0)
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'emit_particles' && (
-                            <>
-                              <span className={styles.paramLabel}>Preset:</span>
-                              <select
-                                className={styles.paramSelect}
-                                value={block.params.preset ?? 'splat'}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'preset', e.target.value)
-                                }
-                              >
-                                <option value="splat">Splat (Bug/Impact)</option>
-                                <option value="burst">Burst (Circle)</option>
-                                <option value="confetti">Confetti (Celebration)</option>
-                                <option value="sparks">Sparks (Electric)</option>
-                                <option value="spray">Spray (Upward)</option>
-                                <option value="stream">Stream (Continuous)</option>
-                              </select>
-                              <span className={styles.paramLabel}>X:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.x ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'x', parseFloat(e.target.value) || 0)
-                                }
-                              />
-                              <span className={styles.paramLabel}>Y:</span>
-                              <input
-                                type="number"
-                                className={styles.paramNumberInput}
-                                value={block.params.y ?? 0}
-                                onChange={(e) =>
-                                  handleUpdateParam(block.id, 'y', parseFloat(e.target.value) || 0)
-                                }
-                              />
-                              <span className={styles.paramLabel}>Count:</span>
-                              <input
-                                type="number"
-                                min={1}
-                                max={200}
-                                className={styles.paramNumberInput}
-                                value={block.params.particleCount ?? 50}
-                                onChange={(e) =>
-                                  handleUpdateParam(
-                                    block.id,
-                                    'particleCount',
-                                    parseInt(e.target.value, 10) || 50
-                                  )
-                                }
-                              />
-                            </>
-                          )}
-
-                          {block.type === 'custom_js' && (
-                            <input
-                              type="text"
-                              className={styles.paramCodeInput}
-                              value={block.params.code ?? ''}
-                              placeholder="// JavaScript statement"
-                              onChange={(e) =>
-                                handleUpdateParam(block.id, 'code', e.target.value)
-                              }
-                            />
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {renderBlockStack(blocks)}
                 </div>
               )}
             </div>

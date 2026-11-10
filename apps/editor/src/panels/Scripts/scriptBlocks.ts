@@ -176,7 +176,11 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
     summary: 'Execute action only if condition is true',
     icon: '❓',
     color: '#0ea5e9',
-    defaultParams: { condition: 'this.state.score >= 100', thenAction: 'this.play();' },
+    defaultParams: {
+      condition: 'this.state.score >= 100',
+      thenAction: 'this.play();',
+      thenBlocks: [],
+    },
   },
   {
     type: 'if_else',
@@ -188,7 +192,9 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
     defaultParams: {
       condition: 'this.state.score >= 100',
       thenAction: 'this.play();',
+      thenBlocks: [],
       elseAction: 'this.stop();',
+      elseBlocks: [],
     },
   },
   {
@@ -202,7 +208,9 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
       expression: 'this.state.level',
       case1: '1',
       action1: 'this.gotoAndPlay(1);',
+      caseBlocks: [],
       defaultAction: 'this.stop();',
+      defaultBlocks: [],
     },
   },
   {
@@ -212,7 +220,12 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
     summary: 'Iterate over elements in an array',
     icon: '🔁',
     color: '#0ea5e9',
-    defaultParams: { array: '[1, 2, 3]', item: 'item', body: 'console.log(item);' },
+    defaultParams: {
+      array: '[1, 2, 3]',
+      item: 'item',
+      body: 'console.log(item);',
+      bodyBlocks: [],
+    },
   },
   {
     type: 'repeat_times',
@@ -221,7 +234,12 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
     summary: 'Loop and repeat action N times',
     icon: '🔢',
     color: '#0ea5e9',
-    defaultParams: { times: 5, indexVar: 'i', body: 'this.spawnClip("Fly", { x: i * 20, y: 50 });' },
+    defaultParams: {
+      times: 5,
+      indexVar: 'i',
+      body: 'this.spawnClip("Fly", { x: i * 20, y: 50 });',
+      bodyBlocks: [],
+    },
   },
   {
     type: 'while_loop',
@@ -230,7 +248,11 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
     summary: 'Loop while expression evaluates to true',
     icon: '🔄',
     color: '#0ea5e9',
-    defaultParams: { condition: 'this.x < 300', body: 'this.x += 10;' },
+    defaultParams: {
+      condition: 'this.x < 300',
+      body: 'this.x += 10;',
+      bodyBlocks: [],
+    },
   },
   {
     type: 'do_while',
@@ -239,7 +261,11 @@ export const BLOCK_CATALOG: BlockCatalogItem[] = [
     summary: 'Execute once then repeat while condition holds',
     icon: '🔃',
     color: '#0ea5e9',
-    defaultParams: { condition: 'this.x < 300', body: 'this.x += 10;' },
+    defaultParams: {
+      condition: 'this.x < 300',
+      body: 'this.x += 10;',
+      bodyBlocks: [],
+    },
   },
 
   // Events
@@ -495,10 +521,12 @@ export function createBlock(
 }
 
 /**
- * Compiles an array of ScriptBlock objects into clean, executable JavaScript code.
+ * Compiles an array of ScriptBlock objects into clean, executable JavaScript code with recursive indentation.
  */
-export function compileBlocksToJS(blocks: ScriptBlock[]): string {
+export function compileBlocksToJS(blocks: ScriptBlock[], indentLevel = 0): string {
   if (!blocks || blocks.length === 0) return '';
+  const indent = '  '.repeat(indentLevel);
+  const nextIndent = '  '.repeat(indentLevel + 1);
 
   const statements: string[] = [];
 
@@ -508,44 +536,44 @@ export function compileBlocksToJS(blocks: ScriptBlock[]): string {
     switch (block.type) {
       case 'alert': {
         const msg = String(params.message ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        statements.push(`alert('${msg}');`);
+        statements.push(`${indent}alert('${msg}');`);
         break;
       }
       case 'console_log': {
         const msg = String(params.message ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        statements.push(`console.log('${msg}');`);
+        statements.push(`${indent}console.log('${msg}');`);
         break;
       }
       case 'stop': {
-        statements.push('this.stop();');
+        statements.push(`${indent}this.stop();`);
         break;
       }
       case 'play': {
-        statements.push('this.play();');
+        statements.push(`${indent}this.play();`);
         break;
       }
       case 'goto_and_play': {
         const frame = Number(params.frame) || 1;
-        statements.push(`this.gotoAndPlay(${frame});`);
+        statements.push(`${indent}this.gotoAndPlay(${frame});`);
         break;
       }
       case 'goto_and_stop': {
         const frame = Number(params.frame) || 1;
-        statements.push(`this.gotoAndStop(${frame});`);
+        statements.push(`${indent}this.gotoAndStop(${frame});`);
         break;
       }
       case 'next_frame': {
-        statements.push('this.nextFrame();');
+        statements.push(`${indent}this.nextFrame();`);
         break;
       }
       case 'prev_frame': {
-        statements.push('this.prevFrame();');
+        statements.push(`${indent}this.prevFrame();`);
         break;
       }
       case 'wait_play': {
         const seconds = Number(params.seconds) || 1;
         const ms = seconds * 1000;
-        statements.push(`setTimeout(() => {\n  this.play();\n}, ${ms});`);
+        statements.push(`${indent}setTimeout(() => {\n${nextIndent}this.play();\n${indent}}, ${ms});`);
         break;
       }
       case 'goto_artboard': {
@@ -553,10 +581,10 @@ export function compileBlocksToJS(blocks: ScriptBlock[]): string {
         const transition = params.transition || 'none';
         const duration = Number(params.duration) || 300;
         if (transition === 'none') {
-          statements.push(`gotoArtboard('${abId}');`);
+          statements.push(`${indent}gotoArtboard('${abId}');`);
         } else {
           statements.push(
-            `gotoArtboard('${abId}', { type: '${transition}', duration: ${duration} });`
+            `${indent}gotoArtboard('${abId}', { type: '${transition}', duration: ${duration} });`
           );
         }
         break;
@@ -564,58 +592,58 @@ export function compileBlocksToJS(blocks: ScriptBlock[]): string {
       case 'open_url': {
         const url = String(params.url || '').replace(/'/g, "\\'");
         const target = params.target === '_self' ? '_self' : '_blank';
-        statements.push(`window.open('${url}', '${target}');`);
+        statements.push(`${indent}window.open('${url}', '${target}');`);
         break;
       }
       case 'move_by': {
         const dx = Number(params.dx) || 0;
         const dy = Number(params.dy) || 0;
         if (dx !== 0 && dy !== 0) {
-          statements.push(`this.x += ${dx};\nthis.y += ${dy};`);
+          statements.push(`${indent}this.x += ${dx};\n${indent}this.y += ${dy};`);
         } else if (dx !== 0) {
-          statements.push(`this.x += ${dx};`);
+          statements.push(`${indent}this.x += ${dx};`);
         } else if (dy !== 0) {
-          statements.push(`this.y += ${dy};`);
+          statements.push(`${indent}this.y += ${dy};`);
         } else {
-          statements.push('this.x += 0;\nthis.y += 0;');
+          statements.push(`${indent}this.x += 0;\n${indent}this.y += 0;`);
         }
         break;
       }
       case 'set_position': {
         const x = Number(params.x) || 0;
         const y = Number(params.y) || 0;
-        statements.push(`this.x = ${x};\nthis.y = ${y};`);
+        statements.push(`${indent}this.x = ${x};\n${indent}this.y = ${y};`);
         break;
       }
       case 'rotate_by': {
         const deg = Number(params.degrees) || 0;
-        statements.push(`this.rotation += ${deg};`);
+        statements.push(`${indent}this.rotation += ${deg};`);
         break;
       }
       case 'set_rotation': {
         const deg = Number(params.degrees) || 0;
-        statements.push(`this.rotation = ${deg};`);
+        statements.push(`${indent}this.rotation = ${deg};`);
         break;
       }
       case 'set_scale': {
         const pct = Number(params.percent) ?? 100;
         const s = pct / 100;
-        statements.push(`this.scaleX = ${s};\nthis.scaleY = ${s};`);
+        statements.push(`${indent}this.scaleX = ${s};\n${indent}this.scaleY = ${s};`);
         break;
       }
       case 'set_opacity': {
         const pct = Number(params.percent) ?? 100;
         const a = pct / 100;
-        statements.push(`this.alpha = ${a};`);
+        statements.push(`${indent}this.alpha = ${a};`);
         break;
       }
       case 'toggle_visible': {
-        statements.push('this.visible = !this.visible;');
+        statements.push(`${indent}this.visible = !this.visible;`);
         break;
       }
       case 'set_visible': {
         const visible = Boolean(params.visible);
-        statements.push(`this.visible = ${visible};`);
+        statements.push(`${indent}this.visible = ${visible};`);
         break;
       }
       case 'set_state_var': {
@@ -624,85 +652,175 @@ export function compileBlocksToJS(blocks: ScriptBlock[]): string {
         const isNum = !isNaN(Number(rawVal)) && String(rawVal).trim() !== '';
         const isBool = rawVal === 'true' || rawVal === 'false';
         const valStr = isNum || isBool ? String(rawVal).trim() : `'${String(rawVal).replace(/'/g, "\\'")}'`;
-        statements.push(`this.state.${varName} = ${valStr};`);
+        statements.push(`${indent}this.state.${varName} = ${valStr};`);
         break;
       }
       case 'change_state_var': {
         const varName = String(params.variable || 'score').trim() || 'score';
         const delta = Number(params.delta) || 1;
-        statements.push(`this.state.${varName} += ${delta};`);
+        statements.push(`${indent}this.state.${varName} += ${delta};`);
         break;
       }
       case 'emit_custom_event': {
         const ev = String(params.event || '').replace(/'/g, "\\'");
         const payload = String(params.payload ?? '').trim();
         if (payload) {
-          statements.push(`this.emit('${ev}', ${payload});`);
+          statements.push(`${indent}this.emit('${ev}', ${payload});`);
         } else {
-          statements.push(`this.emit('${ev}');`);
+          statements.push(`${indent}this.emit('${ev}');`);
         }
         break;
       }
       case 'on_custom_event': {
         const ev = String(params.event || '').replace(/'/g, "\\'");
-        const action = String(params.action || 'this.play();').trim();
-        statements.push(`this.on('${ev}', () => {\n  ${action}\n});`);
+        let inner = '';
+        if (Array.isArray(params.actionBlocks) && params.actionBlocks.length > 0) {
+          inner = compileBlocksToJS(params.actionBlocks, indentLevel + 1);
+        } else {
+          const action = String(params.action || 'this.play();').trim();
+          inner = action
+            .split('\n')
+            .map((line) => `${nextIndent}${line}`)
+            .join('\n');
+        }
+        statements.push(`${indent}this.on('${ev}', () => {\n${inner}\n${indent}});`);
         break;
       }
       case 'if_condition': {
         const cond = String(params.condition || 'true').trim();
-        const action = String(params.thenAction || 'this.play();').trim();
-        statements.push(`if (${cond}) {\n  ${action}\n}`);
+        let inner = '';
+        if (Array.isArray(params.thenBlocks) && params.thenBlocks.length > 0) {
+          inner = compileBlocksToJS(params.thenBlocks, indentLevel + 1);
+        } else {
+          const action = String(params.thenAction || 'this.play();').trim();
+          inner = action
+            .split('\n')
+            .map((line) => `${nextIndent}${line}`)
+            .join('\n');
+        }
+        statements.push(`${indent}if (${cond}) {\n${inner}\n${indent}}`);
         break;
       }
       case 'if_else': {
         const cond = String(params.condition || 'true').trim();
-        const thenAction = String(params.thenAction || 'this.play();').trim();
-        const elseAction = String(params.elseAction || 'this.stop();').trim();
-        statements.push(`if (${cond}) {\n  ${thenAction}\n} else {\n  ${elseAction}\n}`);
+        let thenInner = '';
+        if (Array.isArray(params.thenBlocks) && params.thenBlocks.length > 0) {
+          thenInner = compileBlocksToJS(params.thenBlocks, indentLevel + 1);
+        } else {
+          const action = String(params.thenAction || 'this.play();').trim();
+          thenInner = action
+            .split('\n')
+            .map((line) => `${nextIndent}${line}`)
+            .join('\n');
+        }
+        let elseInner = '';
+        if (Array.isArray(params.elseBlocks) && params.elseBlocks.length > 0) {
+          elseInner = compileBlocksToJS(params.elseBlocks, indentLevel + 1);
+        } else {
+          const action = String(params.elseAction || 'this.stop();').trim();
+          elseInner = action
+            .split('\n')
+            .map((line) => `${nextIndent}${line}`)
+            .join('\n');
+        }
+        statements.push(`${indent}if (${cond}) {\n${thenInner}\n${indent}} else {\n${elseInner}\n${indent}}`);
         break;
       }
       case 'switch_case': {
         const expr = String(params.expression || 'val').trim();
         const case1 = String(params.case1 ?? '1').trim();
-        const action1 = String(params.action1 || '').trim();
-        const defaultAction = String(params.defaultAction || '').trim();
+        let action1 = '';
+        if (Array.isArray(params.caseBlocks) && params.caseBlocks.length > 0) {
+          action1 = compileBlocksToJS(params.caseBlocks, indentLevel + 2);
+        } else {
+          const act = String(params.action1 || '').trim();
+          action1 = act ? act.split('\n').map((l) => `${nextIndent}  ${l}`).join('\n') : '';
+        }
+        let defaultAction = '';
+        if (Array.isArray(params.defaultBlocks) && params.defaultBlocks.length > 0) {
+          defaultAction = compileBlocksToJS(params.defaultBlocks, indentLevel + 2);
+        } else {
+          const def = String(params.defaultAction || '').trim();
+          defaultAction = def ? def.split('\n').map((l) => `${nextIndent}  ${l}`).join('\n') : '';
+        }
         statements.push(
-          `switch (${expr}) {\n  case ${case1}:\n    ${action1}\n    break;\n  default:\n    ${defaultAction}\n    break;\n}`
+          `${indent}switch (${expr}) {\n${nextIndent}case ${case1}:\n${action1}\n${nextIndent}  break;\n${nextIndent}default:\n${defaultAction}\n${nextIndent}  break;\n${indent}}`
         );
         break;
       }
       case 'for_each': {
         const arr = String(params.array || 'items').trim();
         const it = String(params.item || 'item').trim();
-        const body = String(params.body || 'console.log(item);').trim();
-        statements.push(`for (const ${it} of ${arr}) {\n  ${body}\n}`);
+        let inner = '';
+        if (Array.isArray(params.bodyBlocks) && params.bodyBlocks.length > 0) {
+          inner = compileBlocksToJS(params.bodyBlocks, indentLevel + 1);
+        } else {
+          const body = String(params.body || 'console.log(item);').trim();
+          inner = body
+            .split('\n')
+            .map((line) => `${nextIndent}${line}`)
+            .join('\n');
+        }
+        statements.push(`${indent}for (const ${it} of ${arr}) {\n${inner}\n${indent}}`);
         break;
       }
       case 'repeat_times': {
         const count = Number(params.times) || 5;
         const indexVar = String(params.indexVar || 'i').trim();
-        const body = String(params.body || '').trim();
-        statements.push(`for (let ${indexVar} = 0; ${indexVar} < ${count}; ${indexVar}++) {\n  ${body}\n}`);
+        let inner = '';
+        if (Array.isArray(params.bodyBlocks) && params.bodyBlocks.length > 0) {
+          inner = compileBlocksToJS(params.bodyBlocks, indentLevel + 1);
+        } else {
+          const body = String(params.body || '').trim();
+          inner = body
+            ? body
+                .split('\n')
+                .map((line) => `${nextIndent}${line}`)
+                .join('\n')
+            : `${nextIndent}// loop body`;
+        }
+        statements.push(`${indent}for (let ${indexVar} = 0; ${indexVar} < ${count}; ${indexVar}++) {\n${inner}\n${indent}}`);
         break;
       }
       case 'while_loop': {
         const cond = String(params.condition || 'true').trim();
-        const body = String(params.body || '').trim();
-        statements.push(`while (${cond}) {\n  ${body}\n}`);
+        let inner = '';
+        if (Array.isArray(params.bodyBlocks) && params.bodyBlocks.length > 0) {
+          inner = compileBlocksToJS(params.bodyBlocks, indentLevel + 1);
+        } else {
+          const body = String(params.body || '').trim();
+          inner = body
+            ? body
+                .split('\n')
+                .map((line) => `${nextIndent}${line}`)
+                .join('\n')
+            : `${nextIndent}// loop body`;
+        }
+        statements.push(`${indent}while (${cond}) {\n${inner}\n${indent}}`);
         break;
       }
       case 'do_while': {
         const cond = String(params.condition || 'true').trim();
-        const body = String(params.body || '').trim();
-        statements.push(`do {\n  ${body}\n} while (${cond});`);
+        let inner = '';
+        if (Array.isArray(params.bodyBlocks) && params.bodyBlocks.length > 0) {
+          inner = compileBlocksToJS(params.bodyBlocks, indentLevel + 1);
+        } else {
+          const body = String(params.body || '').trim();
+          inner = body
+            ? body
+                .split('\n')
+                .map((line) => `${nextIndent}${line}`)
+                .join('\n')
+            : `${nextIndent}// loop body`;
+        }
+        statements.push(`${indent}do {\n${inner}\n${indent}} while (${cond});`);
         break;
       }
       case 'spawn_clip': {
         const clipName = String(params.clipName || '').replace(/'/g, "\\'");
         const x = Number(params.x) || 0;
         const y = Number(params.y) || 0;
-        statements.push(`this.spawnClip('${clipName}', { x: ${x}, y: ${y} });`);
+        statements.push(`${indent}this.spawnClip('${clipName}', { x: ${x}, y: ${y} });`);
         break;
       }
       case 'emit_particles': {
@@ -710,13 +828,19 @@ export function compileBlocksToJS(blocks: ScriptBlock[]): string {
         const x = Number(params.x) || 0;
         const y = Number(params.y) || 0;
         const count = Number(params.particleCount) || 50;
-        statements.push(`this.emitParticles({ preset: '${preset}', x: ${x}, y: ${y}, particleCount: ${count} });`);
+        statements.push(
+          `${indent}this.emitParticles({ preset: '${preset}', x: ${x}, y: ${y}, particleCount: ${count} });`
+        );
         break;
       }
       case 'custom_js': {
         const code = String(params.code ?? '').trim();
         if (code) {
-          statements.push(code);
+          const indentedCode = code
+            .split('\n')
+            .map((line) => `${indent}${line}`)
+            .join('\n');
+          statements.push(indentedCode);
         }
         break;
       }
@@ -727,7 +851,63 @@ export function compileBlocksToJS(blocks: ScriptBlock[]): string {
 }
 
 /**
- * Parses raw JavaScript code into an array of visual ScriptBlock objects.
+ * Helper to extract matching balanced braces { ... } starting at openIndex.
+ */
+function extractBalancedBraces(
+  code: string,
+  openIndex: number
+): { content: string; openIndex: number; endIndex: number } | null {
+  if (openIndex < 0 || openIndex >= code.length || code[openIndex] !== '{') {
+    return null;
+  }
+
+  let depth = 0;
+  let inString: string | null = null;
+  let escape = false;
+
+  for (let i = openIndex; i < code.length; i++) {
+    const ch = code[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+
+    if (inString) {
+      if (ch === inString) {
+        inString = null;
+      }
+      continue;
+    }
+
+    if (ch === "'" || ch === '"' || ch === '`') {
+      inString = ch;
+      continue;
+    }
+
+    if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return {
+          content: code.slice(openIndex + 1, i),
+          openIndex,
+          endIndex: i,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Parses raw JavaScript code into an array of visual ScriptBlock objects, supporting nested blocks.
  */
 export function parseJSIntoBlocks(code: string): ScriptBlock[] {
   if (!code || !code.trim()) return [];
@@ -763,12 +943,19 @@ export function parseJSIntoBlocks(code: string): ScriptBlock[] {
 
     // Events: on_custom_event (this.on('event', () => { ... }))
     match = remaining.match(
-      /^(?:this\.)?on\s*\(\s*(['"`])([^'"]+)\1\s*,\s*(?:\([^\)]*\)\s*=>|function\s*\([^\)]*\))\s*\{\s*([\s\S]*?)\s*\}\s*\);?/i
+      /^(?:this\.)?on\s*\(\s*(['"`])([^'"]+)\1\s*,\s*(?:\([^\)]*\)\s*=>|function\s*\([^\)]*\))\s*\{/i
     );
     if (match) {
-      blocks.push(createBlock('on_custom_event', { event: match[2], action: match[3].trim() }));
-      remaining = remaining.slice(match[0].length);
-      continue;
+      const openIdx = match[0].length - 1;
+      const braces = extractBalancedBraces(remaining, openIdx);
+      if (braces) {
+        const action = braces.content.trim();
+        const actionBlocks = parseJSIntoBlocks(action);
+        const afterOn = remaining.slice(braces.endIndex + 1).match(/^\s*\);?/);
+        blocks.push(createBlock('on_custom_event', { event: match[2], action, actionBlocks }));
+        remaining = remaining.slice(braces.endIndex + 1 + (afterOn ? afterOn[0].length : 0));
+        continue;
+      }
     }
 
     // Events: emit_custom_event (this.emit('event', payload);)
@@ -812,108 +999,179 @@ export function parseJSIntoBlocks(code: string): ScriptBlock[] {
       continue;
     }
 
-    // Control: if_else (if (cond) { ... } else { ... })
-    match = remaining.match(/^if\s*\(([\s\S]*?)\)\s*\{([\s\S]*?)\}\s*else\s*\{([\s\S]*?)\};?/i);
+    // Control: if ... else and if ... condition (with balanced braces & recursion)
+    match = remaining.match(/^if\s*\(([\s\S]*?)\)\s*\{/i);
     if (match) {
-      blocks.push(
-        createBlock('if_else', {
-          condition: match[1].trim(),
-          thenAction: match[2].trim(),
-          elseAction: match[3].trim(),
-        })
-      );
-      remaining = remaining.slice(match[0].length);
-      continue;
-    }
+      const cond = match[1].trim();
+      const openIdx = match[0].length - 1;
+      const thenBraces = extractBalancedBraces(remaining, openIdx);
+      if (thenBraces) {
+        const thenAction = thenBraces.content.trim();
+        const thenBlocks = parseJSIntoBlocks(thenAction);
+        const afterThen = remaining.slice(thenBraces.endIndex + 1);
+        const elseMatch = afterThen.match(/^\s*else\s*\{/i);
 
-    // Control: if_condition (if (cond) { ... })
-    match = remaining.match(/^if\s*\(([\s\S]*?)\)\s*\{([\s\S]*?)\};?/i);
-    if (match) {
-      blocks.push(
-        createBlock('if_condition', {
-          condition: match[1].trim(),
-          thenAction: match[2].trim(),
-        })
-      );
-      remaining = remaining.slice(match[0].length);
-      continue;
+        if (elseMatch) {
+          const elseOpenIdx = elseMatch[0].length - 1;
+          const elseBraces = extractBalancedBraces(afterThen, elseOpenIdx);
+          if (elseBraces) {
+            const elseAction = elseBraces.content.trim();
+            const elseBlocks = parseJSIntoBlocks(elseAction);
+            const afterElse = afterThen.slice(elseBraces.endIndex + 1).match(/^\s*;?/);
+            blocks.push(
+              createBlock('if_else', {
+                condition: cond,
+                thenAction,
+                thenBlocks,
+                elseAction,
+                elseBlocks,
+              })
+            );
+            remaining = remaining.slice(
+              thenBraces.endIndex + 1 + elseBraces.endIndex + 1 + (afterElse ? afterElse[0].length : 0)
+            );
+            continue;
+          }
+        }
+
+        // Single if condition
+        const afterIf = afterThen.match(/^\s*;?/);
+        blocks.push(
+          createBlock('if_condition', {
+            condition: cond,
+            thenAction,
+            thenBlocks,
+          })
+        );
+        remaining = remaining.slice(thenBraces.endIndex + 1 + (afterIf ? afterIf[0].length : 0));
+        continue;
+      }
     }
 
     // Control: do_while (do { ... } while (cond);)
-    match = remaining.match(/^do\s*\{([\s\S]*?)\}\s*while\s*\(([\s\S]*?)\);?/i);
+    match = remaining.match(/^do\s*\{/i);
     if (match) {
-      blocks.push(
-        createBlock('do_while', {
-          body: match[1].trim(),
-          condition: match[2].trim(),
-        })
-      );
-      remaining = remaining.slice(match[0].length);
-      continue;
+      const openIdx = match[0].length - 1;
+      const bodyBraces = extractBalancedBraces(remaining, openIdx);
+      if (bodyBraces) {
+        const afterDo = remaining.slice(bodyBraces.endIndex + 1);
+        const whileSuffix = afterDo.match(/^\s*while\s*\(([\s\S]*?)\);?/i);
+        if (whileSuffix) {
+          const body = bodyBraces.content.trim();
+          const bodyBlocks = parseJSIntoBlocks(body);
+          blocks.push(
+            createBlock('do_while', {
+              condition: whileSuffix[1].trim(),
+              body,
+              bodyBlocks,
+            })
+          );
+          remaining = remaining.slice(bodyBraces.endIndex + 1 + whileSuffix[0].length);
+          continue;
+        }
+      }
     }
 
     // Control: while_loop (while (cond) { ... })
-    match = remaining.match(/^while\s*\(([\s\S]*?)\)\s*\{([\s\S]*?)\};?/i);
+    match = remaining.match(/^while\s*\(([\s\S]*?)\)\s*\{/i);
     if (match) {
-      blocks.push(
-        createBlock('while_loop', {
-          condition: match[1].trim(),
-          body: match[2].trim(),
-        })
-      );
-      remaining = remaining.slice(match[0].length);
-      continue;
+      const cond = match[1].trim();
+      const openIdx = match[0].length - 1;
+      const bodyBraces = extractBalancedBraces(remaining, openIdx);
+      if (bodyBraces) {
+        const body = bodyBraces.content.trim();
+        const bodyBlocks = parseJSIntoBlocks(body);
+        const afterWhile = remaining.slice(bodyBraces.endIndex + 1).match(/^\s*;?/);
+        blocks.push(
+          createBlock('while_loop', {
+            condition: cond,
+            body,
+            bodyBlocks,
+          })
+        );
+        remaining = remaining.slice(bodyBraces.endIndex + 1 + (afterWhile ? afterWhile[0].length : 0));
+        continue;
+      }
     }
 
     // Control: repeat_times (for (let i = 0; i < N; i++) { ... })
     match = remaining.match(
-      /^for\s*\(\s*(?:let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*0;\s*\1\s*<\s*(\d+);\s*\1\s*\+\+\s*\)\s*\{([\s\S]*?)\};?/i
+      /^for\s*\(\s*(?:let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*0;\s*\1\s*<\s*(\d+);\s*\1\s*\+\+\s*\)\s*\{/i
     );
     if (match) {
-      blocks.push(
-        createBlock('repeat_times', {
-          indexVar: match[1],
-          times: Number(match[2]),
-          body: match[3].trim(),
-        })
-      );
-      remaining = remaining.slice(match[0].length);
-      continue;
+      const indexVar = match[1];
+      const times = Number(match[2]);
+      const openIdx = match[0].length - 1;
+      const bodyBraces = extractBalancedBraces(remaining, openIdx);
+      if (bodyBraces) {
+        const body = bodyBraces.content.trim();
+        const bodyBlocks = parseJSIntoBlocks(body);
+        const afterFor = remaining.slice(bodyBraces.endIndex + 1).match(/^\s*;?/);
+        blocks.push(
+          createBlock('repeat_times', {
+            indexVar,
+            times,
+            body,
+            bodyBlocks,
+          })
+        );
+        remaining = remaining.slice(bodyBraces.endIndex + 1 + (afterFor ? afterFor[0].length : 0));
+        continue;
+      }
     }
 
     // Control: for_each (for (const it of arr) { ... })
     match = remaining.match(
-      /^for\s*\(\s*(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s+of\s+([^\)]+)\)\s*\{([\s\S]*?)\};?/i
+      /^for\s*\(\s*(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s+of\s+([^\)]+)\)\s*\{/i
     );
     if (match) {
-      blocks.push(
-        createBlock('for_each', {
-          item: match[1],
-          array: match[2].trim(),
-          body: match[3].trim(),
-        })
-      );
-      remaining = remaining.slice(match[0].length);
-      continue;
+      const item = match[1];
+      const array = match[2].trim();
+      const openIdx = match[0].length - 1;
+      const bodyBraces = extractBalancedBraces(remaining, openIdx);
+      if (bodyBraces) {
+        const body = bodyBraces.content.trim();
+        const bodyBlocks = parseJSIntoBlocks(body);
+        const afterFor = remaining.slice(bodyBraces.endIndex + 1).match(/^\s*;?/);
+        blocks.push(
+          createBlock('for_each', {
+            item,
+            array,
+            body,
+            bodyBlocks,
+          })
+        );
+        remaining = remaining.slice(bodyBraces.endIndex + 1 + (afterFor ? afterFor[0].length : 0));
+        continue;
+      }
     }
 
     // Control: switch_case (switch (expr) { ... })
-    match = remaining.match(/^switch\s*\(([\s\S]*?)\)\s*\{([\s\S]*?)\};?/i);
+    match = remaining.match(/^switch\s*\(([\s\S]*?)\)\s*\{/i);
     if (match) {
       const expr = match[1].trim();
-      const body = match[2];
-      const caseMatch = body.match(/case\s+([^:]+):([\s\S]*?)(?:break;|$)/i);
-      const defaultMatch = body.match(/default:([\s\S]*?)(?:break;|$)/i);
-      blocks.push(
-        createBlock('switch_case', {
-          expression: expr,
-          case1: caseMatch ? caseMatch[1].trim() : '1',
-          action1: caseMatch ? caseMatch[2].trim() : 'this.gotoAndPlay(1);',
-          defaultAction: defaultMatch ? defaultMatch[1].trim() : 'this.stop();',
-        })
-      );
-      remaining = remaining.slice(match[0].length);
-      continue;
+      const openIdx = match[0].length - 1;
+      const bodyBraces = extractBalancedBraces(remaining, openIdx);
+      if (bodyBraces) {
+        const body = bodyBraces.content;
+        const caseMatch = body.match(/case\s+([^:]+):([\s\S]*?)(?:break;|$)/i);
+        const defaultMatch = body.match(/default:([\s\S]*?)(?:break;|$)/i);
+        const action1 = caseMatch ? caseMatch[2].trim() : 'this.gotoAndPlay(1);';
+        const defaultAction = defaultMatch ? defaultMatch[1].trim() : 'this.stop();';
+        const afterSwitch = remaining.slice(bodyBraces.endIndex + 1).match(/^\s*;?/);
+        blocks.push(
+          createBlock('switch_case', {
+            expression: expr,
+            case1: caseMatch ? caseMatch[1].trim() : '1',
+            action1,
+            caseBlocks: parseJSIntoBlocks(action1),
+            defaultAction,
+            defaultBlocks: parseJSIntoBlocks(defaultAction),
+          })
+        );
+        remaining = remaining.slice(bodyBraces.endIndex + 1 + (afterSwitch ? afterSwitch[0].length : 0));
+        continue;
+      }
     }
 
     // 1. wait_play: setTimeout(() => { this.play(); }, N);
