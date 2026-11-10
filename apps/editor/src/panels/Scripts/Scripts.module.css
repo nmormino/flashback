@@ -377,27 +377,28 @@
 .blockStack {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   margin-top: 2px;
 }
 
+/* Scratch-Style Command Block */
 .stackBlock {
-  background-color: #1a1c22;
-  border: 1px solid var(--mx-border-light, #2a2c33);
-  border-left-width: 5px;
-  border-radius: 6px;
+  background-color: var(--block-color, #1e293b);
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35), 0 2px 5px rgba(0, 0, 0, 0.2);
   position: relative;
   transition: all 0.15s ease;
+  color: #fff;
 }
 
 .stackBlock:hover {
-  border-color: rgba(255, 255, 255, 0.25);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.35);
+  filter: brightness(1.05);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.4), 0 4px 8px rgba(0, 0, 0, 0.25);
 }
 
 .stackBlockDragging {
@@ -416,9 +417,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 700;
-  color: var(--mx-text-main, #f3f4f6);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   user-select: none;
 }
 
@@ -433,11 +435,11 @@
 }
 
 .blockActionBtn {
-  background: transparent;
-  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 3px;
-  color: var(--mx-text-muted, #9ca3af);
-  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 10px;
   line-height: 1;
   padding: 2px 5px;
   cursor: pointer;
@@ -445,13 +447,13 @@
 }
 
 .blockActionBtn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: var(--mx-text-main, #f3f4f6);
+  background-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
 }
 
 .deleteActionBtn:hover {
-  background-color: rgba(239, 68, 68, 0.2);
-  color: #f87171;
+  background-color: rgba(239, 68, 68, 0.5);
+  color: #fff;
 }
 
 .stackBlockControls {
@@ -463,54 +465,268 @@
 }
 
 .paramLabel {
-  font-size: 11px;
-  color: var(--mx-text-muted, #9ca3af);
-  font-weight: 500;
+  font-size: 11.5px;
+  color: #fff;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .paramInput {
   flex: 1;
   min-width: 140px;
-  background-color: #121316;
-  border: 1px solid var(--mx-border-light, #2e3035);
-  border-radius: 4px;
-  color: #f3f4f6;
+  background-color: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: #fff;
   font-size: 11px;
-  padding: 4px 8px;
+  font-weight: 600;
+  padding: 3px 10px;
   outline: none;
+  font-family: var(--mx-font-mono, monospace);
+  transition: all 0.15s ease;
 }
 
 .paramInput:focus {
-  border-color: var(--mx-accent, #3b82f6);
+  background-color: rgba(0, 0, 0, 0.55);
+  border-color: #fff;
 }
 
 .paramNumberInput {
-  width: 65px;
-  background-color: #121316;
-  border: 1px solid var(--mx-border-light, #2e3035);
-  border-radius: 4px;
-  color: #f3f4f6;
+  width: 55px;
+  background-color: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: #fff;
   font-size: 11px;
-  padding: 4px 6px;
+  font-weight: 700;
+  padding: 3px 8px;
+  text-align: center;
   outline: none;
 }
 
 .paramNumberInput:focus {
-  border-color: var(--mx-accent, #3b82f6);
+  border-color: #fff;
 }
 
 .paramSelect {
-  background-color: #121316;
-  border: 1px solid var(--mx-border-light, #2e3035);
-  border-radius: 4px;
-  color: #f3f4f6;
+  background-color: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: #fff;
   font-size: 11px;
-  padding: 4px 6px;
+  font-weight: 600;
+  padding: 3px 8px;
   outline: none;
 }
 
 .paramSelect:focus {
-  border-color: var(--mx-accent, #3b82f6);
+  border-color: #fff;
+}
+
+.paramCodeInput {
+  flex: 1;
+  min-width: 140px;
+  background-color: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  outline: none;
+  font-family: var(--mx-font-mono, monospace);
+}
+
+.paramCodeInput:focus {
+  background-color: rgba(0, 0, 0, 0.55);
+  border-color: #fff;
+}
+
+/* ========================================================================= */
+/* Scratch-Style C-Block & E-Block Clamps (Control & Loops)                  */
+/* ========================================================================= */
+
+.clampBlock {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  border-radius: 8px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: all 0.15s ease;
+}
+
+.clampBlock:hover {
+  filter: brightness(1.05);
+}
+
+.clampHeader {
+  background-color: var(--clamp-color, #f59e0b);
+  border-radius: 8px 8px 0 0;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #fff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.clampHeaderLeft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.clampIcon {
+  font-size: 13px;
+  margin-right: 2px;
+}
+
+.clampKeyword {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* The Mouth / Indented Cavity */
+.clampMouth {
+  display: flex;
+  min-height: 44px;
+  position: relative;
+}
+
+.clampSpine {
+  width: 16px;
+  background-color: var(--clamp-color, #f59e0b);
+  flex-shrink: 0;
+}
+
+.clampCavity {
+  flex: 1;
+  background-color: #121316;
+  border-top: 1px solid rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.3);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cavityBranchHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--mx-text-muted, #9ca3af);
+  letter-spacing: 0.05em;
+}
+
+.scratchCavityInput {
+  width: 100%;
+  background-color: #18191e;
+  border: 1px solid var(--mx-border-light, #2e3035);
+  border-radius: 6px;
+  color: #f3f4f6;
+  font-family: var(--mx-font-mono, monospace);
+  font-size: 11px;
+  padding: 6px 8px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.scratchCavityInput:focus {
+  border-color: var(--clamp-color, #f59e0b);
+  box-shadow: 0 0 0 1px var(--clamp-color, #f59e0b);
+}
+
+/* Middle divider bar for else / default */
+.clampMiddleBar {
+  background-color: var(--clamp-color, #f59e0b);
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  border-top: 1px solid rgba(0, 0, 0, 0.15);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+/* Bottom foot bar */
+.clampFooter {
+  background-color: var(--clamp-color, #f59e0b);
+  height: 14px;
+  border-radius: 0 0 8px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 10px;
+}
+
+.clampLoopArrow {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+/* Scratch-style Pill Inputs */
+.scratchPillInput {
+  background-color: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  outline: none;
+  font-family: var(--mx-font-mono, monospace);
+  transition: all 0.15s ease;
+}
+
+.scratchPillInput:focus {
+  background-color: rgba(0, 0, 0, 0.55);
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+
+.scratchNumberPill {
+  width: 55px;
+  background-color: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  text-align: center;
+  outline: none;
+}
+
+.scratchNumberPill:focus {
+  border-color: #fff;
+}
+
+.scratchShortPill {
+  width: 60px;
+  background-color: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  outline: none;
+  font-family: var(--mx-font-mono, monospace);
 }
 
 .paramCodeInput {

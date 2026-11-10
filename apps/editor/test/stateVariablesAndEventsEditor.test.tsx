@@ -485,5 +485,61 @@ describe('Editor State & Variables, Custom Events, and Script Blocks', () => {
 
       expect(container.querySelector('[data-testid="scripts-code-column"]')).toBeNull();
     });
+
+    it('renders control and loop blocks as Scratch-style clamp blocks with cavities and middle bars', async () => {
+      // Create element and select it
+      const text = createSampleText('btn-1', 'Play Game');
+      const layer = getActiveTimeline(getEditorState().doc).layers[0];
+      const kf = layer.keyframes[0];
+      kf.elements.push(text);
+      editorActions.selectElement('btn-1');
+
+      await act(async () => {
+        root.render(<Scripts />);
+      });
+
+      // Click "If ... Else" block in palette
+      const ifElseBtn = container.querySelector(
+        'button[data-block-type="if_else"]'
+      ) as HTMLButtonElement;
+      expect(ifElseBtn).not.toBeNull();
+
+      await act(async () => {
+        ifElseBtn.click();
+      });
+
+      // Verify the clamp block rendered
+      const clampBlock = container.querySelector('[class*="clampBlock"]');
+      expect(clampBlock).not.toBeNull();
+
+      // Verify Header keywords and inputs
+      expect(clampBlock?.textContent).toContain('if');
+      expect(clampBlock?.textContent).toContain('then');
+
+      // Verify cavities: "↳ then do:" and "↳ otherwise do:"
+      expect(clampBlock?.textContent).toContain('↳ then do:');
+      expect(clampBlock?.textContent).toContain('else');
+      expect(clampBlock?.textContent).toContain('↳ otherwise do:');
+
+      // Add a repeat loop block
+      const repeatBtn = container.querySelector(
+        'button[data-block-type="repeat_times"]'
+      ) as HTMLButtonElement;
+      expect(repeatBtn).not.toBeNull();
+
+      await act(async () => {
+        repeatBtn.click();
+      });
+
+      const clamps = container.querySelectorAll('[class*="clampBlock"]');
+      expect(clamps).toHaveLength(2);
+
+      const loopClamp = clamps[1];
+      expect(loopClamp.textContent).toContain('repeat');
+      expect(loopClamp.textContent).toContain('times (as');
+      expect(loopClamp.textContent).toContain('↳ loop body:');
+      // Loop footer arrow
+      expect(loopClamp.textContent).toContain('↺');
+    });
   });
 });
