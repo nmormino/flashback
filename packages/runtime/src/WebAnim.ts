@@ -10,6 +10,7 @@ import type {
 import { TimelinePipeline, Timeline } from './player/Timeline';
 import { Ticker } from './player/Ticker';
 import { DomRenderer } from './render/DomRenderer';
+import { CanvasRenderer } from './render/CanvasRenderer';
 import { fillToCSS } from './render/fills';
 import { resolveI18nText } from './render/text';
 
@@ -72,6 +73,24 @@ const STAGE_STYLES = `
   :host([scale-mode="noScale"]) .stage-viewport {
     transform: none;
   }
+
+  .stage-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: auto;
+  }
+
+  .flashback-sr-fallback {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
 `;
 
 const HTMLElementBase: typeof HTMLElement =
@@ -94,16 +113,24 @@ export class WebAnim extends HTMLElementBase {
     'strings',
     'translations',
     'state',
+    'renderer',
   ];
 
   private _animation: AnimDocument | null = null;
   private _pipeline: TimelinePipeline | null = null;
-  private _renderer: DomRenderer | null = null;
+  private _renderer: DomRenderer | CanvasRenderer | null = null;
+  private _domRenderer: DomRenderer | null = null;
+  private _canvasRenderer: CanvasRenderer | null = null;
+  private _canvasEl: HTMLCanvasElement | null = null;
+  private _fallbackEl: HTMLElement | null = null;
+  private _rendererMode?: 'canvas' | 'dom';
   private _ticker: Ticker | null = null;
   private _containerEl: HTMLElement | null = null;
   private _viewportEl: HTMLElement | null = null;
   private _particleCanvas: HTMLCanvasElement | null = null;
   private _resizeObserver: ResizeObserver | null = null;
+  private _intersectionObserver: IntersectionObserver | null = null;
+  private _isVisible = true;
   private _onResize: (() => void) | null = null;
   private _srcLoadingPromise: Promise<AnimDocument | null> | null = null;
   private _reducedMotion: ReducedMotionMode = 'auto';
@@ -183,6 +210,18 @@ export class WebAnim extends HTMLElementBase {
       if (this._pipeline) this._pipeline.root.vars.__locale = this._locale;
       this._renderer?.setLocale(this._locale);
       this._renderer?.syncTextVariables();
+      if (this._canvasRenderer && this._isVisible) {
+        this._canvasRenderer.render();
+      }
+      this.updateAccessibleFallback();
+    } else if (name === 'renderer') {
+      const mode = (newValue === 'canvas' || newValue === 'dom') ? newValue : undefined;
+      if (this._rendererMode !== mode) {
+        this._rendererMode = mode;
+        if (this._animation && this._pipeline) {
+          this.setupAnimation(this._animation);
+        }
+      }
     } else if (name === 'strings' || name === 'translations') {
       if (newValue) {
         try {
@@ -254,6 +293,37 @@ export class WebAnim extends HTMLElementBase {
     if (this._pipeline) this._pipeline.root.vars.__locale = val;
     this._renderer?.setLocale(val);
     this._renderer?.syncTextVariables();
+    if (this._canvasRenderer && this._isVisible) {
+      this._canvasRenderer.render();
+    }
+    this.updateAccessibleFallback();
+  }
+
+  public get rendererMode(): 'canvas' | 'dom' {
+    const attr = this.getAttribute('renderer');
+    if (attr === 'canvas' || attr === 'dom') {
+      return attr;
+    }
+    if (this._rendererMode) {
+      return this._rendererMode;
+    }
+    if (this._animation?.stage?.renderer) {
+      return this._animation.stage.renderer;
+    }
+    return 'dom';
+  }
+
+  public set rendererMode(val: 'canvas' | 'dom') {
+    if (val === 'canvas' || val === 'dom') {
+      this._rendererMode = val;
+      this.setAttribute('renderer', val);
+    } else {
+      this._rendererMode = undefined;
+      this.removeAttribute('renderer');
+    }
+    if (this._animation && this._pipeline) {
+      this.setupAnimation(this._animation);
+    }
   }
 
   /**
@@ -388,8 +458,12 @@ export class WebAnim extends HTMLElementBase {
       Object.assign(this._animation.i18n.locales[matchingLocKey], strings);
     }
 
-    // Sync DomRenderer and emit stringschange event
+    // Sync renderer, render canvas, update fallback, and emit stringschange event
     this._renderer?.syncTextVariables();
+    if (this._canvasRenderer && this._isVisible) {
+      this._canvasRenderer.render();
+    }
+    this.updateAccessibleFallback();
     this.dispatchEvent(new CustomEvent('stringschange', { detail: { strings, locale: targetLocale } }));
   }
 
@@ -441,6 +515,10 @@ export class WebAnim extends HTMLElementBase {
         this._pipeline.stateStore.setPublicState(keyOrObject);
       }
       this._renderer?.syncTextVariables();
+      if (this._canvasRenderer && this._isVisible) {
+        this._canvasRenderer.render();
+      }
+      this.updateAccessibleFallback();
     }
   }
 
@@ -561,7 +639,7 @@ export class WebAnim extends HTMLElementBase {
     if (this._pipeline) {
       this._pipeline.root.play();
     }
-    if (this._ticker && !this._ticker.isRunning) {
+    if (this._isVisible && this._ticker && !this._ticker.isRunning) {
       this._ticker.start();
     }
   }
@@ -576,14 +654,20 @@ export class WebAnim extends HTMLElementBase {
     if (this._pipeline) {
       this._pipeline.root.gotoAndPlay(frame);
     }
-    if (this._ticker && !this._ticker.isRunning) {
+    if (this._isVisible && this._ticker && !this._ticker.isRunning) {
       this._ticker.start();
+    }
+    if (this._canvasRenderer && this._isVisible) {
+      this._canvasRenderer.render();
     }
   }
 
   public gotoAndStop(frame: FrameRef): void {
     if (this._pipeline) {
       this._pipeline.root.gotoAndStop(frame);
+    }
+    if (this._canvasRenderer && this._isVisible) {
+      this._canvasRenderer.render();
     }
   }
 
@@ -605,8 +689,24 @@ export class WebAnim extends HTMLElementBase {
     return this._pipeline;
   }
 
-  public get renderer(): DomRenderer | null {
+  public get renderer(): DomRenderer | CanvasRenderer | null {
     return this._renderer;
+  }
+
+  public get canvasRenderer(): CanvasRenderer | null {
+    return this._canvasRenderer;
+  }
+
+  public get domRenderer(): DomRenderer | null {
+    return this._domRenderer;
+  }
+
+  public get canvas(): HTMLCanvasElement | null {
+    return this._canvasEl;
+  }
+
+  public get isVisible(): boolean {
+    return this._isVisible;
   }
 
   public get currentFrame(): number {
@@ -677,6 +777,20 @@ export class WebAnim extends HTMLElementBase {
       this._viewportEl.style.backgroundColor = bg;
     }
 
+    if (this.rendererMode === 'canvas') {
+      this._pipeline?.switchArtboard(target.id);
+      if (this._pipeline && this._canvasRenderer) {
+        this._canvasRenderer.attach(this._pipeline.root);
+        this._canvasRenderer.syncTextVariables();
+      }
+      this.updateStageScale();
+      this.updateAccessibleFallback();
+      this.dispatchEvent(
+        new CustomEvent('artboardchange', { detail: { artboardId: target.id, artboard: target } })
+      );
+      return;
+    }
+
     const oldMountedEl =
       this._renderer && (this._renderer as any).mounted
         ? (this._renderer as any).nodes.get((this._renderer as any).mounted)?.wrapper
@@ -690,6 +804,7 @@ export class WebAnim extends HTMLElementBase {
         this._renderer.syncTextVariables();
       }
       this.updateStageScale();
+      this.updateAccessibleFallback();
       this.dispatchEvent(
         new CustomEvent('artboardchange', { detail: { artboardId: target.id, artboard: target } })
       );
@@ -708,13 +823,14 @@ export class WebAnim extends HTMLElementBase {
     this._viewportEl?.appendChild(outgoingEl);
 
     // Switch pipeline & attach new artboard
-    this._pipeline?.switchArtboard(target.id);
     let newWrapper: HTMLElement | null = null;
+    this._pipeline?.switchArtboard(target.id);
     if (this._pipeline && this._renderer) {
-      newWrapper = this._renderer.attach(this._pipeline.root);
+      newWrapper = (this._renderer as DomRenderer).attach(this._pipeline.root);
       this._renderer.syncTextVariables();
     }
     this.updateStageScale();
+    this.updateAccessibleFallback();
 
     if (newWrapper) {
       newWrapper.style.zIndex = '2';
@@ -800,6 +916,10 @@ export class WebAnim extends HTMLElementBase {
     this._pipeline.eventBus.attachHost(this);
     this._pipeline.onStateChange = () => {
       this._renderer?.syncTextVariables();
+      if (this._canvasRenderer && this._isVisible) {
+        this._canvasRenderer.render();
+      }
+      this.updateAccessibleFallback();
     };
 
     // Apply any initial state or state attribute passed as props
@@ -818,9 +938,51 @@ export class WebAnim extends HTMLElementBase {
     this._pipeline.init();
     this._pipeline.root.vars.__locale = this._locale;
 
-    // 2. Create DomRenderer inside the ShadowRoot
-    this._renderer = new DomRenderer(this._viewportEl, { doc, locale: this._locale });
-    this._renderer.attach(this._pipeline.root);
+    // 2. Create Renderer
+    if (this.rendererMode === 'canvas') {
+      const canvasEl = document.createElement('canvas');
+      canvasEl.className = 'stage-canvas';
+      canvasEl.setAttribute('role', 'img');
+      const title = doc.meta?.name || 'Flashback Animation';
+      canvasEl.setAttribute('aria-label', title);
+      canvasEl.style.position = 'absolute';
+      canvasEl.style.left = '0';
+      canvasEl.style.top = '0';
+      canvasEl.style.width = `${width}px`;
+      canvasEl.style.height = `${height}px`;
+
+      const fallbackEl = document.createElement('div');
+      fallbackEl.className = 'flashback-sr-fallback sr-only';
+      fallbackEl.setAttribute(
+        'style',
+        'position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap;'
+      );
+      canvasEl.appendChild(fallbackEl);
+
+      this._viewportEl.appendChild(canvasEl);
+      this._canvasEl = canvasEl;
+      this._fallbackEl = fallbackEl;
+      this._domRenderer = null;
+
+      const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+      this._canvasRenderer = new CanvasRenderer(this._canvasEl, {
+        doc,
+        width,
+        height,
+        dpr,
+        locale: this._locale,
+      });
+      this._canvasRenderer.attach(this._pipeline.root);
+      this._renderer = this._canvasRenderer;
+      this.updateAccessibleFallback();
+    } else {
+      this._canvasEl = null;
+      this._fallbackEl = null;
+      this._canvasRenderer = null;
+      this._domRenderer = new DomRenderer(this._viewportEl, { doc, locale: this._locale });
+      this._domRenderer.attach(this._pipeline.root);
+      this._renderer = this._domRenderer;
+    }
 
     // Particle overlay canvas
     if (typeof document !== 'undefined') {
@@ -857,6 +1019,11 @@ export class WebAnim extends HTMLElementBase {
       }
     }
 
+    // Initial canvas render
+    if (this._canvasRenderer && this._isVisible) {
+      this._canvasRenderer.render();
+    }
+
     // 3. Create Ticker
     this._ticker = new Ticker({
       fps: doc.stage.fps,
@@ -866,6 +1033,9 @@ export class WebAnim extends HTMLElementBase {
       },
       onRender: (interpolation) => {
         this._pipeline?.render(interpolation);
+        if (this._canvasRenderer && this._isVisible) {
+          this._canvasRenderer.render();
+        }
       },
     });
     this._ticker.start();
@@ -873,6 +1043,7 @@ export class WebAnim extends HTMLElementBase {
     // 4. Update scale variables
     this.updateStageScale();
     this.setupResizeObserver();
+    this.setupIntersectionObserver();
   }
 
   private teardownRuntime(): void {
@@ -902,21 +1073,30 @@ export class WebAnim extends HTMLElementBase {
       this._pipeline = null;
     }
 
-    // 4. Detach DomRenderer
+    // 4. Detach Renderer
     if (this._renderer) {
       this._renderer.detach();
       this._renderer = null;
     }
+    this._domRenderer = null;
+    this._canvasRenderer = null;
 
     // 5. Clean up DOM inside viewport
     if (this._viewportEl) {
       this._viewportEl.innerHTML = '';
     }
+    this._canvasEl = null;
+    this._fallbackEl = null;
+    this._particleCanvas = null;
 
     // 6. Cleanup observers & listeners
     if (this._resizeObserver) {
       this._resizeObserver.disconnect();
       this._resizeObserver = null;
+    }
+    if (this._intersectionObserver) {
+      this._intersectionObserver.disconnect();
+      this._intersectionObserver = null;
     }
     if (typeof window !== 'undefined' && this._onResize) {
       window.removeEventListener('resize', this._onResize);
@@ -924,16 +1104,119 @@ export class WebAnim extends HTMLElementBase {
     }
   }
 
+  /**
+   * Gracefully destroys all animation timers, observers, and renderers.
+   */
+  public destroy(): void {
+    this.teardownRuntime();
+  }
+
   private setupResizeObserver(): void {
     if (typeof ResizeObserver !== 'undefined' && !this._resizeObserver) {
       this._resizeObserver = new ResizeObserver(() => {
-        this.updateStageScale();
+        this.handleResize();
       });
       this._resizeObserver.observe(this);
     }
     if (typeof window !== 'undefined' && !this._onResize) {
-      this._onResize = () => this.updateStageScale();
+      this._onResize = () => this.handleResize();
       window.addEventListener('resize', this._onResize);
+    }
+  }
+
+  public handleResize(): void {
+    this.updateStageScale();
+  }
+
+  private setupIntersectionObserver(): void {
+    if (typeof IntersectionObserver !== 'undefined' && !this._intersectionObserver) {
+      this._intersectionObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.target === this) {
+            this.handleIntersection(entry.isIntersecting);
+          }
+        }
+      });
+      this._intersectionObserver.observe(this);
+    }
+  }
+
+  public handleIntersection(isIntersecting: boolean): void {
+    this._isVisible = isIntersecting;
+    if (!isIntersecting) {
+      if (this._ticker?.isRunning) {
+        this._ticker.stop();
+      }
+    } else {
+      if (this._pipeline?.root.isPlaying && this._ticker && !this._ticker.isRunning) {
+        this._ticker.start();
+      }
+      if (this._canvasRenderer) {
+        this._canvasRenderer.render();
+      }
+    }
+  }
+
+  private updateAccessibleFallback(): void {
+    if (!this._fallbackEl || !this._animation) return;
+    this._fallbackEl.innerHTML = '';
+
+    const doc = this._animation;
+    const seen = new Set<string>();
+
+    const addText = (text: string, attr?: { name: string; value: string }) => {
+      const trimmed = text.trim();
+      if (!trimmed || seen.has(trimmed)) return;
+      seen.add(trimmed);
+      const p = document.createElement('p');
+      if (attr) {
+        p.setAttribute(attr.name, attr.value);
+      }
+      p.textContent = text;
+      this._fallbackEl?.appendChild(p);
+    };
+
+    if (doc.meta?.name) {
+      addText(doc.meta.name);
+    }
+    if ((doc.meta as any)?.description) {
+      addText((doc.meta as any).description);
+    }
+
+    // 1. Text strings from getTextStrings()
+    const strings = this.getTextStrings();
+    for (const [key, val] of Object.entries(strings)) {
+      if (typeof val === 'string') {
+        addText(val, { name: 'data-key', value: key });
+      }
+    }
+
+    // 2. Scan all timelines (root, artboards, library symbols) for any other text elements
+    const scanTimeline = (tl: any) => {
+      if (!tl?.layers) return;
+      for (const layer of tl.layers) {
+        if (!layer?.keyframes) continue;
+        for (const kf of layer.keyframes) {
+          if (!kf?.elements) continue;
+          for (const el of kf.elements) {
+            if (el?.type === 'text' && el.text) {
+              addText(el.text);
+            }
+          }
+        }
+      }
+    };
+
+    if (doc.root) scanTimeline(doc.root);
+    if (doc.artboards) {
+      for (const ab of doc.artboards) {
+        if (ab.root) scanTimeline(ab.root);
+      }
+    }
+    if (doc.library?.symbols) {
+      for (const sym of Object.values(doc.library.symbols)) {
+        if (sym.timeline) scanTimeline(sym.timeline);
+      }
     }
   }
 
@@ -1001,6 +1284,15 @@ export class WebAnim extends HTMLElementBase {
       this.style.setProperty('--stage-scale', '1');
       this.style.setProperty('--stage-scale-x', '1');
       this.style.setProperty('--stage-scale-y', '1');
+    }
+
+    // Auto-DPR canvas resize
+    if (this._canvasRenderer) {
+      const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+      this._canvasRenderer.resize(sw, sh, dpr);
+      if (this._isVisible) {
+        this._canvasRenderer.render();
+      }
     }
   }
 }

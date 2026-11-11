@@ -153,6 +153,7 @@ export interface StageDef {
   fps: number;
   background: Fill;
   scaleMode: 'showAll' | 'noBorder' | 'exactFit' | 'noScale';
+  renderer?: 'canvas' | 'dom';
   reducedMotion?: {
     mode: ReducedMotionMode;
     posterFrame?: number;

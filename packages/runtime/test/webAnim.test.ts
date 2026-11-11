@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebAnim, registerWebAnim } from '../src/WebAnim';
+import { CanvasRenderer } from '../src/render/CanvasRenderer';
+import { DomRenderer } from '../src/render/DomRenderer';
 import { interactiveBallDoc } from './fixtures/interactiveBallDoc';
 import type { AnimDocument } from '../src/schema';
 
@@ -372,6 +374,7 @@ describe('WebAnim Custom Element (<web-anim>)', () => {
         'strings',
         'translations',
         'state',
+        'renderer',
       ]);
     });
 
@@ -576,6 +579,516 @@ describe('WebAnim Custom Element (<web-anim>)', () => {
       // 3. Test passing strings attribute as JSON prop
       el.setAttribute('strings', JSON.stringify({ cta_button: 'Shop Flash Deal' }));
       expect(txt1?.textContent).toBe('Shop Flash Deal');
+    });
+  });
+
+  describe('Canvas Renderer Mode (<web-anim renderer="canvas">)', () => {
+    let originalGetContext: any;
+    let originalPath2D: any;
+    let originalDpr: number;
+
+    class MockCanvasContext {
+      public canvas: HTMLCanvasElement;
+      public calls: Array<{ method: string; args: any[] }> = [];
+      public fillStyle: any = '#000000';
+      public strokeStyle: any = '#000000';
+      public globalAlpha = 1;
+      public globalCompositeOperation = 'source-over';
+
+      constructor(canvas: HTMLCanvasElement) {
+        this.canvas = canvas;
+      }
+
+      public save() {
+        this.calls.push({ method: 'save', args: [] });
+      }
+
+      public restore() {
+        this.calls.push({ method: 'restore', args: [] });
+      }
+
+      public setTransform(...args: any[]) {
+        this.calls.push({ method: 'setTransform', args });
+      }
+
+      public transform(...args: any[]) {
+        this.calls.push({ method: 'transform', args });
+      }
+
+      public clearRect(...args: any[]) {
+        this.calls.push({ method: 'clearRect', args });
+      }
+
+      public fillRect(...args: any[]) {
+        this.calls.push({ method: 'fillRect', args });
+      }
+
+      public beginPath() {
+        this.calls.push({ method: 'beginPath', args: [] });
+      }
+
+      public fill(...args: any[]) {
+        this.calls.push({ method: 'fill', args });
+      }
+
+      public stroke(...args: any[]) {
+        this.calls.push({ method: 'stroke', args });
+      }
+
+      public clip(...args: any[]) {
+        this.calls.push({ method: 'clip', args });
+      }
+
+      public fillText(...args: any[]) {
+        this.calls.push({ method: 'fillText', args });
+      }
+
+      public strokeText(...args: any[]) {
+        this.calls.push({ method: 'strokeText', args });
+      }
+
+      public drawImage(...args: any[]) {
+        this.calls.push({ method: 'drawImage', args });
+      }
+
+      public measureText(text: string) {
+        return { width: text.length * 10 };
+      }
+
+      public createLinearGradient(...args: any[]) {
+        return { addColorStop: vi.fn() };
+      }
+
+      public createRadialGradient(...args: any[]) {
+        return { addColorStop: vi.fn() };
+      }
+
+      public setLineDash(...args: any[]) {}
+      public getLineDash() {
+        return [];
+      }
+    }
+
+    class MockPath2D {
+      public d?: string;
+      constructor(d?: string) {
+        this.d = d;
+      }
+    }
+
+    beforeEach(() => {
+      originalGetContext = HTMLCanvasElement.prototype.getContext;
+      originalPath2D = (globalThis as any).Path2D;
+      originalDpr = window.devicePixelRatio;
+
+      (globalThis as any).Path2D = MockPath2D;
+      (window as any).Path2D = MockPath2D;
+
+      HTMLCanvasElement.prototype.getContext = function (contextId: string) {
+        if (contextId === '2d') {
+          if (!(this as any)._mockCtx) {
+            (this as any)._mockCtx = new MockCanvasContext(this);
+          }
+          return (this as any)._mockCtx;
+        }
+        return null;
+      } as any;
+    });
+
+    afterEach(() => {
+      HTMLCanvasElement.prototype.getContext = originalGetContext;
+      (globalThis as any).Path2D = originalPath2D;
+      (window as any).Path2D = originalPath2D;
+      window.devicePixelRatio = originalDpr;
+    });
+
+    it('instantiating <web-anim renderer="canvas"> creates <canvas role="img"> and CanvasRenderer', () => {
+      const el = document.createElement('web-anim') as WebAnim;
+      el.setAttribute('renderer', 'canvas');
+      container.appendChild(el);
+      el.animation = interactiveBallDoc;
+
+      expect(el.rendererMode).toBe('canvas');
+      expect(el.renderer).toBeInstanceOf(CanvasRenderer);
+      expect(el.canvasRenderer).toBeInstanceOf(CanvasRenderer);
+      expect(el.domRenderer).toBeNull();
+      expect(el.canvas).toBeInstanceOf(HTMLCanvasElement);
+
+      const canvas = el.shadowRoot?.querySelector('canvas.stage-canvas') as HTMLCanvasElement;
+      expect(canvas).not.toBeNull();
+      expect(canvas).toBe(el.canvas);
+      expect(canvas.getAttribute('role')).toBe('img');
+      expect(canvas.getAttribute('aria-label')).toBe('interactive-ball');
+    });
+
+    it('supports setting rendererMode property directly and toggling back to dom', () => {
+      const el = document.createElement('web-anim') as WebAnim;
+      container.appendChild(el);
+      el.rendererMode = 'canvas';
+      expect(el.getAttribute('renderer')).toBe('canvas');
+
+      el.animation = interactiveBallDoc;
+      expect(el.renderer).toBeInstanceOf(CanvasRenderer);
+      expect(el.canvas).not.toBeNull();
+
+      // Toggle back to dom
+      el.rendererMode = 'dom';
+      expect(el.getAttribute('renderer')).toBe('dom');
+      expect(el.renderer).toBeInstanceOf(DomRenderer);
+      expect(el.canvas).toBeNull();
+      expect(el.shadowRoot?.querySelector('canvas.stage-canvas')).toBeNull();
+    });
+
+    it('supports default renderer mode configured via stage.renderer in document', () => {
+      const canvasStageDoc: AnimDocument = {
+        ...interactiveBallDoc,
+        stage: {
+          ...interactiveBallDoc.stage,
+          renderer: 'canvas',
+        },
+      };
+
+      const el = document.createElement('web-anim') as WebAnim;
+      container.appendChild(el);
+      el.animation = canvasStageDoc;
+
+      expect(el.rendererMode).toBe('canvas');
+      expect(el.renderer).toBeInstanceOf(CanvasRenderer);
+      expect(el.canvas).not.toBeNull();
+    });
+
+    it('resizing updates canvas width/height with devicePixelRatio (auto-DPR)', () => {
+      window.devicePixelRatio = 2;
+      const el = document.createElement('web-anim') as WebAnim;
+      el.setAttribute('renderer', 'canvas');
+      container.appendChild(el);
+      el.animation = interactiveBallDoc;
+
+      const canvas = el.canvas!;
+      expect(canvas).not.toBeNull();
+      expect(canvas.width).toBe(550 * 2);
+      expect(canvas.height).toBe(400 * 2);
+      expect(canvas.style.width).toBe('550px');
+      expect(canvas.style.height).toBe('400px');
+
+      // Update to DPR 3 and trigger resize
+      window.devicePixelRatio = 3;
+      el.handleResize();
+
+      expect(canvas.width).toBe(550 * 3);
+      expect(canvas.height).toBe(400 * 3);
+      expect(canvas.style.width).toBe('550px');
+      expect(canvas.style.height).toBe('400px');
+    });
+
+    it('accessible DOM fallback contains animation text for screen readers', () => {
+      const i18nDoc: AnimDocument = {
+        version: '0.1.0' as any,
+        meta: { name: 'Accessible Demo Animation', createdAt: '', modifiedAt: '', editorVersion: '0.1.0' },
+        stage: { width: 550, height: 400, fps: 24, background: { type: 'solid', color: '#000000' }, scaleMode: 'showAll' },
+        library: { symbols: {}, audio: {}, fonts: {}, bitmaps: {} },
+        root: {
+          frameCount: 24,
+          layers: [
+            {
+              id: 'layer-text',
+              name: 'Text',
+              keyframes: [
+                {
+                  index: 0,
+                  duration: 24,
+                  elements: [
+                    {
+                      id: 'txt-1',
+                      type: 'text',
+                      text: 'Play Game',
+                      i18nKey: 'btn_play',
+                      transform: { x: 50, y: 50 },
+                      fontId: 'default',
+                      fontSize: 16,
+                      color: '#ffffff',
+                      selectable: false,
+                    },
+                    {
+                      id: 'txt-static',
+                      type: 'text',
+                      text: 'Press Space to Jump',
+                      transform: { x: 50, y: 100 },
+                      fontId: 'default',
+                      fontSize: 14,
+                      color: '#cccccc',
+                      selectable: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        i18n: {
+          defaultLocale: 'en',
+          locales: {
+            en: { btn_play: 'Play Game' },
+            es: { btn_play: 'Jugar' },
+          },
+        },
+      };
+
+      const el = document.createElement('web-anim') as WebAnim;
+      el.setAttribute('renderer', 'canvas');
+      container.appendChild(el);
+      el.animation = i18nDoc;
+
+      const fallback = el.canvas?.querySelector('.flashback-sr-fallback') as HTMLElement;
+      expect(fallback).not.toBeNull();
+      expect(fallback.classList.contains('sr-only')).toBe(true);
+      expect(fallback.style.position).toBe('absolute');
+      expect(fallback.style.width).toBe('1px');
+      expect(fallback.style.height).toBe('1px');
+      expect(fallback.style.overflow).toBe('hidden');
+      expect(fallback.style.clip).toMatch(/rect\(0(?:px)?, ?0(?:px)?, ?0(?:px)?, ?0(?:px)?\)/);
+      expect(fallback.style.whiteSpace).toBe('nowrap');
+
+      // Contains animation name and text strings
+      expect(fallback.textContent).toContain('Accessible Demo Animation');
+      expect(fallback.textContent).toContain('Play Game');
+      expect(fallback.textContent).toContain('Press Space to Jump');
+
+      // Dynamic update via setTextStrings
+      el.setTextStrings({ btn_play: 'Start Adventure' });
+      expect(fallback.textContent).toContain('Start Adventure');
+
+      // Dynamic update via locale change
+      el.locale = 'es';
+      expect(fallback.textContent).toContain('Jugar');
+    });
+
+    it('ticker step updates canvas rendering', () => {
+      const el = document.createElement('web-anim') as WebAnim;
+      el.setAttribute('renderer', 'canvas');
+      container.appendChild(el);
+      el.animation = interactiveBallDoc;
+
+      const renderSpy = vi.spyOn(el.canvasRenderer!, 'render');
+      expect(renderSpy).not.toHaveBeenCalled();
+
+      // Step ticker
+      el.ticker?.step();
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+
+      // gotoAndStop advances frame and re-renders immediately
+      renderSpy.mockClear();
+      el.gotoAndStop(2);
+      expect(el.currentFrame).toBe(2);
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+
+      // gotoAndPlay resumes and re-renders
+      renderSpy.mockClear();
+      el.gotoAndPlay(1);
+      expect(el.currentFrame).toBe(1);
+      expect(el.isPlaying).toBe(true);
+      expect(renderSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('switching between artboards and frames works identically in canvas mode', () => {
+      const artboardCanvasDoc: AnimDocument = {
+        version: '0.1.0' as any,
+        meta: { name: 'Canvas Artboards Test', createdAt: '', modifiedAt: '', editorVersion: '0.1.0' },
+        stage: {
+          width: 550,
+          height: 400,
+          fps: 24,
+          background: { type: 'solid', color: '#111111' },
+          scaleMode: 'showAll',
+          renderer: 'canvas',
+        },
+        library: { symbols: {}, audio: {}, fonts: {}, bitmaps: {} },
+        root: {
+          frameCount: 10,
+          layers: [
+            {
+              id: 'l1',
+              name: 'Layer 1',
+              kind: 'normal',
+              visible: true,
+              locked: false,
+              keyframes: [
+                {
+                  id: 'kf1',
+                  index: 0,
+                  duration: 10,
+                  elements: [
+                    {
+                      id: 'txt-art-1',
+                      type: 'text',
+                      text: 'Artboard 1 Title',
+                      transform: { x: 10, y: 10 },
+                      fontId: 'default',
+                      fontSize: 16,
+                      color: '#ffffff',
+                      selectable: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        artboards: [
+          {
+            id: 'ab-1',
+            name: 'Desktop',
+            width: 550,
+            height: 400,
+            background: { type: 'solid', color: '#111111' },
+            root: {
+              frameCount: 10,
+              layers: [
+                {
+                  id: 'l1',
+                  name: 'Layer 1',
+                  kind: 'normal',
+                  visible: true,
+                  locked: false,
+                  keyframes: [
+                    {
+                      id: 'kf1',
+                      index: 0,
+                      duration: 10,
+                      elements: [
+                        {
+                          id: 'txt-art-1',
+                          type: 'text',
+                          text: 'Artboard 1 Title',
+                          transform: { x: 10, y: 10 },
+                          fontId: 'default',
+                          fontSize: 16,
+                          color: '#ffffff',
+                          selectable: false,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          {
+            id: 'ab-2',
+            name: 'Tablet',
+            width: 800,
+            height: 600,
+            background: { type: 'solid', color: '#222222' },
+            root: {
+              frameCount: 10,
+              layers: [
+                {
+                  id: 'l2',
+                  name: 'Layer 2',
+                  kind: 'normal',
+                  visible: true,
+                  locked: false,
+                  keyframes: [
+                    {
+                      id: 'kf2',
+                      index: 0,
+                      duration: 10,
+                      elements: [
+                        {
+                          id: 'txt-art-2',
+                          type: 'text',
+                          text: 'Artboard 2 Tablet Content',
+                          transform: { x: 20, y: 20 },
+                          fontId: 'default',
+                          fontSize: 18,
+                          color: '#ffff00',
+                          selectable: false,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+        activeArtboardId: 'ab-1',
+      };
+
+      window.devicePixelRatio = 1;
+      const el = document.createElement('web-anim') as WebAnim;
+      container.appendChild(el);
+      el.animation = artboardCanvasDoc;
+
+      expect(el.activeArtboardId).toBe('ab-1');
+      expect(el.canvas?.width).toBe(550);
+      expect(el.canvas?.height).toBe(400);
+
+      // Switch to artboard 2
+      let artboardChanged = false;
+      el.addEventListener('artboardchange', (e: any) => {
+        if (e.detail.artboardId === 'ab-2') artboardChanged = true;
+      });
+
+      el.gotoArtboard('ab-2');
+      expect(artboardChanged).toBe(true);
+      expect(el.activeArtboardId).toBe('ab-2');
+      expect(el.canvas?.width).toBe(800);
+      expect(el.canvas?.height).toBe(600);
+
+      // Accessible fallback updated with new artboard contents
+      const fallback = el.canvas?.querySelector('.flashback-sr-fallback');
+      expect(fallback?.textContent).toContain('Artboard 2 Tablet Content');
+
+      // Frame switching on target artboard
+      el.gotoAndStop(4);
+      expect(el.currentFrame).toBe(4);
+    });
+
+    it('pauses rendering when off-screen via IntersectionObserver and resumes when visible', () => {
+      const el = document.createElement('web-anim') as WebAnim;
+      el.setAttribute('renderer', 'canvas');
+      container.appendChild(el);
+      el.animation = interactiveBallDoc;
+
+      expect(el.ticker?.isRunning).toBe(true);
+      expect(el.isVisible).toBe(true);
+
+      // Scrolled off-screen -> pauses ticker to consume 0% CPU/GPU
+      el.handleIntersection(false);
+      expect(el.isVisible).toBe(false);
+      expect(el.ticker?.isRunning).toBe(false);
+
+      // Calling play() while off-screen does not start ticker
+      el.play();
+      expect(el.ticker?.isRunning).toBe(false);
+
+      // Scrolled back into view -> resumes ticker and renders canvas
+      const renderSpy = vi.spyOn(el.canvasRenderer!, 'render');
+      el.handleIntersection(true);
+      expect(el.isVisible).toBe(true);
+      expect(el.ticker?.isRunning).toBe(true);
+      expect(renderSpy).toHaveBeenCalled();
+    });
+
+    it('gracefully tears down runtime and clears canvas references on destroy() or disconnect', () => {
+      const el = document.createElement('web-anim') as WebAnim;
+      el.setAttribute('renderer', 'canvas');
+      container.appendChild(el);
+      el.animation = interactiveBallDoc;
+
+      const canvasRenderer = el.canvasRenderer!;
+      const detachSpy = vi.spyOn(canvasRenderer, 'detach');
+
+      el.destroy();
+
+      expect(detachSpy).toHaveBeenCalled();
+      expect(el.ticker).toBeNull();
+      expect(el.pipeline).toBeNull();
+      expect(el.renderer).toBeNull();
+      expect(el.canvasRenderer).toBeNull();
+      expect(el.canvas).toBeNull();
+      expect(el.stageViewport?.innerHTML).toBe('');
     });
   });
 });

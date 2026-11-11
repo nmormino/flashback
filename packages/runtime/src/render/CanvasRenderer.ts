@@ -358,6 +358,13 @@ export class CanvasRenderer implements RendererHooks {
   }
 
   /**
+   * Synchronizes text variables and reactive state bindings, marking dirty for redraw.
+   */
+  public syncTextVariables(): void {
+    this.markDirty();
+  }
+
+  /**
    * Executes the full Canvas 2D drawing pipeline.
    */
   public render(): void {
@@ -370,8 +377,11 @@ export class CanvasRenderer implements RendererHooks {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.width, this.height);
 
-    // Optional stage background fill
-    const bg = this.doc?.stage?.background;
+    // Optional stage background fill (from active artboard or stage)
+    const activeArtboard =
+      this.doc?.artboards?.find((a) => a.id === this.doc?.activeArtboardId) ||
+      this.doc?.artboards?.[0];
+    const bg = activeArtboard?.background ?? this.doc?.stage?.background;
     if (bg && bg.type !== 'none') {
       const bgStyle = this.createCanvasStyle(ctx, bg, null);
       if (bgStyle) {
