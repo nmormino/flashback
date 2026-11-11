@@ -1,3 +1,4 @@
+export { CanvasRenderer, blendModeToCompositeOperation, type CanvasRendererOptions } from './CanvasRenderer';
 export { DomRenderer, blendModeToCSS, type DomRendererOptions } from './DomRenderer';
 export { fillToPaint, fillToCSS, createIdScope, IdScope, SVG_NS } from './fills';
 export { filtersToCSS } from './filters';
