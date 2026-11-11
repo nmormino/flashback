@@ -9,7 +9,6 @@
   font-family: var(--mx-font-family);
 }
 
-/* Main middle workspace: Tools spans full height on the left, Stage & Bottom Tray in the center, Library on the right */
 .mainLayout {
   display: flex;
   flex: 1;
@@ -19,14 +18,11 @@
   width: 100%;
 }
 
-.stageAndBottomArea {
-  display: flex;
-  flex-direction: column;
+.mainPanelGroup {
   flex: 1;
-  overflow: hidden;
-  position: relative;
   min-width: 0;
-  min-height: 0;
+  height: 100%;
+  width: 100%;
 }
 
 .stageWrapper {
@@ -36,48 +32,85 @@
   overflow: hidden;
   position: relative;
   min-height: 0;
+  height: 100%;
+  width: 100%;
 }
 
-/* Center area takes max screen area: Tools on left, Stage in middle, Library on right */
-.centerArea {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-  min-height: 0;
-}
-
-/* Bottom Multi-Tab Inspector: Timeline, Properties, Scripts */
-.bottomInspector {
-  background-color: var(--mx-bg-panel);
-  border-top: 1px solid var(--mx-border-light);
+.bottomDock {
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  height: 100%;
+  width: 100%;
   overflow: hidden;
-  position: relative;
-  z-index: 30;
+  background-color: var(--mx-bg-panel);
 }
 
-.bottomInspector.collapsed {
-  height: 32px !important;
+.inspectorDock {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: var(--mx-bg-panel);
+  border-left: 1px solid var(--mx-border-light);
 }
 
-/* Height resizer drag handle at the top edge of bottom pane */
-.resizer {
+.inspectorHeader {
+  height: 32px;
+  min-height: 32px;
+  background-color: var(--mx-bg-panel-dark);
+  border-bottom: 1px solid var(--mx-border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  gap: 6px;
+  user-select: none;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.inspectorTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mx-text-main);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resizerHorizontal {
   height: 5px;
   width: 100%;
-  position: absolute;
-  top: 0;
-  left: 0;
   cursor: ns-resize;
-  z-index: 50;
-  background: transparent;
+  background-color: var(--mx-border-light);
   transition: background-color 0.15s ease;
+  position: relative;
+  z-index: 20;
+  flex-shrink: 0;
 }
 
-.resizer:hover,
-.resizer.active {
+.resizerHorizontal:hover,
+.resizerHorizontal[data-resize-handle-state='drag'] {
+  background-color: var(--mx-accent);
+}
+
+.resizerVertical {
+  width: 5px;
+  height: 100%;
+  cursor: ew-resize;
+  background-color: var(--mx-border-light);
+  transition: background-color 0.15s ease;
+  position: relative;
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+.resizerVertical:hover,
+.resizerVertical[data-resize-handle-state='drag'] {
   background-color: var(--mx-accent);
 }
 
@@ -91,6 +124,7 @@
   padding: 0 10px;
   gap: 6px;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .tabBtn {
@@ -136,6 +170,7 @@
   gap: 4px;
   font-size: 10px;
   transition: all 0.12s ease;
+  flex-shrink: 0;
 }
 
 .collapseToggleBtn:hover {
@@ -149,4 +184,6 @@
   overflow: hidden;
   position: relative;
   min-height: 0;
+  height: 100%;
+  width: 100%;
 }

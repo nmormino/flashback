@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
+import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels';
 import { MenuBar } from './MenuBar';
 import { Tools } from '../panels/Tools/Tools';
 import { Stage } from '../panels/Stage/Stage';
@@ -7,7 +8,6 @@ import { Library } from '../panels/Library/Library';
 import { Localization } from '../panels/Localization/Localization';
 import { StateVariables } from '../panels/StateVariables/StateVariables';
 import { Timeline } from '../panels/Timeline/Timeline';
-import { Layers } from '../panels/Layers/Layers';
 import { Properties } from '../panels/Properties/Properties';
 import { Scripts } from '../panels/Scripts/Scripts';
 import { ContextMenu } from '../ui/ContextMenu';
@@ -21,153 +21,217 @@ const ExportModal = React.lazy(() => import('../dialogs/ExportModal').then((m) =
 const ImportModal = React.lazy(() => import('../dialogs/ImportModal').then((m) => ({ default: m.ImportModal })));
 const BezierEditorModal = React.lazy(() => import('../ui/BezierEditorModal').then((m) => ({ default: m.BezierEditorModal })));
 
-
-type BottomTab = 'timeline' | 'properties' | 'scripts';
+type BottomDockTab = 'timeline' | 'scripts';
 
 export const Workspace: React.FC = () => {
-  const activeTab = useEditorStore((s) => s.activeInspectorTab ?? 'timeline');
+  const activeInspectorTab = useEditorStore((s) => s.activeInspectorTab ?? 'timeline');
   const isLibraryOpen = useEditorStore((s) => s.isLibraryOpen);
   const isLocalizationOpen = useEditorStore((s) => s.isLocalizationOpen);
   const isStateVariablesOpen = useEditorStore((s) => s.isStateVariablesOpen);
-  const setActiveTab = (tab: BottomTab) => {
-    editorActions.setActiveInspectorTab(tab);
-    setIsInspectorCollapsed(false);
-  };
-  const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false);
-  const [bottomHeight, setBottomHeight] = useState<number>(240);
-  const [isResizing, setIsResizing] = useState(false);
 
-  const dragStartY = useRef(0);
-  const dragStartHeight = useRef(0);
+  const [activeBottomTab, setActiveBottomTab] = useState<BottomDockTab>(
+    activeInspectorTab === 'scripts' ? 'scripts' : 'timeline'
+  );
+  const [isBottomCollapsed, setIsBottomCollapsed] = useState(false);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(true);
 
-  const handleResizerMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-    dragStartY.current = e.clientY;
-    dragStartHeight.current = isInspectorCollapsed ? 32 : bottomHeight;
-  };
+  const bottomPanelRef = useRef<ImperativePanelHandle>(null);
+  const inspectorPanelRef = useRef<ImperativePanelHandle>(null);
 
+  // Sync when editorActions.setActiveInspectorTab is invoked
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      const delta = dragStartY.current - e.clientY;
-      const newHeight = Math.min(
-        Math.max(120, dragStartHeight.current + delta),
-        Math.round(window.innerHeight * 0.75)
-      );
-      setBottomHeight(newHeight);
-      if (isInspectorCollapsed) {
-        setIsInspectorCollapsed(false);
+    if (activeInspectorTab === 'scripts') {
+      setActiveBottomTab('scripts');
+      if (isBottomCollapsed) {
+        setIsBottomCollapsed(false);
+        try {
+          bottomPanelRef.current?.expand();
+        } catch {
+          // Headless environments without computed layout
+        }
       }
-    };
-
-    const handleMouseUp = () => {
-      if (isResizing) {
-        setIsResizing(false);
+    } else if (activeInspectorTab === 'timeline') {
+      setActiveBottomTab('timeline');
+      if (isBottomCollapsed) {
+        setIsBottomCollapsed(false);
+        try {
+          bottomPanelRef.current?.expand();
+        } catch {
+          // Headless environments without computed layout
+        }
       }
-    };
-
-    if (isResizing) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
+    } else if (activeInspectorTab === 'properties') {
+      if (!isInspectorOpen) {
+        setIsInspectorOpen(true);
+        try {
+          inspectorPanelRef.current?.expand();
+        } catch {
+          // Headless environments without computed layout
+        }
+      }
     }
+  }, [activeInspectorTab]);
 
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing, isInspectorCollapsed]);
+  const selectBottomTab = (tab: BottomDockTab) => {
+    setActiveBottomTab(tab);
+    editorActions.setActiveInspectorTab(tab);
+    if (isBottomCollapsed) {
+      setIsBottomCollapsed(false);
+      try {
+        bottomPanelRef.current?.expand();
+      } catch {
+        // Headless environments without computed layout
+      }
+    }
+  };
+
+  const toggleBottomDock = () => {
+    const nextState = !isBottomCollapsed;
+    setIsBottomCollapsed(nextState);
+    try {
+      if (nextState) {
+        bottomPanelRef.current?.collapse();
+      } else {
+        bottomPanelRef.current?.expand();
+      }
+    } catch {
+      // Headless environments without computed layout
+    }
+  };
+
+  const toggleInspector = () => {
+    const nextState = !isInspectorOpen;
+    setIsInspectorOpen(nextState);
+    try {
+      if (!nextState) {
+        inspectorPanelRef.current?.collapse();
+      } else {
+        inspectorPanelRef.current?.expand();
+      }
+    } catch {
+      // Headless environments without computed layout
+    }
+  };
 
   return (
     <div className={styles.workspace}>
       {/* 1. Sleek Minimal Top Menu Bar */}
       <MenuBar />
 
-      {/* 2. Main Middle Workspace: Full-height Left Tools, Center Stage Area, Right Library */}
+      {/* 2. Main Middle Workspace: Fixed width Tools on left, Center & Right Resizable Layout */}
       <div className={styles.mainLayout}>
         <Tools />
 
-        <div className={styles.stageAndBottomArea}>
-          {/* Stage Artboard */}
-          <div className={styles.stageWrapper}>
-            <ArtboardTabStrip />
-            <Stage />
-          </div>
+        <PanelGroup direction="horizontal" className={styles.mainPanelGroup}>
+          {/* Center Column */}
+          <Panel defaultSize={75} minSize={45}>
+            <PanelGroup direction="vertical">
+              {/* Upper Panel */}
+              <Panel defaultSize={65} minSize={30}>
+                <div className={styles.stageWrapper}>
+                  <ArtboardTabStrip />
+                  <Stage />
+                </div>
+              </Panel>
 
-          {/* 3. Bottom Area: Multi-Tab Pane [ Timeline ] [ Properties ] [ Scripts ] */}
-          <div
-            className={`${styles.bottomInspector} ${
-              isInspectorCollapsed ? styles.collapsed : ''
-            }`}
-            style={{ height: isInspectorCollapsed ? undefined : `${bottomHeight}px` }}
+              {/* Vertical Resize Handle */}
+              <PanelResizeHandle className={styles.resizerHorizontal} />
+
+              {/* Lower Panel */}
+              <Panel
+                defaultSize={35}
+                minSize={15}
+                collapsible={true}
+                collapsedSize={4}
+                ref={bottomPanelRef}
+                onCollapse={() => setIsBottomCollapsed(true)}
+                onExpand={() => setIsBottomCollapsed(false)}
+              >
+                <div className={styles.bottomDock}>
+                  {/* Tab Bar: [ ⏱ Timeline & Layers ] [ 📜 Scripts ] [ Collapse/Expand ] */}
+                  <div className={styles.inspectorTabBar}>
+                    <button
+                      type="button"
+                      className={`${styles.tabBtn} ${
+                        activeBottomTab === 'timeline' ? styles.active : ''
+                      }`}
+                      onClick={() => selectBottomTab('timeline')}
+                    >
+                      ⏱ Timeline & Layers
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.tabBtn} ${
+                        activeBottomTab === 'scripts' ? styles.active : ''
+                      }`}
+                      onClick={() => selectBottomTab('scripts')}
+                    >
+                      📜 Scripts
+                    </button>
+
+                    <button
+                      type="button"
+                      className={styles.collapseToggleBtn}
+                      onClick={toggleBottomDock}
+                      title={isBottomCollapsed ? 'Expand Panel' : 'Collapse Panel'}
+                    >
+                      <span>{isBottomCollapsed ? 'Expand' : 'Collapse'}</span>
+                      <span>{isBottomCollapsed ? '▲' : '▼'}</span>
+                    </button>
+                  </div>
+
+                  {/* Tab Content */}
+                  {!isBottomCollapsed && (
+                    <div className={styles.tabContent}>
+                      {activeBottomTab === 'timeline' && <Timeline />}
+                      {activeBottomTab === 'scripts' && <Scripts />}
+                    </div>
+                  )}
+                </div>
+              </Panel>
+            </PanelGroup>
+          </Panel>
+
+          {/* Horizontal Resize Handle */}
+          <PanelResizeHandle className={styles.resizerVertical} />
+
+          {/* Right Inspector Panel */}
+          <Panel
+            defaultSize={25}
+            minSize={18}
+            maxSize={40}
+            collapsible={true}
+            collapsedSize={4}
+            ref={inspectorPanelRef}
+            onCollapse={() => setIsInspectorOpen(false)}
+            onExpand={() => setIsInspectorOpen(true)}
           >
-            {/* Height Resizer Handle */}
-            <div
-              className={`${styles.resizer} ${isResizing ? styles.active : ''}`}
-              onMouseDown={handleResizerMouseDown}
-              title="Drag to resize bottom pane"
-            />
-
-            {/* Tab Bar: [ ⏱ Timeline & Layers ] [ ⚙ Properties ] [ 📜 Scripts ] */}
-            <div className={styles.inspectorTabBar}>
-              <button
-                type="button"
-                className={`${styles.tabBtn} ${
-                  activeTab === 'timeline' ? styles.active : ''
-                }`}
-                onClick={() => {
-                  setActiveTab('timeline');
-                  setIsInspectorCollapsed(false);
-                }}
-              >
-                ⏱ Timeline & Layers
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabBtn} ${
-                  activeTab === 'properties' ? styles.active : ''
-                }`}
-                onClick={() => {
-                  setActiveTab('properties');
-                  setIsInspectorCollapsed(false);
-                }}
-              >
-                ⚙ Properties
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabBtn} ${
-                  activeTab === 'scripts' ? styles.active : ''
-                }`}
-                onClick={() => {
-                  setActiveTab('scripts');
-                  setIsInspectorCollapsed(false);
-                }}
-              >
-                📜 Scripts
-              </button>
-
-              <button
-                type="button"
-                className={styles.collapseToggleBtn}
-                onClick={() => setIsInspectorCollapsed(!isInspectorCollapsed)}
-                title={isInspectorCollapsed ? 'Expand Panel' : 'Collapse Panel'}
-              >
-                <span>{isInspectorCollapsed ? 'Expand' : 'Collapse'}</span>
-                <span>{isInspectorCollapsed ? '▲' : '▼'}</span>
-              </button>
-            </div>
-
-            {/* Tab Content */}
-            {!isInspectorCollapsed && (
-              <div className={styles.tabContent}>
-                {activeTab === 'timeline' && <Timeline />}
-                {activeTab === 'properties' && <Properties />}
-                {activeTab === 'scripts' && <Scripts />}
+            <div className={styles.inspectorDock}>
+              {/* Inspector Header Bar */}
+              <div className={styles.inspectorHeader}>
+                <div className={styles.inspectorTitle}>
+                  <span>⚙ Properties</span>
+                </div>
+                <button
+                  type="button"
+                  className={styles.collapseToggleBtn}
+                  onClick={toggleInspector}
+                  title={isInspectorOpen ? 'Collapse Properties' : 'Expand Properties'}
+                >
+                  {isInspectorOpen && <span>Collapse</span>}
+                  <span>{isInspectorOpen ? '▶' : '◀'}</span>
+                </button>
               </div>
-            )}
-          </div>
-        </div>
+
+              {/* Inspector Content */}
+              {isInspectorOpen && (
+                <div className={styles.tabContent}>
+                  <Properties />
+                </div>
+              )}
+            </div>
+          </Panel>
+        </PanelGroup>
 
         {isLibraryOpen && <Library />}
         {isLocalizationOpen && <Localization />}

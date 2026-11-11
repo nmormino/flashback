@@ -23,7 +23,7 @@
     "lucide-react": "^1.61.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-resizable-panels": "^4.21.0"
+    "react-resizable-panels": "^2.1.9"
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
