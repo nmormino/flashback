@@ -117,6 +117,30 @@ class MockCanvasRenderingContext2D {
     this.calls.push({ method: 'setTransform', args: [a, b, c, d, tx, ty] });
   }
 
+  public translate(x: number, y: number): void {
+    this.calls.push({ method: 'translate', args: [x, y] });
+  }
+
+  public rotate(angle: number): void {
+    this.calls.push({ method: 'rotate', args: [angle] });
+  }
+
+  public beginPath(): void {
+    this.calls.push({ method: 'beginPath', args: [] });
+  }
+
+  public moveTo(x: number, y: number): void {
+    this.calls.push({ method: 'moveTo', args: [x, y] });
+  }
+
+  public lineTo(x: number, y: number): void {
+    this.calls.push({ method: 'lineTo', args: [x, y] });
+  }
+
+  public closePath(): void {
+    this.calls.push({ method: 'closePath', args: [] });
+  }
+
   public fill(pathOrRule?: any, fillRule?: any): void {
     const args = [pathOrRule, fillRule].filter((x) => x !== undefined);
     this.calls.push({

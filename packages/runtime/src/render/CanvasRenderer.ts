@@ -16,6 +16,22 @@ import type { RendererHooks } from '../display/types';
 import { filtersToCSS } from './filters';
 import { colorTransformToCSS } from './colorTransform';
 import { resolveI18nText, resolveInterpolatedText, type TextVariableBinding } from './text';
+import {
+  renderTextOnPath,
+  renderTextOnPathCaret,
+  renderTextOnPathSelection,
+  type TextOnPathOptions,
+} from './canvasTextOnPath';
+
+export interface ActiveTextEditorState {
+  elementId?: ID;
+  cursorIndex?: number;
+  selectionStart?: number;
+  selectionEnd?: number;
+  caretColor?: string;
+  caretWidth?: number;
+  selectionFill?: string;
+}
 
 export interface CanvasRendererOptions {
   /** Used to index element definitions by id, resolve stage dimensions/background, and resolve assets. */
@@ -25,6 +41,8 @@ export interface CanvasRendererOptions {
   dpr?: number;
   library?: Library;
   locale?: string;
+  /** Active text editing state for rendering oriented caret and selection highlights on text elements. */
+  activeEditorState?: ActiveTextEditorState;
   /** Override text variable binding. Default: reads/writes the parent clip's `vars`. */
   textBinding?: (obj: DisplayObject) => TextVariableBinding;
 }
@@ -61,6 +79,8 @@ export class CanvasRenderer implements RendererHooks {
   public readonly canvas: HTMLCanvasElement;
   public readonly ctx: CanvasRenderingContext2D | null;
   public readonly pathCache = new Map<string, Path2D>();
+  public readonly index = new Map<ID, DisplayElement>();
+  public activeEditorState?: ActiveTextEditorState;
   public width = 0;
   public height = 0;
   public dpr = 1;
@@ -81,10 +101,148 @@ export class CanvasRenderer implements RendererHooks {
     this.library = opts.library ?? opts.doc?.library;
     this.locale = opts.locale || opts.doc?.i18n?.defaultLocale || 'en';
     this.dpr = opts.dpr ?? (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
+    this.activeEditorState = opts.activeEditorState;
+
+    if (opts.doc) {
+      this.indexDocument(opts.doc);
+    }
 
     const initialWidth = opts.width ?? opts.doc?.stage?.width ?? 550;
     const initialHeight = opts.height ?? opts.doc?.stage?.height ?? 400;
     this.resize(initialWidth, initialHeight, this.dpr);
+  }
+
+  /**
+   * Sets or clears the active text editing state for oriented caret and selection highlights.
+   */
+  public setActiveEditorState(state: ActiveTextEditorState | null | undefined): void {
+    this.activeEditorState = state ?? undefined;
+    this.markDirty();
+  }
+
+  /**
+   * Indexes element definitions across the document's root, artboards, and symbol timelines.
+   */
+  public indexDocument(doc: AnimDocument): void {
+    const walk = (tl: any) => {
+      if (!tl?.layers) return;
+      for (const layer of tl.layers) {
+        if (!layer?.keyframes) continue;
+        for (const kf of layer.keyframes) {
+          if (!kf?.elements) continue;
+          for (const el of kf.elements) {
+            if (el?.id) {
+              this.index.set(el.id, el);
+            }
+          }
+        }
+      }
+    };
+    if (doc.root) walk(doc.root);
+    if (doc.artboards) {
+      for (const ab of doc.artboards) if (ab.root) walk(ab.root);
+    }
+    if (doc.library?.symbols) {
+      for (const sym of Object.values(doc.library.symbols)) if (sym.timeline) walk(sym.timeline);
+    }
+  }
+
+  /**
+   * Resolves SVG path data string ('d') for a given path ID from index, library, or scene hierarchy.
+   */
+  public resolvePathData(pathId: ID, obj?: DisplayObject): string | undefined {
+    // 1. Check index
+    const indexed = this.index.get(pathId);
+    if (indexed) {
+      const d = this.extractPathD(indexed);
+      if (d) return d;
+    }
+
+    // 2. Check library
+    if (this.library) {
+      const shape = (this.library as any).shapes?.[pathId] ?? (this.library as any)[pathId];
+      if (shape) {
+        const d = this.extractPathD(shape);
+        if (d) return d;
+      }
+      if (this.library.symbols) {
+        for (const sym of Object.values(this.library.symbols)) {
+          if (sym.timeline) {
+            const d = this.findPathInTimeline(sym.timeline, pathId);
+            if (d) return d;
+          }
+        }
+      }
+    }
+
+    // 3. Check doc root or artboards
+    if (this.doc) {
+      if (this.doc.root) {
+        const d = this.findPathInTimeline(this.doc.root, pathId);
+        if (d) return d;
+      }
+      if (this.doc.artboards) {
+        for (const ab of this.doc.artboards) {
+          if (ab.root) {
+            const d = this.findPathInTimeline(ab.root, pathId);
+            if (d) return d;
+          }
+        }
+      }
+    }
+
+    // 4. Check obj and parent timeline / hierarchy
+    if (obj) {
+      const tl = (obj as any).timeline ?? (obj._parent as any)?.timeline;
+      if (tl) {
+        const d = this.findPathInTimeline(tl, pathId);
+        if (d) return d;
+      }
+
+      if (obj._parent && obj._parent._children) {
+        for (const child of obj._parent._children) {
+          if (child.id === pathId || child.layerId === pathId || child.name === pathId) {
+            if (child.currentDef) {
+              const d = this.extractPathD(child.currentDef);
+              if (d) return d;
+            }
+          }
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractPathD(el: any): string | undefined {
+    if (!el) return undefined;
+    if (typeof el.d === 'string' && el.d) return el.d;
+    if (el.pathConfig?.pathData) return el.pathConfig.pathData;
+    if (Array.isArray(el.paths) && el.paths.length > 0) {
+      for (const p of el.paths) {
+        if (p && typeof p.d === 'string' && p.d) {
+          return p.d;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private findPathInTimeline(tl: any, pathId: ID): string | undefined {
+    if (!tl?.layers) return undefined;
+    for (const layer of tl.layers) {
+      if (!layer?.keyframes) continue;
+      for (const kf of layer.keyframes) {
+        if (!kf?.elements) continue;
+        for (const el of kf.elements) {
+          if (el?.id === pathId) {
+            const d = this.extractPathD(el);
+            if (d) return d;
+          }
+        }
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -422,6 +580,85 @@ export class CanvasRenderer implements RendererHooks {
     const fontWeight = el.fontWeight || 'normal';
     const fontSize = el.fontSize || 16;
     const fontFamily = el.fontId || 'sans-serif';
+
+    // Check if text is placed on a path (via pathConfig.pathData, pathConfig.pathId, or (el as any).pathId)
+    let pathD = el.pathConfig?.pathData;
+    const pathId = el.pathConfig?.pathId || (el as any).pathId;
+    if (!pathD && pathId) {
+      pathD = this.resolvePathData(pathId, obj);
+    }
+
+    if (pathD) {
+      const resolvedText = textVal || (el.spans ? el.spans.map((s) => s.text).join('') : '');
+      const fillStyle = el.fill ? this.createCanvasStyle(ctx, el.fill, obj) : (el.color || '#000000');
+      let strokeStyle: string | CanvasGradient | CanvasPattern | undefined;
+      let strokeWidth: number | undefined;
+      if (el.stroke && el.stroke.width > 0) {
+        strokeStyle =
+          this.createCanvasStyle(ctx, el.stroke.fill, obj) ?? (el.stroke.fill as any)?.color ?? '#000000';
+        strokeWidth = el.stroke.width;
+      }
+
+      const activeEditor = this.activeEditorState ?? this.opts.activeEditorState;
+      const isEditing = activeEditor && (!activeEditor.elementId || activeEditor.elementId === el.id);
+
+      // Render selection highlight quad if active
+      if (
+        isEditing &&
+        activeEditor?.selectionStart !== undefined &&
+        activeEditor?.selectionEnd !== undefined &&
+        activeEditor.selectionStart !== activeEditor.selectionEnd
+      ) {
+        renderTextOnPathSelection(
+          ctx,
+          resolvedText,
+          pathD,
+          activeEditor.selectionStart,
+          activeEditor.selectionEnd,
+          {
+            startOffset: el.pathConfig?.startOffset,
+            fontSize,
+            fontFamily,
+            fontWeight,
+            fontStyle,
+            letterSpacing: el.letterSpacing,
+            align: el.align === 'center' ? 'center' : el.align === 'right' ? 'right' : 'left',
+            fill: activeEditor.selectionFill,
+          }
+        );
+      }
+
+      // Render text characters along path
+      renderTextOnPath(ctx, resolvedText, pathD, {
+        startOffset: el.pathConfig?.startOffset,
+        fontSize,
+        fontFamily,
+        fontWeight,
+        fontStyle,
+        letterSpacing: el.letterSpacing,
+        align: el.align === 'center' ? 'center' : el.align === 'right' ? 'right' : 'left',
+        fill: fillStyle ?? '#000000',
+        stroke: strokeStyle,
+        strokeWidth,
+      });
+
+      // Render caret if active
+      if (isEditing && activeEditor?.cursorIndex !== undefined) {
+        renderTextOnPathCaret(ctx, resolvedText, pathD, activeEditor.cursorIndex, {
+          startOffset: el.pathConfig?.startOffset,
+          fontSize,
+          fontFamily,
+          fontWeight,
+          fontStyle,
+          letterSpacing: el.letterSpacing,
+          align: el.align === 'center' ? 'center' : el.align === 'right' ? 'right' : 'left',
+          color: activeEditor.caretColor,
+          width: activeEditor.caretWidth,
+        });
+      }
+
+      return;
+    }
 
     ctx.font = `${fontStyle !== 'normal' ? fontStyle + ' ' : ''}${fontWeight !== 'normal' ? fontWeight + ' ' : ''}${fontSize}px ${fontFamily}`;
 

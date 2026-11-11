@@ -1,4 +1,22 @@
-export { CanvasRenderer, blendModeToCompositeOperation, type CanvasRendererOptions } from './CanvasRenderer';
+export {
+  CanvasRenderer,
+  blendModeToCompositeOperation,
+  type CanvasRendererOptions,
+  type ActiveTextEditorState,
+} from './CanvasRenderer';
+export {
+  renderTextOnPath,
+  renderTextOnPathCaret,
+  renderTextOnPathSelection,
+  getCursorIndexOnPath,
+  computeTextPathLayout,
+  type TextOnPathOptions,
+  type TextOnPathCaretOptions,
+  type TextOnPathSelectionOptions,
+  type GetCursorIndexOptions,
+  type CaretInfo,
+  type TextPathLayout,
+} from './canvasTextOnPath';
 export { DomRenderer, blendModeToCSS, type DomRendererOptions } from './DomRenderer';
 export { fillToPaint, fillToCSS, createIdScope, IdScope, SVG_NS } from './fills';
 export { filtersToCSS } from './filters';
