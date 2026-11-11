@@ -160,3 +160,6 @@ export const TestMovieModal: React.FC = () => {
 
   return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 };
+
+export default TestMovieModal;
+

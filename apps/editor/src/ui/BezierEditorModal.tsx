@@ -428,3 +428,6 @@ export const BezierEditorModal: React.FC = () => {
     document.body
   );
 };
+
+export default BezierEditorModal;
+

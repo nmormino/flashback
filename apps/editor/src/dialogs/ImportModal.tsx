@@ -99,3 +99,6 @@ export const ImportModal: React.FC = () => {
 
   return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 };
+
+export default ImportModal;
+

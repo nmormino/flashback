@@ -175,3 +175,6 @@ export const ConvertToComponentDialog: React.FC = () => {
 };
 
 export const ConvertToSymbolDialog = ConvertToComponentDialog;
+
+export default ConvertToComponentDialog;
+

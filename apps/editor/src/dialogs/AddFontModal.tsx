@@ -663,3 +663,6 @@ export const AddFontModal: React.FC = () => {
     </div>
   );
 };
+
+export default AddFontModal;
+
