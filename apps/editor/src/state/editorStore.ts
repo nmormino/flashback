@@ -32,6 +32,17 @@ import type {
   OvalConfig,
   StateVariable,
   StateVariableType,
+  StateMachineDef,
+  StateMachineInput,
+  StateNode,
+  StateNodeType,
+  StateTransition,
+  StateCondition,
+  ConditionOperator,
+  StateListener,
+  StateListenerAction,
+  StateListenerEventType,
+  StateListenerActionType,
 } from '@flashback/runtime';
 import { Matrix2D } from '@flashback/runtime';
 import {
@@ -133,7 +144,7 @@ export interface EditorState {
   importModalOpen: boolean;
   convertToSymbolModalOpen: boolean;
   convertToComponentModalOpen: boolean;
-  activeInspectorTab: 'timeline' | 'properties' | 'scripts';
+  activeInspectorTab: 'timeline' | 'statemachine' | 'scripts' | 'properties';
   addFontModalOpen: boolean;
   bezierModalOpen: boolean;
   activeBezierTarget: {
@@ -2010,7 +2021,7 @@ export const editorActions = {
     notify();
   },
 
-  setActiveInspectorTab(tab: 'timeline' | 'properties' | 'scripts'): void {
+  setActiveInspectorTab(tab: 'timeline' | 'statemachine' | 'scripts' | 'properties'): void {
     state = { ...state, activeInspectorTab: tab };
     notify();
   },
@@ -2139,6 +2150,299 @@ export const editorActions = {
     if (doc.state && removed && removed.name in doc.state) {
       delete doc.state[removed.name];
     }
+    state = { ...state, doc };
+    notify();
+  },
+
+  /* ---------------- State Machine Actions ---------------- */
+
+  addStateMachine(name?: string): StateMachineDef {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    if (!doc.stateMachines) {
+      doc.stateMachines = [];
+    }
+    const smIdx = doc.stateMachines.length + 1;
+    const smId = `sm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const entryNodeId = `state_entry_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const idleNodeId = `state_idle_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const transId = `trans_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+    const entryNode: StateNode = {
+      id: entryNodeId,
+      name: 'Entry',
+      type: 'entry',
+      x: 80,
+      y: 120,
+    };
+
+    const idleNode: StateNode = {
+      id: idleNodeId,
+      name: 'Idle',
+      type: 'clip',
+      clipName: 'idle',
+      loop: true,
+      x: 280,
+      y: 120,
+    };
+
+    const transition: StateTransition = {
+      id: transId,
+      fromStateId: entryNodeId,
+      toStateId: idleNodeId,
+      durationMs: 0,
+      conditions: [],
+    };
+
+    const newSm: StateMachineDef = {
+      id: smId,
+      name: name?.trim() || `State Machine ${smIdx}`,
+      inputs: [],
+      states: [entryNode, idleNode],
+      transitions: [transition],
+      listeners: [],
+    };
+
+    doc.stateMachines.push(newSm);
+    doc.activeStateMachineId = smId;
+
+    state = { ...state, doc };
+    notify();
+    return newSm;
+  },
+
+  setActiveStateMachine(id: string): void {
+    const doc = fastClone(state.doc);
+    doc.activeStateMachineId = id;
+    state = { ...state, doc };
+    notify();
+  },
+
+  deleteStateMachine(smId: string): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    if (!doc.stateMachines) return;
+    doc.stateMachines = doc.stateMachines.filter((sm) => sm.id !== smId);
+    if (doc.activeStateMachineId === smId) {
+      doc.activeStateMachineId = doc.stateMachines[0]?.id || undefined;
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  addStateMachineInput(
+    smId: string,
+    input: { name: string; type: 'boolean' | 'number' | 'trigger'; value: boolean | number }
+  ): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm) return;
+    if (!sm.inputs) sm.inputs = [];
+
+    const cleanName = input.name.trim().replace(/[^a-zA-Z0-9_$]/g, '_') || 'input1';
+    const newInput: StateMachineInput = {
+      id: `input_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: cleanName,
+      type: input.type,
+      value: input.type === 'boolean' || input.type === 'trigger' ? Boolean(input.value) : Number(input.value) || 0,
+    };
+    sm.inputs.push(newInput);
+    state = { ...state, doc };
+    notify();
+  },
+
+  updateStateMachineInput(smId: string, inputId: string, updates: Partial<StateMachineInput>): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm || !sm.inputs) return;
+    const inp = sm.inputs.find((i) => i.id === inputId);
+    if (!inp) return;
+
+    if (updates.name !== undefined) {
+      inp.name = updates.name.trim().replace(/[^a-zA-Z0-9_$]/g, '_');
+    }
+    if (updates.type !== undefined) {
+      inp.type = updates.type;
+    }
+    if (updates.value !== undefined) {
+      inp.value =
+        inp.type === 'boolean' || inp.type === 'trigger'
+          ? Boolean(updates.value)
+          : Number(updates.value) || 0;
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  deleteStateMachineInput(smId: string, inputId: string): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm || !sm.inputs) return;
+    sm.inputs = sm.inputs.filter((i) => i.id !== inputId);
+
+    // Clean up conditions referencing this input
+    if (sm.transitions) {
+      for (const tr of sm.transitions) {
+        if (tr.conditions) {
+          tr.conditions = tr.conditions.filter((c) => c.inputId !== inputId);
+        }
+      }
+    }
+    // Clean up listener actions referencing this input
+    if (sm.listeners) {
+      for (const lis of sm.listeners) {
+        if (lis.actions) {
+          lis.actions = lis.actions.filter((a) => a.inputId !== inputId);
+        }
+      }
+    }
+
+    state = { ...state, doc };
+    notify();
+  },
+
+  addStateNode(
+    smId: string,
+    node: { name: string; type: StateNodeType; x?: number; y?: number; clipName?: string; timelineId?: string }
+  ): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm) return;
+    if (!sm.states) sm.states = [];
+
+    const newNode: StateNode = {
+      id: `state_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: node.name.trim() || 'New State',
+      type: node.type,
+      x: node.x ?? 250,
+      y: node.y ?? 150,
+      clipName: node.clipName,
+      timelineId: node.timelineId,
+      loop: true,
+    };
+    sm.states.push(newNode);
+    state = { ...state, doc };
+    notify();
+  },
+
+  updateStateNode(smId: string, nodeId: string, updates: Partial<StateNode>): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm || !sm.states) return;
+    const n = sm.states.find((it) => it.id === nodeId);
+    if (!n) return;
+
+    Object.assign(n, updates);
+    state = { ...state, doc };
+    notify();
+  },
+
+  deleteStateNode(smId: string, nodeId: string): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm || !sm.states) return;
+    sm.states = sm.states.filter((n) => n.id !== nodeId);
+
+    // Also remove transitions connecting to or from this node
+    if (sm.transitions) {
+      sm.transitions = sm.transitions.filter(
+        (t) => t.fromStateId !== nodeId && t.toStateId !== nodeId
+      );
+    }
+    state = { ...state, doc };
+    notify();
+  },
+
+  addStateTransition(
+    smId: string,
+    transition: { fromStateId: string; toStateId: string; durationMs?: number; conditions?: StateCondition[] }
+  ): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm) return;
+    if (!sm.transitions) sm.transitions = [];
+
+    const newTrans: StateTransition = {
+      id: `trans_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      fromStateId: transition.fromStateId,
+      toStateId: transition.toStateId,
+      durationMs: transition.durationMs ?? 150,
+      conditions: transition.conditions ? [...transition.conditions] : [],
+    };
+    sm.transitions.push(newTrans);
+    state = { ...state, doc };
+    notify();
+  },
+
+  updateStateTransition(smId: string, transitionId: string, updates: Partial<StateTransition>): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm || !sm.transitions) return;
+    const tr = sm.transitions.find((t) => t.id === transitionId);
+    if (!tr) return;
+
+    Object.assign(tr, updates);
+    state = { ...state, doc };
+    notify();
+  },
+
+  deleteStateTransition(smId: string, transitionId: string): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm || !sm.transitions) return;
+    sm.transitions = sm.transitions.filter((t) => t.id !== transitionId);
+    state = { ...state, doc };
+    notify();
+  },
+
+  addStateListener(smId: string, listener: Partial<StateListener>): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm) return;
+    if (!sm.listeners) sm.listeners = [];
+
+    const newLis: StateListener = {
+      id: listener.id || `listener_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      eventType: listener.eventType || 'click',
+      targetElementId: listener.targetElementId,
+      collisionWithElementId: listener.collisionWithElementId,
+      keyCode: listener.keyCode,
+      actions: listener.actions ? [...listener.actions] : [],
+    };
+    sm.listeners.push(newLis);
+    state = { ...state, doc };
+    notify();
+  },
+
+  updateStateListener(smId: string, listenerId: string, updates: Partial<StateListener>): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm || !sm.listeners) return;
+    const lis = sm.listeners.find((l) => l.id === listenerId);
+    if (!lis) return;
+
+    Object.assign(lis, updates);
+    state = { ...state, doc };
+    notify();
+  },
+
+  deleteStateListener(smId: string, listenerId: string): void {
+    pushHistorySnapshot();
+    const doc = fastClone(state.doc);
+    const sm = doc.stateMachines?.find((s) => s.id === smId);
+    if (!sm || !sm.listeners) return;
+    sm.listeners = sm.listeners.filter((l) => l.id !== listenerId);
     state = { ...state, doc };
     notify();
   },

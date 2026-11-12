@@ -30,6 +30,7 @@ export const MenuBar: React.FC = () => {
   const isLibraryOpen = useEditorStore((s) => s.isLibraryOpen);
   const isLocalizationOpen = useEditorStore((s) => s.isLocalizationOpen);
   const isStateVariablesOpen = useEditorStore((s) => s.isStateVariablesOpen);
+  const activeInspectorTab = useEditorStore((s) => s.activeInspectorTab);
 
   const activeTl = getActiveTimeline(doc, isolationStack);
   const fps = doc.stage.fps || 24;
@@ -160,6 +161,10 @@ export const MenuBar: React.FC = () => {
           label: isStateVariablesOpen ? '✓ State & Variables Window' : 'State & Variables Window',
           shortcut: 'Ctrl+Shift+V',
           action: () => editorActions.toggleStateVariables(),
+        },
+        {
+          label: activeInspectorTab === 'statemachine' ? '✓ State Machine Editor' : 'State Machine Editor',
+          action: () => editorActions.setActiveInspectorTab('statemachine'),
         },
         { separator: true, label: '' },
         {

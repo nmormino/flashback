@@ -10,6 +10,7 @@ import { StateVariables } from '../panels/StateVariables/StateVariables';
 import { Timeline } from '../panels/Timeline/Timeline';
 import { Properties } from '../panels/Properties/Properties';
 import { Scripts } from '../panels/Scripts/Scripts';
+import { StateMachinePanel } from '../panels/StateMachine/StateMachinePanel';
 import { ContextMenu } from '../ui/ContextMenu';
 import { useEditorStore, editorActions } from '../state/editorStore';
 import styles from './Workspace.module.css';
@@ -21,7 +22,8 @@ const ExportModal = React.lazy(() => import('../dialogs/ExportModal').then((m) =
 const ImportModal = React.lazy(() => import('../dialogs/ImportModal').then((m) => ({ default: m.ImportModal })));
 const BezierEditorModal = React.lazy(() => import('../ui/BezierEditorModal').then((m) => ({ default: m.BezierEditorModal })));
 
-type BottomDockTab = 'timeline' | 'scripts';
+export type BottomTab = 'timeline' | 'statemachine' | 'properties' | 'scripts';
+type BottomDockTab = BottomTab;
 
 export const Workspace: React.FC = () => {
   const activeInspectorTab = useEditorStore((s) => s.activeInspectorTab ?? 'timeline');
@@ -29,8 +31,12 @@ export const Workspace: React.FC = () => {
   const isLocalizationOpen = useEditorStore((s) => s.isLocalizationOpen);
   const isStateVariablesOpen = useEditorStore((s) => s.isStateVariablesOpen);
 
-  const [activeBottomTab, setActiveBottomTab] = useState<BottomDockTab>(
-    activeInspectorTab === 'scripts' ? 'scripts' : 'timeline'
+  const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>(
+    activeInspectorTab === 'scripts'
+      ? 'scripts'
+      : activeInspectorTab === 'statemachine'
+      ? 'statemachine'
+      : 'timeline'
   );
   const [isBottomCollapsed, setIsBottomCollapsed] = useState(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
@@ -42,6 +48,16 @@ export const Workspace: React.FC = () => {
   useEffect(() => {
     if (activeInspectorTab === 'scripts') {
       setActiveBottomTab('scripts');
+      if (isBottomCollapsed) {
+        setIsBottomCollapsed(false);
+        try {
+          bottomPanelRef.current?.expand();
+        } catch {
+          // Headless environments without computed layout
+        }
+      }
+    } else if (activeInspectorTab === 'statemachine') {
+      setActiveBottomTab('statemachine');
       if (isBottomCollapsed) {
         setIsBottomCollapsed(false);
         try {
@@ -72,7 +88,7 @@ export const Workspace: React.FC = () => {
     }
   }, [activeInspectorTab]);
 
-  const selectBottomTab = (tab: BottomDockTab) => {
+  const selectBottomTab = (tab: BottomTab) => {
     setActiveBottomTab(tab);
     editorActions.setActiveInspectorTab(tab);
     if (isBottomCollapsed) {
@@ -148,7 +164,7 @@ export const Workspace: React.FC = () => {
                 onExpand={() => setIsBottomCollapsed(false)}
               >
                 <div className={styles.bottomDock}>
-                  {/* Tab Bar: [ ⏱ Timeline & Layers ] [ 📜 Scripts ] [ Collapse/Expand ] */}
+                  {/* Tab Bar: [ ⏱ Timeline & Layers ] [ ⚡ State Machine ] [ 📜 Scripts ] [ Collapse/Expand ] */}
                   <div className={styles.inspectorTabBar}>
                     <button
                       type="button"
@@ -158,6 +174,15 @@ export const Workspace: React.FC = () => {
                       onClick={() => selectBottomTab('timeline')}
                     >
                       ⏱ Timeline & Layers
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.tabBtn} ${
+                        activeBottomTab === 'statemachine' ? styles.active : ''
+                      }`}
+                      onClick={() => selectBottomTab('statemachine')}
+                    >
+                      ⚡ State Machine
                     </button>
                     <button
                       type="button"
@@ -184,6 +209,7 @@ export const Workspace: React.FC = () => {
                   {!isBottomCollapsed && (
                     <div className={styles.tabContent}>
                       {activeBottomTab === 'timeline' && <Timeline />}
+                      {activeBottomTab === 'statemachine' && <StateMachinePanel />}
                       {activeBottomTab === 'scripts' && <Scripts />}
                     </div>
                   )}

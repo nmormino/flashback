@@ -1,0 +1,581 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--mx-bg-panel, #18181b);
+  color: var(--mx-text-main, #e4e4e7);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  user-select: none;
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  gap: 16px;
+  color: var(--mx-text-muted, #71717a);
+  text-align: center;
+  padding: 24px;
+}
+
+.emptyTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: #f4f4f5;
+}
+
+.emptyDesc {
+  font-size: 13px;
+  max-width: 400px;
+  line-height: 1.5;
+}
+
+.createSmBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.createSmBtn:hover {
+  background: #2563eb;
+}
+
+/* Header bar */
+.topBar {
+  height: 36px;
+  min-height: 36px;
+  background-color: #121215;
+  border-bottom: 1px solid #27272a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.topBarLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.smSelect {
+  background: #27272a;
+  color: #f4f4f5;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+}
+
+.smSelect:focus {
+  border-color: #3b82f6;
+}
+
+.topBarRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #a1a1aa;
+  font-size: 11px;
+}
+
+.statBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 3-Column layout */
+.threeColumns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: calc(100% - 36px);
+  overflow: hidden;
+}
+
+/* Left Column: Inputs */
+.leftCol {
+  width: 250px;
+  min-width: 220px;
+  max-width: 300px;
+  background-color: #18181b;
+  border-right: 1px solid #27272a;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.colHeader {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #141417;
+  border-bottom: 1px solid #27272a;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #a1a1aa;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.addBtn {
+  background: #27272a;
+  color: #e4e4e7;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.addBtn:hover {
+  background: #3f3f46;
+  color: #fff;
+}
+
+.inputsList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inputCard {
+  background: #202024;
+  border: 1px solid #2e2e33;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s ease;
+}
+
+.inputCard:hover {
+  border-color: #3f3f46;
+}
+
+.inputCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.typeBadge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.typeBadgeBoolean {
+  background: #0c4a6e;
+  color: #38bdf8;
+}
+
+.typeBadgeNumber {
+  background: #581c87;
+  color: #c084fc;
+}
+
+.typeBadgeTrigger {
+  background: #7c2d12;
+  color: #fb923c;
+}
+
+.inputNameField {
+  flex: 1;
+  background: #141416;
+  border: 1px solid #333338;
+  border-radius: 4px;
+  color: #f4f4f5;
+  padding: 2px 6px;
+  font-size: 11px;
+  outline: none;
+}
+
+.inputNameField:focus {
+  border-color: #3b82f6;
+}
+
+.iconBtn {
+  background: none;
+  border: none;
+  color: #71717a;
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease;
+}
+
+.iconBtn:hover {
+  color: #ef4444;
+}
+
+.inputControlsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.boolToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: #d4d4d8;
+}
+
+.boolCheckbox {
+  cursor: pointer;
+  accent-color: #38bdf8;
+}
+
+.numberControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stepBtn {
+  background: #27272a;
+  border: 1px solid #3f3f46;
+  color: #d4d4d8;
+  border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.stepBtn:hover {
+  background: #3f3f46;
+  color: #fff;
+}
+
+.numberInput {
+  width: 60px;
+  background: #141416;
+  border: 1px solid #333338;
+  border-radius: 3px;
+  color: #f4f4f5;
+  padding: 2px 4px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.fireBtn {
+  background: #d97706;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s ease;
+}
+
+.fireBtn:hover {
+  background: #b45309;
+}
+
+.fireBtnActive {
+  background: #22c55e !important;
+}
+
+/* Center Column: Visual State Graph */
+.centerCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  background: #111113;
+  overflow: hidden;
+}
+
+.graphToolbar {
+  height: 34px;
+  min-height: 34px;
+  background: #161619;
+  border-bottom: 1px solid #27272a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  gap: 8px;
+  z-index: 10;
+}
+
+.toolbarGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbarBtn {
+  background: #27272a;
+  color: #e4e4e7;
+  border: 1px solid #3f3f46;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.toolbarBtn:hover:not(:disabled) {
+  background: #3f3f46;
+  color: #fff;
+}
+
+.toolbarBtnActive {
+  background: #2563eb !important;
+  border-color: #3b82f6 !important;
+  color: #fff !important;
+}
+
+.toolbarBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.connectHelperBar {
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #93c5fd;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.graphCanvas {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  cursor: default;
+}
+
+.graphSvg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Right Column: Selection Inspector & Game Listeners */
+.rightCol {
+  width: 300px;
+  min-width: 260px;
+  max-width: 380px;
+  background-color: #18181b;
+  border-left: 1px solid #27272a;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.inspectorSection {
+  padding: 12px;
+  border-bottom: 1px solid #27272a;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #a1a1aa;
+}
+
+.propRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.propLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: #a1a1aa;
+  text-transform: uppercase;
+}
+
+.propInput {
+  background: #141416;
+  border: 1px solid #333338;
+  border-radius: 4px;
+  color: #f4f4f5;
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+.propInput:focus {
+  border-color: #3b82f6;
+}
+
+.propSelect {
+  background: #141416;
+  border: 1px solid #333338;
+  border-radius: 4px;
+  color: #f4f4f5;
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.propSelect:focus {
+  border-color: #3b82f6;
+}
+
+.conditionRow {
+  background: #202024;
+  border: 1px solid #2e2e33;
+  border-radius: 4px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.deleteItemBtn {
+  background: #7f1d1d;
+  color: #fca5a5;
+  border: 1px solid #991b1b;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+  transition: all 0.15s ease;
+}
+
+.deleteItemBtn:hover {
+  background: #991b1b;
+  color: #fff;
+}
+
+/* Listeners */
+.listenerCard {
+  background: #202024;
+  border: 1px solid #2e2e33;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.listenerCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.actionsContainer {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.actionRow {
+  background: #202024;
+  border: 1px solid #2e2e33;
+  border-radius: 4px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.actionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.actionFields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
