@@ -83,6 +83,8 @@ export class CanvasRenderer implements RendererHooks {
   public activeEditorState?: ActiveTextEditorState;
   public width = 0;
   public height = 0;
+  public baseWidth = 0;
+  public baseHeight = 0;
   public dpr = 1;
   public locale: string;
   public doc?: AnimDocument;
@@ -109,6 +111,11 @@ export class CanvasRenderer implements RendererHooks {
 
     const initialWidth = opts.width ?? opts.doc?.stage?.width ?? 550;
     const initialHeight = opts.height ?? opts.doc?.stage?.height ?? 400;
+
+    const ab = opts.doc?.artboards?.find((a) => a.id === opts.doc?.activeArtboardId) || opts.doc?.artboards?.[0];
+    this.baseWidth = ab?.width ?? opts.doc?.stage?.width ?? initialWidth;
+    this.baseHeight = ab?.height ?? opts.doc?.stage?.height ?? initialHeight;
+
     this.resize(initialWidth, initialHeight, this.dpr);
   }
 
@@ -418,10 +425,16 @@ export class CanvasRenderer implements RendererHooks {
         (c) => c.layerId === obj.maskLayerId && c.layerKind === 'mask'
       );
       if (maskObj && maskObj.currentDef?.type === 'shape') {
+        const maskLocalM = maskObj.getLocalMatrix(
+          this.baseWidth,
+          this.baseHeight,
+          this.width,
+          this.height
+        );
         const maskM =
           maskObj.parentLayerMatrix && !maskObj.parentLayerMatrix.isIdentity()
-            ? maskObj.parentLayerMatrix.multiply(maskObj.getLocalMatrix())
-            : maskObj.getLocalMatrix();
+            ? maskObj.parentLayerMatrix.multiply(maskLocalM)
+            : maskLocalM;
         ctx.transform(maskM.a, maskM.b, maskM.c, maskM.d, maskM.tx, maskM.ty);
         for (const p of maskObj.currentDef.paths) {
           const p2d = this.getPath2D(p.d);
@@ -434,11 +447,17 @@ export class CanvasRenderer implements RendererHooks {
       }
     }
 
-    // Effective matrix transformation
+    // Effective matrix transformation (constrained if container width differs from base width)
+    const localM = obj.getLocalMatrix(
+      this.baseWidth,
+      this.baseHeight,
+      this.width,
+      this.height
+    );
     const m =
       obj.parentLayerMatrix && !obj.parentLayerMatrix.isIdentity()
-        ? obj.parentLayerMatrix.multiply(obj.getLocalMatrix())
-        : obj.getLocalMatrix();
+        ? obj.parentLayerMatrix.multiply(localM)
+        : localM;
     const cleanZero = (n: number) => (n === 0 ? 0 : n);
     ctx.transform(
       cleanZero(m.a),

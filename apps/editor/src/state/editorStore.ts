@@ -44,7 +44,8 @@ import type {
   StateListenerEventType,
   StateListenerActionType,
 } from '@flashback/runtime';
-import { Matrix2D } from '@flashback/runtime';
+import { Matrix2D, computeConstrainedTransform } from '@flashback/runtime';
+export { computeConstrainedTransform } from '@flashback/runtime';
 import {
   unitePaths,
   subtractPaths,
@@ -143,39 +144,8 @@ export function adjustElementForPin(
   newW: number,
   newH: number
 ): void {
-  const pin = el.transform?.pin;
-  if (!pin || pin === 'none') return;
-  const dx = newW - prevW;
-  const dy = newH - prevH;
-
-  switch (pin) {
-    case 'center':
-      el.transform.x = Math.round(el.transform.x + dx / 2);
-      el.transform.y = Math.round(el.transform.y + dy / 2);
-      break;
-    case 'top-right':
-      el.transform.x = Math.round(el.transform.x + dx);
-      break;
-    case 'bottom-left':
-      el.transform.y = Math.round(el.transform.y + dy);
-      break;
-    case 'bottom-right':
-      el.transform.x = Math.round(el.transform.x + dx);
-      el.transform.y = Math.round(el.transform.y + dy);
-      break;
-    case 'stretch':
-      if (prevW > 0 && prevH > 0) {
-        const sx = newW / prevW;
-        const sy = newH / prevH;
-        el.transform.scaleX = (el.transform.scaleX ?? 1) * sx;
-        el.transform.scaleY = (el.transform.scaleY ?? 1) * sy;
-        el.transform.x = Math.round(el.transform.x * sx);
-        el.transform.y = Math.round(el.transform.y * sy);
-      }
-      break;
-    case 'top-left':
-      break;
-  }
+  if (!el.transform) return;
+  el.transform = computeConstrainedTransform(el.transform, prevW, prevH, newW, newH);
 }
 
 export function createInitialState(initialDoc: EditorDocument = createDefaultDocument()): EditorState {
@@ -3974,32 +3944,21 @@ export const editorActions = {
     notify();
   },
 
-  applyBreakpoint(breakpoint: StageBreakpoint): void {
-    pushHistorySnapshot();
-    const doc = deepCloneDoc(state.doc);
-    const prevW = doc.stage.width || 550;
-    const prevH = doc.stage.height || 400;
-    const newW = breakpoint.width;
-    const newH = breakpoint.height;
-
-    doc.stage.width = newW;
-    doc.stage.height = newH;
-
-    const tl = getActiveTimeline(doc, state.isolationStack);
-    for (const layer of tl.layers) {
-      for (const kf of layer.keyframes) {
-        for (const el of kf.elements) {
-          adjustElementForPin(el, prevW, prevH, newW, newH);
-        }
-      }
-    }
-
+  setPreviewBreakpoint(breakpointId: string | null): void {
     state = {
       ...state,
-      doc,
-      activeBreakpointId: breakpoint.id,
+      activeBreakpointId: breakpointId,
     };
     notify();
+  },
+
+  applyBreakpointPreview(breakpointId: string | null): void {
+    this.setPreviewBreakpoint(breakpointId);
+  },
+
+  applyBreakpoint(breakpoint: StageBreakpoint | string | null): void {
+    const id = typeof breakpoint === 'string' ? breakpoint : breakpoint?.id ?? null;
+    this.setPreviewBreakpoint(id);
   },
 
   addBreakpoint(bp: Omit<StageBreakpoint, 'id'> & { id?: string }): void {

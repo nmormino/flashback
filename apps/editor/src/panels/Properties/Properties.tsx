@@ -822,11 +822,50 @@ export const Properties: React.FC = () => {
         >
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {/* Active Breakpoint Preview Badge & Reset Button */}
+            {activeBreakpointId && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '5px 8px',
+                  borderRadius: 4,
+                  backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                  border: '1px solid var(--mx-accent, #3b82f6)',
+                  marginBottom: 2,
+                }}
+                data-testid="active-breakpoint-badge"
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#93c5fd' }}>
+                  <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', backgroundColor: '#60a5fa' }} />
+                  <span>
+                    Previewing: <strong>{doc.stage.breakpoints?.find((b) => b.id === activeBreakpointId)?.name || 'Breakpoint'}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.12)',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: 3,
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '2px 6px',
+                  }}
+                  onClick={() => editorActions.setPreviewBreakpoint(null)}
+                  title="Reset to canonical base dimensions"
+                >
+                  ✕ Reset to Base
+                </button>
+              </div>
+            )}
+
             {doc.stage.breakpoints && doc.stage.breakpoints.length > 0 ? (
               doc.stage.breakpoints.map((bp) => {
-                const isActive =
-                  (doc.stage.width === bp.width && doc.stage.height === bp.height) ||
-                  activeBreakpointId === bp.id;
+                const isActive = activeBreakpointId === bp.id;
                 return (
                   <div
                     key={bp.id}
@@ -856,11 +895,30 @@ export const Properties: React.FC = () => {
                         textAlign: 'left',
                         flex: 1,
                       }}
-                      onClick={() => editorActions.applyBreakpoint(bp)}
-                      title={`Switch to ${bp.name} (${bp.width}×${bp.height}) & adjust pinned elements`}
+                      onClick={() => editorActions.setPreviewBreakpoint(isActive ? null : bp.id)}
+                      title={`Preview at ${bp.name} (${bp.width}×${bp.height}) without altering canonical stage`}
                     >
-                      {bp.name} ({bp.width}×{bp.height})
+                      {bp.name} ({bp.width}×{bp.height}) {isActive ? '• Active' : ''}
                     </button>
+                    {isActive && (
+                      <button
+                        type="button"
+                        style={{
+                          background: 'rgba(59, 130, 246, 0.3)',
+                          border: 'none',
+                          color: '#93c5fd',
+                          borderRadius: 3,
+                          padding: '1px 5px',
+                          fontSize: 10,
+                          marginRight: 6,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => editorActions.setPreviewBreakpoint(null)}
+                        title="Reset to base artboard dimensions"
+                      >
+                        ✕ Reset
+                      </button>
+                    )}
                     <button
                       type="button"
                       style={{
@@ -3545,6 +3603,219 @@ export const Properties: React.FC = () => {
               unit="px"
               inputWidth={40}
             />
+          </div>
+        </div>
+
+        {/* Rive/Figma-Style Element Constraints & Pinning */}
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--mx-border-light)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--mx-text-main)' }}>
+              Constraints & Pinning:
+            </span>
+            <span style={{ fontSize: 10, color: '#93c5fd', textTransform: 'capitalize', fontWeight: 600 }}>
+              {selectedEl.transform.pin || 'None'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {/* Visual Rive/Figma Anchor Box */}
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 4,
+                backgroundColor: 'var(--mx-bg-canvas, #121316)',
+                border: '1px solid var(--mx-border, #333842)',
+                position: 'relative',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+              title="Visual Constraint Pin (Click an anchor to pin element to Artboard edges)"
+            >
+              {/* Inner element representation */}
+              <div
+                style={{
+                  width: selectedEl.transform.pin === 'stretch' ? '70%' : '36%',
+                  height: selectedEl.transform.pin === 'stretch' ? '70%' : '36%',
+                  borderRadius: 2,
+                  backgroundColor:
+                    selectedEl.transform.pin && selectedEl.transform.pin !== 'none'
+                      ? 'rgba(59, 130, 246, 0.35)'
+                      : 'rgba(255, 255, 255, 0.08)',
+                  border:
+                    selectedEl.transform.pin && selectedEl.transform.pin !== 'none'
+                      ? '1px solid #3b82f6'
+                      : '1px dashed rgba(255, 255, 255, 0.25)',
+                  transition: 'all 0.15s ease',
+                  pointerEvents: 'none',
+                }}
+              />
+
+              {/* Anchor Pins: Top-Left */}
+              <button
+                type="button"
+                onClick={() => handleUpdateTransform({ pin: 'top-left' })}
+                title="Pin: Top-Left"
+                style={{
+                  position: 'absolute',
+                  top: 4,
+                  left: 4,
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  border: 'none',
+                  backgroundColor: selectedEl.transform.pin === 'top-left' ? '#3b82f6' : 'rgba(255, 255, 255, 0.2)',
+                  boxShadow: selectedEl.transform.pin === 'top-left' ? '0 0 6px #3b82f6' : 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+
+              {/* Anchor Pins: Top-Right */}
+              <button
+                type="button"
+                onClick={() => handleUpdateTransform({ pin: 'top-right' })}
+                title="Pin: Top-Right"
+                style={{
+                  position: 'absolute',
+                  top: 4,
+                  right: 4,
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  border: 'none',
+                  backgroundColor: selectedEl.transform.pin === 'top-right' ? '#3b82f6' : 'rgba(255, 255, 255, 0.2)',
+                  boxShadow: selectedEl.transform.pin === 'top-right' ? '0 0 6px #3b82f6' : 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+
+              {/* Anchor Pins: Center */}
+              <button
+                type="button"
+                onClick={() => handleUpdateTransform({ pin: 'center' })}
+                title="Pin: Center"
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  border: 'none',
+                  backgroundColor: selectedEl.transform.pin === 'center' ? '#3b82f6' : 'rgba(255, 255, 255, 0.2)',
+                  boxShadow: selectedEl.transform.pin === 'center' ? '0 0 6px #3b82f6' : 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+
+              {/* Anchor Pins: Bottom-Left */}
+              <button
+                type="button"
+                onClick={() => handleUpdateTransform({ pin: 'bottom-left' })}
+                title="Pin: Bottom-Left"
+                style={{
+                  position: 'absolute',
+                  bottom: 4,
+                  left: 4,
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  border: 'none',
+                  backgroundColor: selectedEl.transform.pin === 'bottom-left' ? '#3b82f6' : 'rgba(255, 255, 255, 0.2)',
+                  boxShadow: selectedEl.transform.pin === 'bottom-left' ? '0 0 6px #3b82f6' : 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+
+              {/* Anchor Pins: Bottom-Right */}
+              <button
+                type="button"
+                onClick={() => handleUpdateTransform({ pin: 'bottom-right' })}
+                title="Pin: Bottom-Right"
+                style={{
+                  position: 'absolute',
+                  bottom: 4,
+                  right: 4,
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  border: 'none',
+                  backgroundColor: selectedEl.transform.pin === 'bottom-right' ? '#3b82f6' : 'rgba(255, 255, 255, 0.2)',
+                  boxShadow: selectedEl.transform.pin === 'bottom-right' ? '0 0 6px #3b82f6' : 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+            </div>
+
+            {/* Constraint Pill Buttons & Selector */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {(
+                  [
+                    { id: 'none', label: 'None' },
+                    { id: 'center', label: 'Center' },
+                    { id: 'top-left', label: 'Top-Left' },
+                    { id: 'top-right', label: 'Top-Right' },
+                    { id: 'bottom-left', label: 'Bottom-Left' },
+                    { id: 'bottom-right', label: 'Bottom-Right' },
+                    { id: 'stretch', label: 'Stretch' },
+                  ] as const
+                ).map((item) => {
+                  const currentPin = selectedEl.transform.pin || 'none';
+                  const isCurActive = currentPin === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`${styles.presetPill} ${isCurActive ? styles.active : ''}`}
+                      onClick={() => handleUpdateTransform({ pin: item.id })}
+                      title={`Constraint: ${item.label}`}
+                      style={{
+                        padding: '2px 6px',
+                        fontSize: 10,
+                        backgroundColor: isCurActive ? 'var(--mx-accent, #3b82f6)' : undefined,
+                        color: isCurActive ? '#ffffff' : undefined,
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Keep select for tests and accessible selector */}
+              <select
+                value={selectedEl.transform.pin || 'none'}
+                onChange={(e) => handleUpdateTransform({ pin: e.target.value as LayoutPin })}
+                style={{
+                  height: 22,
+                  marginTop: 2,
+                  backgroundColor: 'var(--mx-bg-input)',
+                  color: 'var(--mx-text-main)',
+                  border: '1px solid var(--mx-border-light)',
+                  borderRadius: 3,
+                  fontSize: 10,
+                }}
+                title="Pin element relative to stage borders during responsive resize"
+                data-testid="element-pin-select"
+              >
+                <option value="none">None (Fixed Coordinates)</option>
+                <option value="center">Center (Keep Centered)</option>
+                <option value="top-left">Top-Left (Pin TL)</option>
+                <option value="top-right">Top-Right (Pin TR)</option>
+                <option value="bottom-left">Bottom-Left (Pin BL)</option>
+                <option value="bottom-right">Bottom-Right (Pin BR)</option>
+                <option value="stretch">Stretch (Scale Proportional to Artboard)</option>
+              </select>
+            </div>
           </div>
         </div>
       </AccordionSection>

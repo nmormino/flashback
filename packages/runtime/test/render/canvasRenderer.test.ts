@@ -975,4 +975,72 @@ describe('CanvasRenderer', () => {
       expect(renderer.isDirty).toBe(true);
     });
   });
+
+  // --- 12. Non-Destructive Responsive Constraints ---
+
+  describe('non-destructive responsive constraints & pinning', () => {
+    it('applies constrained transform dynamically when canvas width/height differs from base', () => {
+      const canvas = document.createElement('canvas');
+      const doc: AnimDocument = {
+        version: 1,
+        fps: 24,
+        stage: { width: 500, height: 400, color: '#ffffff' },
+        root: { id: 'root', layers: [] },
+      };
+
+      const renderer = new CanvasRenderer(canvas, { doc, width: 500, height: 400, dpr: 1 });
+      const ctx = canvas.getContext('2d') as any;
+      const elDef: ShapeElement = {
+        id: 'pinned_shape',
+        type: 'shape',
+        transform: {
+          x: 100,
+          y: 100,
+          scaleX: 1,
+          scaleY: 1,
+          rotation: 0,
+          skewX: 0,
+          skewY: 0,
+          originX: 0,
+          originY: 0,
+          pin: 'center',
+        },
+        paths: [{ d: 'M0 0 L50 0 L50 50 Z' }],
+      };
+
+      const obj = new DisplayObject('pinned');
+      obj._x = 100;
+      obj._y = 100;
+      obj.currentDef = elDef;
+      renderer.attach(obj);
+
+      // Initial render at base 500x400: transform should be (1, 0, 0, 1, 100, 100)
+      ctx.calls = [];
+      renderer.render();
+      const transformCallBase = ctx.calls.find((c) => c.method === 'transform');
+      expect(transformCallBase).toBeDefined();
+      expect(transformCallBase!.args).toEqual([1, 0, 0, 1, 100, 100]);
+
+      // Resize to 700x600 (dx = 200, dy = 200) -> center pin shifts by +100, +100 => 200, 200
+      renderer.resize(700, 600, 1);
+      ctx.calls = [];
+      renderer.render();
+      const transformCallResized = ctx.calls.find((c) => c.method === 'transform');
+      expect(transformCallResized).toBeDefined();
+      expect(transformCallResized!.args).toEqual([1, 0, 0, 1, 200, 200]);
+
+      // Element definition and raw obj coordinates remain pristine and unmutated!
+      expect(elDef.transform.x).toBe(100);
+      expect(elDef.transform.y).toBe(100);
+      expect(obj._x).toBe(100);
+      expect(obj._y).toBe(100);
+
+      // Resize back to base 500x400
+      renderer.resize(500, 400, 1);
+      ctx.calls = [];
+      renderer.render();
+      const transformCallRestored = ctx.calls.find((c) => c.method === 'transform');
+      expect(transformCallRestored!.args).toEqual([1, 0, 0, 1, 100, 100]);
+    });
+  });
 });

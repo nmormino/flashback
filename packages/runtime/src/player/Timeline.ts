@@ -788,6 +788,7 @@ export class Timeline implements TimelineController {
     target._skewY = nky;
     target._originX = nox;
     target._originY = noy;
+    target._pin = el.transform.pin;
 
     if (transformChanged || forceTransformUpdate) {
       target.rendererHooks?.onTransformChange?.(target);

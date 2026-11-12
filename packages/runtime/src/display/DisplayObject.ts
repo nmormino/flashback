@@ -11,8 +11,11 @@ import type {
   DisplayElement,
   FrameRef,
   ArtboardTransition,
+  LayoutPin,
+  Transform,
 } from '../schema';
 import { Matrix2D, type Point2D } from '../math/Matrix2D';
+import { computeConstrainedTransform } from '../layout/constraints';
 import { HeadlessStage, type RendererHooks } from './types';
 import { createContextProxy } from './contextProxy';
 import type { MovieClip } from './MovieClip';
@@ -38,6 +41,7 @@ export class DisplayObject implements DisplayObjectAPI {
   public _skewY = 0;
   public _originX = 0;
   public _originY = 0;
+  public _pin?: LayoutPin;
   public _alpha = 1;
   public _visible = true;
   public _width = 0;
@@ -265,8 +269,13 @@ export class DisplayObject implements DisplayObjectAPI {
 
   // --- Coordinate Matrices & Mapping ---
 
-  public getLocalMatrix(): Matrix2D {
-    return Matrix2D.fromTransform({
+  public getLocalMatrix(
+    baseWidth?: number,
+    baseHeight?: number,
+    currentWidth?: number,
+    currentHeight?: number
+  ): Matrix2D {
+    let t: Partial<Transform> = {
       x: this._x,
       y: this._y,
       scaleX: this._scaleX,
@@ -276,7 +285,18 @@ export class DisplayObject implements DisplayObjectAPI {
       skewY: this._skewY,
       originX: this._originX,
       originY: this._originY,
-    });
+      pin: this._pin ?? this.currentDef?.transform?.pin,
+    };
+    if (
+      baseWidth !== undefined &&
+      baseHeight !== undefined &&
+      currentWidth !== undefined &&
+      currentHeight !== undefined &&
+      (baseWidth !== currentWidth || baseHeight !== currentHeight)
+    ) {
+      t = computeConstrainedTransform(t, baseWidth, baseHeight, currentWidth, currentHeight);
+    }
+    return Matrix2D.fromTransform(t);
   }
 
   public getWorldMatrix(): Matrix2D {

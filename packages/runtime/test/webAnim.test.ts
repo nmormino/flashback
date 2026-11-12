@@ -376,6 +376,7 @@ describe('WebAnim Custom Element (<web-anim>)', () => {
         'state',
         'state-machine',
         'renderer',
+        'breakpoint',
       ]);
     });
 

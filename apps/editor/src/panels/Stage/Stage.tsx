@@ -27,7 +27,7 @@ import type {
   RectCornerRadius,
   RectCornerTypes,
 } from '@flashback/runtime';
-import { Matrix2D, filtersToCSS, fillToCSS, computeEasingProgress, normalizeRotation, resolveI18nText } from '@flashback/runtime';
+import { Matrix2D, filtersToCSS, fillToCSS, computeEasingProgress, normalizeRotation, resolveI18nText, computeConstrainedTransform } from '@flashback/runtime';
 import {
   useEditorStore,
   editorActions,
@@ -825,6 +825,7 @@ export const Stage: React.FC = () => {
   const pencilConfig = useEditorStore((s) => s.pencilConfig);
   const textSelection = useEditorStore((s) => s.textSelection);
   const previewLocale = useEditorStore((s) => s.previewLocale);
+  const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId);
   const activeLocale = previewLocale || doc.i18n?.defaultLocale || 'en';
 
   const activeTl = getActiveTimeline(doc, isolationStack);
@@ -987,8 +988,16 @@ export const Stage: React.FC = () => {
     isolationStack.length > 0
       ? (doc.library.symbols[isolationStack[isolationStack.length - 1].symbolId] as EditorSymbol | undefined)
       : undefined;
-  const width = currentIsolatedSymbol?.width ?? (activeArtboard.width || doc.stage.width || 550);
-  const height = currentIsolatedSymbol?.height ?? (activeArtboard.height || doc.stage.height || 400);
+  const baseWidth = currentIsolatedSymbol?.width ?? (activeArtboard.width || doc.stage.width || 550);
+  const baseHeight = currentIsolatedSymbol?.height ?? (activeArtboard.height || doc.stage.height || 400);
+
+  const breakpoints = activeArtboard?.breakpoints ?? doc.stage.breakpoints;
+  const activeBp = activeBreakpointId && !currentIsolatedSymbol
+    ? breakpoints?.find((b) => b.id === activeBreakpointId)
+    : undefined;
+
+  const width = activeBp ? activeBp.width : baseWidth;
+  const height = activeBp ? activeBp.height : baseHeight;
 
   const finishPenDrawing = useCallback(
     (anchors: BezierAnchor[], closed = false) => {
@@ -1341,11 +1350,12 @@ export const Stage: React.FC = () => {
           if (item.type === 'text') {
             const te = item as TextElement;
             const b = getElementBounds(te);
+            const teT = computeConstrainedTransform(te.transform, baseWidth, baseHeight, width, height);
             const pad = 24;
-            const minX = te.transform.x + b.x - pad;
-            const maxX = te.transform.x + b.x + b.width + pad;
-            const minY = te.transform.y + b.y - pad;
-            const maxY = te.transform.y + b.y + b.height + pad;
+            const minX = teT.x + b.x - pad;
+            const maxX = teT.x + b.x + b.width + pad;
+            const minY = teT.y + b.y - pad;
+            const maxY = teT.y + b.y + b.height + pad;
             if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
               candidateText = te;
               break;
@@ -1353,11 +1363,12 @@ export const Stage: React.FC = () => {
           } else if (item.type === 'shape') {
             const sh = item as ShapeElement;
             const b = getShapeBounds(sh);
+            const shT = computeConstrainedTransform(sh.transform, baseWidth, baseHeight, width, height);
             const pad = 24; // Generous 24px tolerance for clicking pen lines
-            const minX = sh.transform.x + b.x - pad;
-            const maxX = sh.transform.x + b.x + b.width + pad;
-            const minY = sh.transform.y + b.y - pad;
-            const maxY = sh.transform.y + b.y + b.height + pad;
+            const minX = shT.x + b.x - pad;
+            const maxX = shT.x + b.x + b.width + pad;
+            const minY = shT.y + b.y - pad;
+            const maxY = shT.y + b.y + b.height + pad;
             if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
               candidateShape = sh;
               break;
@@ -2862,10 +2873,11 @@ export const Stage: React.FC = () => {
             if (!kf) continue;
             for (const el of kf.elements) {
               const bounds = getElementBounds(el);
-              const elX1 = el.transform.x + bounds.x;
-              const elY1 = el.transform.y + bounds.y;
-              const elX2 = elX1 + bounds.width * (el.transform.scaleX ?? 1);
-              const elY2 = elY1 + bounds.height * (el.transform.scaleY ?? 1);
+              const effT = computeConstrainedTransform(el.transform, baseWidth, baseHeight, width, height);
+              const elX1 = effT.x + bounds.x;
+              const elY1 = effT.y + bounds.y;
+              const elX2 = elX1 + bounds.width * (effT.scaleX ?? 1);
+              const elY2 = elY1 + bounds.height * (effT.scaleY ?? 1);
 
               if (elX1 <= mx2 && elX2 >= mx1 && elY1 <= my2 && elY2 >= my1) {
                 matchedIds.push(el.id);
@@ -4690,6 +4702,26 @@ export const Stage: React.FC = () => {
             </button>
           </div>
         )}
+
+      {/* Responsive Breakpoint Preview Indicator (Non-destructive) */}
+      {activeBp && (
+        <div
+          className={styles.responsivePreviewIndicator}
+          data-testid="responsive-preview-indicator"
+          title="Responsive Breakpoint Preview active (Non-destructive)"
+        >
+          <span>
+            Base: {baseWidth}×{baseHeight} | Preview: {activeBp.width}×{activeBp.height} ({activeBp.name})
+          </span>
+          <button
+            type="button"
+            onClick={() => editorActions.setPreviewBreakpoint(null)}
+            title="Reset to base canonical artboard dimensions"
+          >
+            ✕ Reset to Base
+          </button>
+        </div>
+      )}
       <div
         className={styles.stageMatte}
         style={{
@@ -4768,7 +4800,14 @@ export const Stage: React.FC = () => {
                           clipPathUnits="userSpaceOnUse"
                         >
                           {shapes.map((s) => {
-                            const m = Matrix2D.fromTransform(s.transform);
+                            const sTransform = computeConstrainedTransform(
+                              s.transform,
+                              baseWidth,
+                              baseHeight,
+                              width,
+                              height
+                            );
+                            const m = Matrix2D.fromTransform(sTransform);
                             return (
                               <g key={s.id} transform={m.toCSS()}>
                                 {s.paths.map((p, pi) => (
@@ -4925,7 +4964,13 @@ export const Stage: React.FC = () => {
                     }
                   }
 
-                  const effectiveTransform = displayEl.transform;
+                  const effectiveTransform = computeConstrainedTransform(
+                    displayEl.transform,
+                    baseWidth,
+                    baseHeight,
+                    width,
+                    height
+                  );
                   const effectiveAlpha = displayEl.alpha ?? 1;
 
                   const isSelected = selectedElementIds.includes(el.id);
@@ -5503,7 +5548,8 @@ export const Stage: React.FC = () => {
                 { x: bounds.x, y: bounds.y + bounds.height },
               ];
               const parentM = getLayerAncestorMatrix(elLayer.id);
-              const elM = Matrix2D.fromTransform(el.transform);
+              const effT = computeConstrainedTransform(el.transform, baseWidth, baseHeight, width, height);
+              const elM = Matrix2D.fromTransform(effT);
               const effM = parentM.multiply(elM);
 
               for (const pt of corners) {
@@ -6378,7 +6424,9 @@ export const Stage: React.FC = () => {
       <div className={styles.stageFooterBar}>
         <div className={styles.footerInfo}>
           <span>
-            {width} × {height}
+            {activeBp
+              ? `Base: ${baseWidth}×${baseHeight} | Preview: ${activeBp.width}×${activeBp.height} (${activeBp.name})`
+              : `${width} × ${height}`}
           </span>
           <span style={{ color: 'var(--mx-text-subtle)' }}>•</span>
           <span>

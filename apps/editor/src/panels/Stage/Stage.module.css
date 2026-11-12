@@ -980,3 +980,42 @@
   background: var(--mx-accent, #3b82f6);
   border-color: var(--mx-accent, #3b82f6);
 }
+
+.responsivePreviewIndicator {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background-color: rgba(30, 41, 59, 0.95);
+  border: 1px solid var(--mx-accent, #3b82f6);
+  border-radius: 20px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  font-size: 11px;
+  font-weight: 500;
+  color: #f8fafc;
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.responsivePreviewIndicator button {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #93c5fd;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.responsivePreviewIndicator button:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+  color: #fca5a5;
+}

@@ -5,6 +5,7 @@ import {
   editorActions,
   getEditorState,
   adjustElementForPin,
+  computeConstrainedTransform,
 } from '../src/state/editorStore';
 import {
   getElementBounds,
@@ -256,7 +257,7 @@ describe('Workstream 3: Media Elements, Layer Masks, Alignment & Properties Insp
       expect(el.transform.y).toBe(100);
     });
 
-    it('applyBreakpoint resizes stage and adjusts pinned elements across timelines', () => {
+    it('applies breakpoint non-destructively for previewing without mutating canonical stage dimensions or keyframe elements', () => {
       // Add pinned element
       const pinnedEl: any = {
         id: 'pinned_box',
@@ -272,20 +273,41 @@ describe('Workstream 3: Media Elements, Layer Masks, Alignment & Properties Insp
         id: 'bp_tablet',
         name: 'Tablet',
         maxWidth: 768,
-        width: 750, // 550 + 200 -> dx = 200
-        height: 500, // 400 + 100 -> dy = 100
+        width: 750, // base 550 + 200 -> dx = 200
+        height: 500, // base 400 + 100 -> dy = 100
       };
 
+      // Activate preview breakpoint
       editorActions.applyBreakpoint(bp);
 
-      const state = getEditorState();
-      expect(state.doc.stage.width).toBe(750);
-      expect(state.doc.stage.height).toBe(500);
+      let state = getEditorState();
+      // Canonical document dimensions remain untouched!
+      expect(state.doc.stage.width).toBe(550);
+      expect(state.doc.stage.height).toBe(400);
       expect(state.activeBreakpointId).toBe('bp_tablet');
 
+      // Keyframes in document store remain pristine and unmutated!
       const found = state.doc.root.layers[0].keyframes[0].elements.find((e) => e.id === 'pinned_box');
-      expect(found?.transform.x).toBe(200); // 100 + 200/2
-      expect(found?.transform.y).toBe(150); // 100 + 100/2
+      expect(found?.transform.x).toBe(100);
+      expect(found?.transform.y).toBe(100);
+
+      // On-the-fly constrained transform computes the rendered position dynamically:
+      const renderedTransform = computeConstrainedTransform(
+        found!.transform,
+        state.doc.stage.width,
+        state.doc.stage.height,
+        bp.width,
+        bp.height
+      );
+      expect(renderedTransform.x).toBe(200); // 100 + 200/2
+      expect(renderedTransform.y).toBe(150); // 100 + 100/2
+
+      // Reset preview breakpoint back to base
+      editorActions.setPreviewBreakpoint(null);
+      state = getEditorState();
+      expect(state.activeBreakpointId).toBeNull();
+      expect(state.doc.stage.width).toBe(550);
+      expect(state.doc.stage.height).toBe(400);
     });
 
     it('manages breakpoints with addBreakpoint and removeBreakpoint', () => {

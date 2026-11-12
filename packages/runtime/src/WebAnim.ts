@@ -117,10 +117,12 @@ export class WebAnim extends HTMLElementBase {
     'state',
     'state-machine',
     'renderer',
+    'breakpoint',
   ];
 
   private _animation: AnimDocument | null = null;
   private _pipeline: TimelinePipeline | null = null;
+  private _activeBreakpointId: string | null = null;
   private _renderer: DomRenderer | CanvasRenderer | null = null;
   private _domRenderer: DomRenderer | null = null;
   private _canvasRenderer: CanvasRenderer | null = null;
@@ -253,7 +255,23 @@ export class WebAnim extends HTMLElementBase {
       if (this._animation && this._pipeline) {
         this.setupStateMachine(this._animation);
       }
+    } else if (name === 'breakpoint') {
+      this._activeBreakpointId = newValue;
+      this.updateStageScale();
     }
+  }
+
+  public get activeBreakpointId(): string | null {
+    return this._activeBreakpointId;
+  }
+
+  public set activeBreakpointId(val: string | null) {
+    this._activeBreakpointId = val;
+    this.updateStageScale();
+  }
+
+  public setBreakpoint(breakpointId: string | null): void {
+    this.activeBreakpointId = breakpointId;
   }
 
   public get scaleMode(): 'showAll' | 'noBorder' | 'exactFit' | 'noScale' {
@@ -1436,8 +1454,19 @@ export class WebAnim extends HTMLElementBase {
 
     let sw = activeArtboard?.width ?? stage.width;
     let sh = activeArtboard?.height ?? stage.height;
+    const baseW = sw;
+    const baseH = sh;
     const breakpoints = activeArtboard?.breakpoints ?? stage.breakpoints;
-    if (breakpoints && breakpoints.length > 0 && cw > 0) {
+    const bpAttr = this.getAttribute('breakpoint') || this._activeBreakpointId;
+    if (bpAttr && breakpoints && breakpoints.length > 0) {
+      const matched = breakpoints.find(
+        (bp) => bp.id === bpAttr || bp.name.toLowerCase() === bpAttr.toLowerCase()
+      );
+      if (matched) {
+        sw = matched.width;
+        sh = matched.height;
+      }
+    } else if (breakpoints && breakpoints.length > 0 && cw > 0) {
       const sorted = [...breakpoints].sort((a, b) => a.maxWidth - b.maxWidth);
       const matched = sorted.find((bp) => cw <= bp.maxWidth);
       if (matched) {
@@ -1493,6 +1522,8 @@ export class WebAnim extends HTMLElementBase {
     // Auto-DPR canvas resize
     if (this._canvasRenderer) {
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+      this._canvasRenderer.baseWidth = baseW;
+      this._canvasRenderer.baseHeight = baseH;
       this._canvasRenderer.resize(sw, sh, dpr);
       if (this._isVisible) {
         this._canvasRenderer.render();

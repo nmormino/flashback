@@ -1,5 +1,6 @@
 export * from './schema';
 export * from './math/Matrix2D';
+export * from './layout/constraints';
 export * from './display/types';
 export * from './display/DisplayObject';
 export * from './display/MovieClip';
