@@ -144,7 +144,7 @@ export const Properties: React.FC = () => {
   const pencilConfig = useEditorStore((s) => s.pencilConfig);
   const subselectedAnchor = useEditorStore((s) => s.subselectedAnchor);
 
-  const [viewMode, setViewMode] = useState<'tabs' | 'accordion' | 'dropdown'>('tabs');
+  const viewMode = 'accordion';
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
 
@@ -302,32 +302,6 @@ export const Properties: React.FC = () => {
             </select>
           </div>
           <div className={styles.headerRight}>
-            <div className={styles.viewModeGroup}>
-              <button
-                type="button"
-                className={`${styles.viewModeBtn} ${viewMode === 'tabs' ? styles.viewModeBtnActive : ''}`}
-                onClick={() => setViewMode('tabs')}
-                title="Vertical Tabs View"
-              >
-                📑 Tabs
-              </button>
-              <button
-                type="button"
-                className={`${styles.viewModeBtn} ${viewMode === 'accordion' ? styles.viewModeBtnActive : ''}`}
-                onClick={() => setViewMode('accordion')}
-                title="Accordion Stack View"
-              >
-                ▾ Accordion
-              </button>
-              <button
-                type="button"
-                className={`${styles.viewModeBtn} ${viewMode === 'dropdown' ? styles.viewModeBtnActive : ''}`}
-                onClick={() => setViewMode('dropdown')}
-                title="Form Only View"
-              >
-                ▾ Form Only
-              </button>
-            </div>
             <button
               type="button"
               className={styles.toggleAllBtn}
@@ -340,30 +314,6 @@ export const Properties: React.FC = () => {
         </div>
 
         <div className={styles.propertiesBody}>
-          {viewMode === 'tabs' && (
-            <div className={styles.verticalTabsRail}>
-              {stageCategories.map((c) => {
-                const isActive = effectiveStageCategory === c.id;
-                const count = c.id === 'all' ? allStageSectionIds.length : (stageCategoryCounts[c.id] ?? 0);
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={`${styles.verticalTabBtn} ${isActive ? styles.activeTab : ''}`}
-                    onClick={() => setActiveCategory(c.id)}
-                    title={c.name}
-                  >
-                    <div className={styles.verticalTabLabelArea}>
-                      <span>{c.icon}</span>
-                      <span>{c.name}</span>
-                    </div>
-                    <span className={styles.tabCountBadge}>{count}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
           <div className={styles.propertiesContentArea}>
         {/* Active Shape Tool Defaults (Rectangle / Polygon / Oval) */}
         {activeTool === 'rect' && (
@@ -1641,32 +1591,6 @@ export const Properties: React.FC = () => {
           </select>
         </div>
         <div className={styles.headerRight}>
-          <div className={styles.viewModeGroup}>
-            <button
-              type="button"
-              className={`${styles.viewModeBtn} ${viewMode === 'tabs' ? styles.viewModeBtnActive : ''}`}
-              onClick={() => setViewMode('tabs')}
-              title="Vertical Tabs View"
-            >
-              📑 Tabs
-            </button>
-            <button
-              type="button"
-              className={`${styles.viewModeBtn} ${viewMode === 'accordion' ? styles.viewModeBtnActive : ''}`}
-              onClick={() => setViewMode('accordion')}
-              title="Accordion Stack View"
-            >
-              ▾ Accordion
-            </button>
-            <button
-              type="button"
-              className={`${styles.viewModeBtn} ${viewMode === 'dropdown' ? styles.viewModeBtnActive : ''}`}
-              onClick={() => setViewMode('dropdown')}
-              title="Form Only View"
-            >
-              ▾ Form Only
-            </button>
-          </div>
           <button
             type="button"
             className={styles.toggleAllBtn}
@@ -1679,30 +1603,6 @@ export const Properties: React.FC = () => {
       </div>
 
       <div className={styles.propertiesBody}>
-        {viewMode === 'tabs' && (
-          <div className={styles.verticalTabsRail}>
-            {elementCategories.map((c) => {
-              const isActive = effectiveElementCategory === c.id;
-              const count = c.id === 'all' ? allElementSectionIds.length : (elementCategoryCounts[c.id] ?? 0);
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`${styles.verticalTabBtn} ${isActive ? styles.activeTab : ''}`}
-                  onClick={() => setActiveCategory(c.id)}
-                  title={c.name}
-                >
-                  <div className={styles.verticalTabLabelArea}>
-                    <span>{c.icon}</span>
-                    <span>{c.name}</span>
-                  </div>
-                  <span className={styles.tabCountBadge}>{count}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
         <div className={styles.propertiesContentArea}>
       {/* Element Identity */}
       <AccordionSection

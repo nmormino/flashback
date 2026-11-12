@@ -148,6 +148,9 @@ export interface UiModalsState {
   localizationPosition: { x: number; y: number };
   isStateVariablesOpen: boolean;
   stateVariablesPosition: { x: number; y: number };
+  dockedPanels: { properties: boolean; clips: boolean };
+  collapsedPanels: { properties: boolean; clips: boolean };
+  floatingPanelPositions: { properties: { x: number; y: number }; clips: { x: number; y: number } };
 }
 
 export interface EditorState
@@ -369,4 +372,7 @@ export interface UiModalsSliceActions {
   setStateVariablesOpen(open: boolean): void;
   toggleStateVariables(): void;
   setStateVariablesPosition(pos: { x: number; y: number }): void;
+  setPanelDocked(panelId: 'properties' | 'clips', docked: boolean): void;
+  togglePanelCollapse(panelId: 'properties' | 'clips'): void;
+  setFloatingPanelPosition(panelId: 'properties' | 'clips', pos: { x: number; y: number }): void;
 }

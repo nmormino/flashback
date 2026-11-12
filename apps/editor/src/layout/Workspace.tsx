@@ -10,6 +10,7 @@ import { StateVariables } from '../panels/StateVariables/StateVariables';
 import { Timeline } from '../panels/Timeline/Timeline';
 import { Properties } from '../panels/Properties/Properties';
 import { StateMachinePanel } from '../panels/StateMachine/StateMachinePanel';
+import { PhotoshopPanel } from './PhotoshopPanel';
 import { ContextMenu } from '../ui/ContextMenu';
 import { useEditorStore, editorActions } from '../state/editorStore';
 import styles from './Workspace.module.css';
@@ -29,6 +30,11 @@ export const Workspace: React.FC = () => {
   const isLibraryOpen = useEditorStore((s) => s.isLibraryOpen);
   const isLocalizationOpen = useEditorStore((s) => s.isLocalizationOpen);
   const isStateVariablesOpen = useEditorStore((s) => s.isStateVariablesOpen);
+  const dockedPanels = useEditorStore((s) => s.dockedPanels ?? { properties: true, clips: true });
+  const collapsedPanels = useEditorStore((s) => s.collapsedPanels ?? { properties: false, clips: false });
+  const floatingPanelPositions = useEditorStore(
+    (s) => s.floatingPanelPositions ?? { properties: { x: 450, y: 70 }, clips: { x: 300, y: 120 } }
+  );
 
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>(
     activeInspectorTab === 'statemachine'
@@ -64,6 +70,9 @@ export const Workspace: React.FC = () => {
         }
       }
     } else if (activeInspectorTab === 'properties') {
+      if (collapsedPanels.properties) {
+        editorActions.togglePanelCollapse('properties');
+      }
       if (!isInspectorOpen) {
         setIsInspectorOpen(true);
         try {
@@ -198,7 +207,7 @@ export const Workspace: React.FC = () => {
           {/* Horizontal Resize Handle */}
           <PanelResizeHandle className={styles.resizerVertical} />
 
-          {/* Right Inspector Panel */}
+          {/* Right Inspector Panel / Adobe Panel Dock */}
           <Panel
             defaultSize={25}
             minSize={18}
@@ -210,33 +219,77 @@ export const Workspace: React.FC = () => {
             onExpand={() => setIsInspectorOpen(true)}
           >
             <div className={styles.inspectorDock}>
-              {/* Inspector Header Bar */}
-              <div className={styles.inspectorHeader}>
-                <div className={styles.inspectorTitle}>
-                  <span>⚙ Properties</span>
-                </div>
-                <button
-                  type="button"
-                  className={styles.collapseToggleBtn}
-                  onClick={toggleInspector}
-                  title={isInspectorOpen ? 'Collapse Properties' : 'Expand Properties'}
-                >
-                  {isInspectorOpen && <span>Collapse</span>}
-                  <span>{isInspectorOpen ? '▶' : '◀'}</span>
-                </button>
-              </div>
-
-              {/* Inspector Content */}
               {isInspectorOpen && (
-                <div className={styles.tabContent}>
-                  <Properties />
+                <div className={styles.adobeDock}>
+                  {/* Docked Properties Panel */}
+                  {dockedPanels.properties && (
+                    <PhotoshopPanel
+                      id="properties"
+                      title="⚙ Properties"
+                      isDocked={true}
+                      isCollapsed={collapsedPanels.properties}
+                      onToggleCollapse={() => editorActions.togglePanelCollapse('properties')}
+                      onToggleDock={() => editorActions.setPanelDocked('properties', false)}
+                      testId="docked-properties-panel"
+                    >
+                      <Properties />
+                    </PhotoshopPanel>
+                  )}
+
+                  {/* Docked Clips Panel */}
+                  {dockedPanels.clips && isLibraryOpen && (
+                    <Library isDocked={true} />
+                  )}
+
+                  {/* Empty Dropzone if all panels are undocked / floating */}
+                  {!dockedPanels.properties && (!dockedPanels.clips || !isLibraryOpen) && (
+                    <div className={styles.dockDropzone}>
+                      <div className={styles.dockDropzoneIcon}>⧉</div>
+                      <div className={styles.dockDropzoneTitle}>Panel Dock</div>
+                      <div className={styles.dockDropzoneSubtext}>
+                        All panels are currently undocked and floating over the canvas.
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.dockAllBtn}
+                        onClick={() => {
+                          editorActions.setPanelDocked('properties', true);
+                          editorActions.setPanelDocked('clips', true);
+                          editorActions.setLibraryOpen(true);
+                        }}
+                      >
+                        ↙ Dock All to Sidebar
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </Panel>
         </PanelGroup>
 
-        {isLibraryOpen && <Library />}
+        {/* Floating Undocked Properties Panel */}
+        {!dockedPanels.properties && (
+          <PhotoshopPanel
+            id="properties"
+            title="⚙ Properties"
+            isDocked={false}
+            isCollapsed={collapsedPanels.properties}
+            onToggleCollapse={() => editorActions.togglePanelCollapse('properties')}
+            onToggleDock={() => editorActions.setPanelDocked('properties', true)}
+            onClose={() => editorActions.setPanelDocked('properties', true)}
+            floatingPosition={floatingPanelPositions.properties}
+            onPositionChange={(pos) => editorActions.setFloatingPanelPosition('properties', pos)}
+            testId="floating-properties-panel"
+          >
+            <div style={{ height: '520px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <Properties />
+            </div>
+          </PhotoshopPanel>
+        )}
+
+        {/* Floating Undocked Clips Panel */}
+        {!dockedPanels.clips && isLibraryOpen && <Library isDocked={false} />}
         {isLocalizationOpen && <Localization />}
         {isStateVariablesOpen && <StateVariables />}
       </div>

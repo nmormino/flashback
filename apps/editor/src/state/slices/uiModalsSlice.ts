@@ -224,11 +224,37 @@ export const createUiModalsSlice: SliceCreator<UiModalsSliceActions> = (
 
     toggleLibrary(): void {
       const state = context.getState();
-      context.setState({ isLibraryOpen: !state.isLibraryOpen });
+      const isDocked = state.dockedPanels?.clips ?? true;
+      if (isDocked) {
+        if (!state.isLibraryOpen) {
+          context.setState({
+            isLibraryOpen: true,
+            collapsedPanels: { ...(state.collapsedPanels || { properties: false, clips: false }), clips: false },
+          });
+        } else if (state.collapsedPanels?.clips) {
+          context.setState({
+            collapsedPanels: { ...(state.collapsedPanels || { properties: false, clips: false }), clips: false },
+          });
+        } else {
+          context.setState({
+            isLibraryOpen: false,
+            collapsedPanels: { ...(state.collapsedPanels || { properties: false, clips: false }), clips: true },
+          });
+        }
+      } else {
+        context.setState({ isLibraryOpen: !state.isLibraryOpen });
+      }
     },
 
     setLibraryPosition(pos: { x: number; y: number }): void {
-      context.setState({ libraryPosition: pos });
+      const state = context.getState();
+      context.setState({
+        libraryPosition: pos,
+        floatingPanelPositions: {
+          ...(state.floatingPanelPositions || { properties: { x: 450, y: 70 }, clips: { x: 300, y: 120 } }),
+          clips: pos,
+        },
+      });
     },
 
     setLocalizationOpen(open: boolean): void {
@@ -255,6 +281,43 @@ export const createUiModalsSlice: SliceCreator<UiModalsSliceActions> = (
 
     setStateVariablesPosition(pos: { x: number; y: number }): void {
       context.setState({ stateVariablesPosition: pos });
+    },
+
+    setPanelDocked(panelId: 'properties' | 'clips', docked: boolean): void {
+      const state = context.getState();
+      const dockedPanels = {
+        ...(state.dockedPanels || { properties: true, clips: true }),
+        [panelId]: docked,
+      };
+      const updates: any = { dockedPanels };
+      if (panelId === 'clips' && docked) {
+        updates.isLibraryOpen = true;
+      }
+      context.setState(updates);
+    },
+
+    togglePanelCollapse(panelId: 'properties' | 'clips'): void {
+      const state = context.getState();
+      const current = state.collapsedPanels?.[panelId] ?? false;
+      context.setState({
+        collapsedPanels: {
+          ...(state.collapsedPanels || { properties: false, clips: false }),
+          [panelId]: !current,
+        },
+      });
+    },
+
+    setFloatingPanelPosition(panelId: 'properties' | 'clips', pos: { x: number; y: number }): void {
+      const state = context.getState();
+      const floatingPanelPositions = {
+        ...(state.floatingPanelPositions || { properties: { x: 450, y: 70 }, clips: { x: 300, y: 120 } }),
+        [panelId]: pos,
+      };
+      const updates: any = { floatingPanelPositions };
+      if (panelId === 'clips') {
+        updates.libraryPosition = pos;
+      }
+      context.setState(updates);
     },
   };
 };

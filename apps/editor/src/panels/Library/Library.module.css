@@ -75,8 +75,18 @@
   color: #ef4444;
 }
 
+.libraryBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
 .symbolList {
-  height: 220px;
+  flex: 1;
+  min-height: 140px;
+  max-height: 320px;
   overflow-y: auto;
   background-color: #121316;
   margin: 6px;

@@ -55,6 +55,68 @@
   border-left: 1px solid var(--mx-border-light);
 }
 
+.adobeDock {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--mx-bg-panel);
+}
+
+.dockDropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--mx-text-muted);
+  gap: 8px;
+  border: 1px dashed var(--mx-border-light);
+  margin: 12px;
+  border-radius: var(--mx-radius-md, 6px);
+  background-color: rgba(0, 0, 0, 0.15);
+}
+
+.dockDropzoneIcon {
+  font-size: 24px;
+  color: var(--mx-text-subtle);
+}
+
+.dockDropzoneTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mx-text-main);
+}
+
+.dockDropzoneSubtext {
+  font-size: 11px;
+  color: var(--mx-text-muted);
+  max-width: 190px;
+  line-height: 1.4;
+}
+
+.dockAllBtn {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background-color: var(--mx-bg-panel-hover);
+  border: 1px solid var(--mx-border-light);
+  border-radius: var(--mx-radius-xs, 3px);
+  color: var(--mx-text-main);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dockAllBtn:hover {
+  background-color: var(--mx-accent);
+  border-color: var(--mx-accent);
+  color: #ffffff;
+}
+
 .inspectorHeader {
   height: 32px;
   min-height: 32px;

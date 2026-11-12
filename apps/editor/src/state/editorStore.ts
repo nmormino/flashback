@@ -229,6 +229,12 @@ export function createInitialState(initialDoc: EditorDocument = createDefaultDoc
       x: typeof window !== 'undefined' ? Math.max(20, Math.round(window.innerWidth / 2 - 280)) : 220,
       y: 80,
     },
+    dockedPanels: { properties: true, clips: true },
+    collapsedPanels: { properties: false, clips: false },
+    floatingPanelPositions: {
+      properties: { x: 450, y: 70 },
+      clips: { x: 300, y: 120 },
+    },
     starConfig: { points: 5, pointRatio: 0.5, cornerRadius: 0 },
     rectConfig: { cornerRadius: 0, cornerType: 'round' },
     ovalConfig: { innerRadiusRatio: 0, startAngle: 0, endAngle: 360 },

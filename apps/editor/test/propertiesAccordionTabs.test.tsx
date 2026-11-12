@@ -24,7 +24,7 @@ describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () =>
     container.remove();
   });
 
-  it('renders Stage & Layers header with Target Chip, Category Dropdown, and View Mode switchers', async () => {
+  it('renders Stage & Layers header with Target Chip, Category Dropdown, and Expand/Collapse All button', async () => {
     await act(async () => {
       root.render(<Properties />);
     });
@@ -42,66 +42,51 @@ describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () =>
     expect(dropdown.value).toBe('all');
     expect(dropdown.options.length).toBeGreaterThan(3);
 
-    // View mode switch buttons
-    const tabsBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Tabs')
-    );
-    const accordionBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Accordion')
-    );
-    const formOnlyBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Form Only')
-    );
-    expect(tabsBtn).not.toBeNull();
-    expect(accordionBtn).not.toBeNull();
-    expect(formOnlyBtn).not.toBeNull();
-
     // Toggle all button
     const toggleAllBtn = Array.from(container.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Collapse All') || b.textContent?.includes('Expand All')
     );
     expect(toggleAllBtn).not.toBeNull();
+
+    // Verify tabs view mode button and rail are eliminated
+    const tabsBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Tabs')
+    );
+    expect(tabsBtn).toBeUndefined();
+    expect(container.querySelector('[class*="verticalTabsRail"]')).toBeNull();
   });
 
-  it('switches between Tabs rail, Accordion view, and Form Only mode', async () => {
+  it('renders in Adobe accordion mode with category dropdown and expand/collapse all functionality, with NO tabs rail', async () => {
     await act(async () => {
       root.render(<Properties />);
     });
 
-    // Default view mode is tabs -> rail is rendered
-    const tabsRail = container.querySelector('[class*="verticalTabsRail"]');
-    expect(tabsRail).not.toBeNull();
-    const tabButtons = tabsRail?.querySelectorAll('button');
-    expect(tabButtons?.length).toBeGreaterThan(3);
-
-    // Switch to Accordion mode
-    const accordionBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Accordion')
-    );
-    await act(async () => {
-      accordionBtn?.click();
-    });
-
-    // Rail should be hidden
+    // Verify NO vertical tabs rail is rendered
     expect(container.querySelector('[class*="verticalTabsRail"]')).toBeNull();
 
-    // Switch to Form Only mode
-    const formOnlyBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Form Only')
-    );
-    await act(async () => {
-      formOnlyBtn?.click();
-    });
-    expect(container.querySelector('[class*="verticalTabsRail"]')).toBeNull();
+    // Accordion sections are rendered directly
+    const dimsSection = container.querySelector('#stage-dimensions') as HTMLElement;
+    expect(dimsSection).not.toBeNull();
+    const body = dimsSection.querySelector('[class*="accordionBody"]') as HTMLElement;
+    expect(body.style.display).toBe('flex');
 
-    // Switch back to Tabs
-    const tabsBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Tabs')
-    );
+    // Toggle all button collapses and expands all sections
+    const toggleAllBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Collapse All')
+    ) as HTMLButtonElement;
+    expect(toggleAllBtn).not.toBeNull();
+
     await act(async () => {
-      tabsBtn?.click();
+      toggleAllBtn.click();
     });
-    expect(container.querySelector('[class*="verticalTabsRail"]')).not.toBeNull();
+    expect(body.style.display).toBe('none');
+    expect(toggleAllBtn.textContent).toContain('Expand All');
+
+    await act(async () => {
+      toggleAllBtn.click();
+    });
+    expect(body.style.display).toBe('flex');
+    expect(toggleAllBtn.textContent).toContain('Collapse All');
   });
 
   it('filters visible sections via Category Dropdown while keeping elements queryable in DOM', async () => {

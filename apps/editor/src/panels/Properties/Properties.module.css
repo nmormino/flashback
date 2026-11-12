@@ -69,42 +69,6 @@
   border-color: var(--mx-accent);
 }
 
-.viewModeGroup {
-  display: flex;
-  align-items: center;
-  background: var(--mx-bg-input);
-  border: 1px solid var(--mx-border-light);
-  border-radius: var(--mx-radius-xs);
-  padding: 1px;
-  gap: 1px;
-}
-
-.viewModeBtn {
-  padding: 2px 7px;
-  font-size: 10px;
-  font-weight: 500;
-  background: transparent;
-  border: none;
-  border-radius: 2px;
-  color: var(--mx-text-muted);
-  cursor: pointer;
-  transition: all 0.12s ease;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.viewModeBtn:hover:not(.viewModeBtnActive) {
-  color: var(--mx-text-main);
-  background: var(--mx-bg-panel-hover);
-}
-
-.viewModeBtnActive {
-  background-color: var(--mx-accent);
-  color: #ffffff;
-  font-weight: 600;
-}
-
 .toggleAllBtn {
   padding: 2px 7px;
   font-size: 10px;
@@ -130,64 +94,6 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
-}
-
-.verticalTabsRail {
-  display: flex;
-  flex-direction: column;
-  width: 140px;
-  background-color: var(--mx-bg-panel-dark);
-  border-right: 1px solid var(--mx-border-light);
-  padding: 6px 4px;
-  gap: 2px;
-  overflow-y: auto;
-  flex-shrink: 0;
-}
-
-.verticalTabBtn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 5px 8px;
-  border-radius: var(--mx-radius-xs);
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--mx-text-muted);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: left;
-  transition: all 0.12s ease;
-  width: 100%;
-}
-
-.verticalTabBtn:hover {
-  background: var(--mx-bg-panel-hover);
-  color: var(--mx-text-main);
-}
-
-.verticalTabBtn.activeTab {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: rgba(59, 130, 246, 0.35);
-  color: #93c5fd;
-  font-weight: 600;
-}
-
-.verticalTabLabelArea {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tabCountBadge {
-  font-size: 9.5px;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 1px 5px;
-  border-radius: 8px;
-  color: var(--mx-text-subtle);
 }
 
 .propertiesContentArea {
