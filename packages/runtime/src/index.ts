@@ -10,4 +10,5 @@ export * from './player/compileTracks';
 export * from './player/Timeline';
 export * from './render';
 export * from './script';
+export * from './state';
 export * from './WebAnim';

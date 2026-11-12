@@ -6,6 +6,7 @@ import type {
   Artboard,
   ArtboardTransition,
   ParticleEmitterOptions,
+  StateMachineDef,
 } from './schema';
 import { TimelinePipeline, Timeline } from './player/Timeline';
 import { Ticker } from './player/Ticker';
@@ -13,6 +14,7 @@ import { DomRenderer } from './render/DomRenderer';
 import { CanvasRenderer } from './render/CanvasRenderer';
 import { fillToCSS } from './render/fills';
 import { resolveI18nText } from './render/text';
+import { StateMachineRunner } from './state/StateMachineRunner';
 
 const STAGE_STYLES = `
   :host {
@@ -113,6 +115,7 @@ export class WebAnim extends HTMLElementBase {
     'strings',
     'translations',
     'state',
+    'state-machine',
     'renderer',
   ];
 
@@ -137,6 +140,11 @@ export class WebAnim extends HTMLElementBase {
   private _posterFrame = 1;
   private _locale = 'en';
   private _initialState?: Record<string, any>;
+  private _stateMachine = '';
+  private _stateMachineRunner: StateMachineRunner | null = null;
+  private _onKeyDown: ((e: KeyboardEvent) => void) | null = null;
+  private _onKeyUp: ((e: KeyboardEvent) => void) | null = null;
+  private _pointerListeners: Array<[EventTarget, string, EventListener]> = [];
 
   constructor() {
     super();
@@ -239,6 +247,11 @@ export class WebAnim extends HTMLElementBase {
         } catch (err) {
           console.warn('[web-anim] Failed to parse state attribute JSON:', err);
         }
+      }
+    } else if (name === 'state-machine') {
+      this._stateMachine = newValue || '';
+      if (this._animation && this._pipeline) {
+        this.setupStateMachine(this._animation);
       }
     }
   }
@@ -520,6 +533,53 @@ export class WebAnim extends HTMLElementBase {
       }
       this.updateAccessibleFallback();
     }
+  }
+
+  /**
+   * Active State Machine reference name or ID.
+   */
+  public get stateMachine(): string {
+    return this.getAttribute('state-machine') || this._stateMachine || '';
+  }
+
+  public set stateMachine(val: string) {
+    this._stateMachine = val;
+    if (val) {
+      this.setAttribute('state-machine', val);
+    } else {
+      this.removeAttribute('state-machine');
+    }
+    if (this._animation && this._pipeline) {
+      this.setupStateMachine(this._animation);
+    }
+  }
+
+  /**
+   * Active StateMachineRunner instance (if animation has state machines).
+   */
+  public get stateMachineRunner(): StateMachineRunner | null {
+    return this._stateMachineRunner;
+  }
+
+  /**
+   * Read the value of a state machine input by name or ID.
+   */
+  public getInputValue(name: string): boolean | number | undefined {
+    return this._stateMachineRunner?.getInputValue(name);
+  }
+
+  /**
+   * Set the value of a state machine input by name or ID.
+   */
+  public setInputValue(name: string, value: boolean | number): void {
+    this._stateMachineRunner?.setInputValue(name, value);
+  }
+
+  /**
+   * Fire a state machine trigger input by name or ID.
+   */
+  public fireTrigger(name: string): void {
+    this._stateMachineRunner?.fireTrigger(name);
   }
 
   /**
@@ -1024,11 +1084,16 @@ export class WebAnim extends HTMLElementBase {
       this._canvasRenderer.render();
     }
 
+    // Setup State Machine Runner if defined
+    this.setupStateMachine(doc);
+
     // 3. Create Ticker
+    const frameMs = 1000 / (doc.stage.fps || 24);
     this._ticker = new Ticker({
       fps: doc.stage.fps,
       onTick: () => {
         this._pipeline?.tick();
+        this._stateMachineRunner?.tick(frameMs);
         this._renderer?.syncTextVariables();
       },
       onRender: (interpolation) => {
@@ -1102,6 +1167,145 @@ export class WebAnim extends HTMLElementBase {
       window.removeEventListener('resize', this._onResize);
       this._onResize = null;
     }
+
+    // 7. Cleanup State Machine Runner & listeners
+    this.teardownStateMachine();
+  }
+
+  private setupStateMachine(doc: AnimDocument): void {
+    this.teardownStateMachine();
+
+    const smDefs = doc.stateMachines;
+    if (!smDefs || smDefs.length === 0) {
+      return;
+    }
+
+    const targetRef =
+      this.getAttribute('state-machine') || this._stateMachine || doc.activeStateMachineId;
+    let matchedDef: StateMachineDef | undefined;
+    if (targetRef) {
+      matchedDef = smDefs.find((sm) => sm.name === targetRef || sm.id === targetRef);
+    }
+    if (!matchedDef) {
+      matchedDef = smDefs[0];
+    }
+    if (!matchedDef) return;
+
+    this._stateMachineRunner = new StateMachineRunner(matchedDef, {
+      onPlayClip: (clipName: string, loop?: boolean | string, speed?: number) => {
+        if (this._pipeline?.root) {
+          if (loop !== undefined) {
+            this._pipeline.root.loop = loop === true || loop === 'loop';
+          }
+          const child = this._pipeline.root.getChild(clipName);
+          if (child && typeof (child as any).gotoAndPlay === 'function') {
+            (child as any).gotoAndPlay(1);
+          }
+          try {
+            this.gotoAndPlay(clipName);
+          } catch {
+            // Ignore non-existent frame/label
+          }
+        }
+        this.dispatchEvent(
+          new CustomEvent('stateclipchange', { detail: { clipName, loop, speed } })
+        );
+      },
+      onStateChange: (fromState: string | null, toState: string) => {
+        this.dispatchEvent(
+          new CustomEvent('statechange', { detail: { fromState, toState } })
+        );
+      },
+      onBlendClips: (fromClip: string, toClip: string, weight: number) => {
+        this.dispatchEvent(
+          new CustomEvent('stateblend', { detail: { fromClip, toClip, weight } })
+        );
+      },
+      onPoseProgress: (clipName: string, progress: number) => {
+        this.dispatchEvent(
+          new CustomEvent('statepose', { detail: { clipName, progress } })
+        );
+      },
+      onSpawnSymbol: (symbolId: string, x?: number, y?: number) => {
+        if (this._pipeline?.root) {
+          this._pipeline.root.spawnClip(symbolId, { x: x ?? 0, y: y ?? 0 });
+        }
+        this.dispatchEvent(
+          new CustomEvent('statespawn', { detail: { symbolId, x, y } })
+        );
+      },
+      onPlaySound: (soundId: string) => {
+        if (this._pipeline?.root) {
+          this._pipeline.root.playSound(soundId);
+        }
+        this.dispatchEvent(
+          new CustomEvent('sound', { detail: { soundId } })
+        );
+      },
+      onCustomEvent: (name: string, payload?: any) => {
+        this.emit(name, payload);
+      },
+      getCurrentClipProgress: () => {
+        if (!this._pipeline?.root) return 0;
+        const total = this._pipeline.root.totalFrames;
+        if (total <= 1) return 1;
+        return (this._pipeline.root.currentFrame - 1) / (total - 1);
+      },
+    });
+
+    // Setup pointer listeners
+    const pointerEvents: Array<
+      'pointerdown' | 'pointerup' | 'pointerenter' | 'pointerleave' | 'click'
+    > = ['pointerdown', 'pointerup', 'pointerenter', 'pointerleave', 'click'];
+
+    const targetEl = this._viewportEl || this;
+    for (const evt of pointerEvents) {
+      const handler: EventListener = (e: Event) => {
+        const target = e.target as HTMLElement | null;
+        const closestEl = target?.closest?.('[data-el-id], [data-name], [id]');
+        const targetId =
+          closestEl?.getAttribute('data-el-id') ||
+          closestEl?.getAttribute('data-name') ||
+          closestEl?.id ||
+          undefined;
+        this._stateMachineRunner?.handlePointerEvent(evt, targetId);
+      };
+      targetEl.addEventListener(evt, handler);
+      this._pointerListeners.push([targetEl, evt, handler]);
+    }
+
+    // Window keydown/keyup listeners if key listeners exist
+    const hasKeyListeners = matchedDef.listeners?.some(
+      (l) => l.eventType === 'keydown' || l.eventType === 'keyup'
+    );
+    if (hasKeyListeners && typeof window !== 'undefined') {
+      this._onKeyDown = (e: KeyboardEvent) => {
+        this._stateMachineRunner?.handleKeyEvent('keydown', e.code || e.key);
+      };
+      this._onKeyUp = (e: KeyboardEvent) => {
+        this._stateMachineRunner?.handleKeyEvent('keyup', e.code || e.key);
+      };
+      window.addEventListener('keydown', this._onKeyDown);
+      window.addEventListener('keyup', this._onKeyUp);
+    }
+  }
+
+  private teardownStateMachine(): void {
+    if (this._onKeyDown && typeof window !== 'undefined') {
+      window.removeEventListener('keydown', this._onKeyDown);
+      this._onKeyDown = null;
+    }
+    if (this._onKeyUp && typeof window !== 'undefined') {
+      window.removeEventListener('keyup', this._onKeyUp);
+      this._onKeyUp = null;
+    }
+    if (this._pointerListeners) {
+      for (const [el, evt, handler] of this._pointerListeners) {
+        el.removeEventListener(evt, handler);
+      }
+      this._pointerListeners = [];
+    }
+    this._stateMachineRunner = null;
   }
 
   /**

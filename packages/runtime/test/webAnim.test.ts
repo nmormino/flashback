@@ -374,6 +374,7 @@ describe('WebAnim Custom Element (<web-anim>)', () => {
         'strings',
         'translations',
         'state',
+        'state-machine',
         'renderer',
       ]);
     });
