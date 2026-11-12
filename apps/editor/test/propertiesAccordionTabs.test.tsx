@@ -6,7 +6,7 @@ import { Properties } from '../src/panels/Properties/Properties';
 import { editorActions, getEditorState } from '../src/state/editorStore';
 import type { ShapeElement, TextElement } from '@flashback/runtime';
 
-describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () => {
+describe('Properties Panel: Accordion Mode & Row-by-Row Layout', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -24,7 +24,7 @@ describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () =>
     container.remove();
   });
 
-  it('renders Stage & Layers header with Target Chip, Category Dropdown, and Expand/Collapse All button', async () => {
+  it('renders Stage & Layers header with Target Chip and Expand/Collapse All button without category dropdown', async () => {
     await act(async () => {
       root.render(<Properties />);
     });
@@ -34,13 +34,11 @@ describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () =>
     expect(chip).not.toBeNull();
     expect(chip?.textContent).toContain('Stage & Layers');
 
-    // Category dropdown
+    // Category dropdown should be removed
     const dropdown = container.querySelector(
       '[data-testid="properties-category-dropdown"]'
-    ) as HTMLSelectElement;
-    expect(dropdown).not.toBeNull();
-    expect(dropdown.value).toBe('all');
-    expect(dropdown.options.length).toBeGreaterThan(3);
+    );
+    expect(dropdown).toBeNull();
 
     // Toggle all button
     const toggleAllBtn = Array.from(container.querySelectorAll('button')).find((b) =>
@@ -56,7 +54,7 @@ describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () =>
     expect(container.querySelector('[class*="verticalTabsRail"]')).toBeNull();
   });
 
-  it('renders in Adobe accordion mode with category dropdown and expand/collapse all functionality, with NO tabs rail', async () => {
+  it('renders in Adobe accordion mode with all sections listed row-by-row filling space, and expand/collapse all functionality', async () => {
     await act(async () => {
       root.render(<Properties />);
     });
@@ -64,9 +62,17 @@ describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () =>
     // Verify NO vertical tabs rail is rendered
     expect(container.querySelector('[class*="verticalTabsRail"]')).toBeNull();
 
-    // Accordion sections are rendered directly
+    // Verify category dropdown is absent
+    expect(container.querySelector('[data-testid="properties-category-dropdown"]')).toBeNull();
+
+    // Accordion sections are rendered directly row by row
     const dimsSection = container.querySelector('#stage-dimensions') as HTMLElement;
+    const fpsSection = container.querySelector('#stage-fps') as HTMLElement;
+    const bgSection = container.querySelector('#stage-background') as HTMLElement;
     expect(dimsSection).not.toBeNull();
+    expect(fpsSection).not.toBeNull();
+    expect(bgSection).not.toBeNull();
+
     const body = dimsSection.querySelector('[class*="accordionBody"]') as HTMLElement;
     expect(body.style.display).toBe('flex');
 
@@ -89,36 +95,30 @@ describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () =>
     expect(toggleAllBtn.textContent).toContain('Collapse All');
   });
 
-  it('filters visible sections via Category Dropdown while keeping elements queryable in DOM', async () => {
+  it('renders all property boxes row-by-row directly without category filtering', async () => {
     await act(async () => {
       root.render(<Properties />);
     });
 
-    const dropdown = container.querySelector(
-      '[data-testid="properties-category-dropdown"]'
-    ) as HTMLSelectElement;
+    // Verify all stage sections are mounted and rendered directly row-by-row
+    const sectionIds = [
+      'stage-dimensions',
+      'stage-fps',
+      'stage-background',
+      'stage-breakpoints',
+      'stage-reduced-motion',
+      'stage-i18n',
+    ];
 
-    // Filter to "layout" (Breakpoints)
-    await act(async () => {
-      dropdown.value = 'layout';
-      dropdown.dispatchEvent(new Event('change', { bubbles: true }));
+    sectionIds.forEach((id) => {
+      const el = container.querySelector(`#${id}`) as HTMLElement;
+      expect(el).not.toBeNull();
+      // Not hidden via category display: none
+      expect(el.style.display).not.toBe('none');
     });
 
-    const bpSection = container.querySelector('#stage-breakpoints') as HTMLElement;
-    expect(bpSection).not.toBeNull();
-    expect(bpSection.style.display).not.toBe('none');
-
-    // Stage dimensions section should be hidden via style.display="none" but remains mounted in DOM
-    const dimsSection = container.querySelector('#stage-dimensions') as HTMLElement;
-    expect(dimsSection).not.toBeNull();
-    expect(dimsSection.style.display).toBe('none');
-
-    // Reset back to all
-    await act(async () => {
-      dropdown.value = 'all';
-      dropdown.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    expect(dimsSection.style.display).not.toBe('none');
+    // Ensure category dropdown is absent
+    expect(container.querySelector('[data-testid="properties-category-dropdown"]')).toBeNull();
   });
 
   it('supports accordion toggle of individual sections and Expand All / Collapse All', async () => {
@@ -191,6 +191,9 @@ describe('Properties Panel: Accordion, Vertical Tabs & Category Dropdown', () =>
     await act(async () => {
       root.render(<Properties />);
     });
+
+    // Ensure category dropdown is absent in element properties header
+    expect(container.querySelector('[data-testid="properties-category-dropdown"]')).toBeNull();
 
     // Check Rectangle live corners section
     expect(container.querySelector('[data-testid="rectangle-corners-section"]')).not.toBeNull();

@@ -54,8 +54,6 @@ import styles from './Properties.module.css';
 
 interface AccordionSectionProps {
   id: string;
-  category: string;
-  activeCategory: string;
   title: string;
   icon?: React.ReactNode;
   badge?: string;
@@ -69,8 +67,6 @@ interface AccordionSectionProps {
 
 const AccordionSection: React.FC<AccordionSectionProps> = ({
   id,
-  category,
-  activeCategory,
   title,
   icon,
   badge,
@@ -81,17 +77,12 @@ const AccordionSection: React.FC<AccordionSectionProps> = ({
   style,
   children,
 }) => {
-  const isHidden = activeCategory !== 'all' && activeCategory !== category;
-
   return (
     <div
       id={id}
-      className={`${styles.propSection} ${collapsed ? styles.collapsedSection : ''} ${isHidden ? styles.hiddenSection : ''}`}
+      className={`${styles.propSection} ${collapsed ? styles.collapsedSection : ''}`}
       data-testid={testId}
-      style={{
-        ...style,
-        display: isHidden ? 'none' : undefined,
-      }}
+      style={style}
     >
       <div
         className={styles.accordionHeader}
@@ -144,8 +135,6 @@ export const Properties: React.FC = () => {
   const pencilConfig = useEditorStore((s) => s.pencilConfig);
   const subselectedAnchor = useEditorStore((s) => s.subselectedAnchor);
 
-  const viewMode = 'accordion';
-  const [activeCategory, setActiveCategory] = useState<string>('all');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
 
   const toggleSection = (id: string) =>
@@ -219,20 +208,6 @@ export const Properties: React.FC = () => {
       { name: 'Accent Blue', color: '#1d4ed8' },
     ];
 
-    const stageCategories = [
-      { id: 'all', name: 'All Categories', icon: '📑' },
-      ...(activeTool === 'rect' || activeTool === 'polygon' || activeTool === 'oval' || activeTool === 'pencil'
-        ? [{ id: 'tools', name: 'Tool Defaults', icon: '🛠️' }]
-        : []),
-      ...(selectedLayer
-        ? [{ id: 'layer', name: selectedLayer.kind === 'folder' ? 'Folder' : 'Layer', icon: selectedLayer.kind === 'folder' ? '📁' : '📄' }]
-        : []),
-      { id: 'stage', name: 'Stage & Canvas', icon: '🎬' },
-      { id: 'layout', name: 'Breakpoints', icon: '📱' },
-      { id: 'accessibility', name: 'Accessibility', icon: '♿' },
-      { id: 'i18n', name: 'Localization', icon: '🌐' },
-    ];
-
     const allStageSectionIds = [
       ...(activeTool === 'rect' ? ['tool-rect-defaults'] : []),
       ...(activeTool === 'polygon' ? ['tool-polygon-defaults'] : []),
@@ -246,23 +221,6 @@ export const Properties: React.FC = () => {
       'stage-reduced-motion',
       'stage-i18n',
     ];
-
-    const stageCategoryCounts: Record<string, number> = {
-      tools:
-        (activeTool === 'rect' ? 1 : 0) +
-        (activeTool === 'polygon' ? 1 : 0) +
-        (activeTool === 'oval' ? 1 : 0) +
-        (activeTool === 'pencil' ? 1 : 0),
-      layer: selectedLayer ? 1 : 0,
-      stage: 3,
-      layout: 1,
-      accessibility: 1,
-      i18n: 1,
-    };
-
-    const effectiveStageCategory = stageCategories.some((c) => c.id === activeCategory)
-      ? activeCategory
-      : 'all';
 
     const areAllStageCollapsed =
       allStageSectionIds.length > 0 &&
@@ -287,19 +245,6 @@ export const Properties: React.FC = () => {
             <div className={styles.targetChip} title="Stage & Layers">
               <span>🎬 Stage & Layers</span>
             </div>
-            <select
-              data-testid="properties-category-dropdown"
-              className={styles.categoryDropdown}
-              value={effectiveStageCategory}
-              onChange={(e) => setActiveCategory(e.target.value)}
-              aria-label="Filter Properties Category"
-            >
-              {stageCategories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
           </div>
           <div className={styles.headerRight}>
             <button
@@ -319,8 +264,6 @@ export const Properties: React.FC = () => {
         {activeTool === 'rect' && (
           <AccordionSection
             id="tool-rect-defaults"
-            category="tools"
-            activeCategory={effectiveStageCategory}
             title="Rectangle Tool Options"
             icon="▢"
             badge="Live Corners"
@@ -367,8 +310,6 @@ export const Properties: React.FC = () => {
         {activeTool === 'polygon' && (
           <AccordionSection
             id="tool-polygon-defaults"
-            category="tools"
-            activeCategory={effectiveStageCategory}
             title="Polygon & Star Tool Options"
             icon="⭐"
             summary={`${defaultStarConfig.points} pts, ${Math.round(defaultStarConfig.pointRatio * 100)}%`}
@@ -423,8 +364,6 @@ export const Properties: React.FC = () => {
         {activeTool === 'oval' && (
           <AccordionSection
             id="tool-oval-defaults"
-            category="tools"
-            activeCategory={effectiveStageCategory}
             title="Oval Tool Options"
             icon="◯"
             badge="Pie & Donut"
@@ -453,8 +392,6 @@ export const Properties: React.FC = () => {
         {activeTool === 'pencil' && (
           <AccordionSection
             id="tool-pencil-defaults"
-            category="tools"
-            activeCategory={effectiveStageCategory}
             title="Pencil Tool Options"
             icon="✏️"
             badge="Smoothing"
@@ -514,8 +451,6 @@ export const Properties: React.FC = () => {
         {selectedLayer && (
           <AccordionSection
             id="layer-properties"
-            category="layer"
-            activeCategory={effectiveStageCategory}
             title={selectedLayer.kind === 'folder' ? `Folder: ${selectedLayer.name}` : `Layer: ${selectedLayer.name}`}
             icon={selectedLayer.kind === 'folder' ? '📁' : '📄'}
             badge={selectedLayer.kind === 'folder' ? 'Group Transform' : undefined}
@@ -685,8 +620,6 @@ export const Properties: React.FC = () => {
         {/* Document Dimensions */}
         <AccordionSection
           id="stage-dimensions"
-          category="stage"
-          activeCategory={effectiveStageCategory}
           title="Document Dimensions"
           icon="🎬"
           summary={`${width}×${height}px`}
@@ -741,8 +674,6 @@ export const Properties: React.FC = () => {
         {/* Playback & Target FPS */}
         <AccordionSection
           id="stage-fps"
-          category="stage"
-          activeCategory={effectiveStageCategory}
           title="Playback Framerate"
           icon="⏱️"
           summary={`${fps} FPS`}
@@ -792,8 +723,6 @@ export const Properties: React.FC = () => {
         {/* Background Color & Alpha */}
         <AccordionSection
           id="stage-background"
-          category="stage"
-          activeCategory={effectiveStageCategory}
           title="Stage Background"
           icon="🎨"
           summary={isTransparent ? 'Transparent' : solidColor}
@@ -884,8 +813,6 @@ export const Properties: React.FC = () => {
         {/* Responsive Breakpoints Section */}
         <AccordionSection
           id="stage-breakpoints"
-          category="layout"
-          activeCategory={effectiveStageCategory}
           title="Responsive Breakpoints"
           icon="📱"
           badge={doc.stage.breakpoints?.length ? `${doc.stage.breakpoints.length} active` : undefined}
@@ -1014,8 +941,6 @@ export const Properties: React.FC = () => {
         {/* Accessibility: Reduced Motion */}
         <AccordionSection
           id="stage-reduced-motion"
-          category="accessibility"
-          activeCategory={effectiveStageCategory}
           title="Accessibility (Reduced Motion)"
           icon="♿"
           summary={doc.stage.reducedMotion?.mode ? `Mode: ${doc.stage.reducedMotion.mode}` : 'Auto'}
@@ -1093,8 +1018,6 @@ export const Properties: React.FC = () => {
         {/* Internationalization (i18n) Stage Dictionary */}
         <AccordionSection
           id="stage-i18n"
-          category="i18n"
-          activeCategory={effectiveStageCategory}
           title="i18n Localization"
           icon="🌐"
           summary={`Active: ${previewLocale || doc.i18n?.defaultLocale || 'en'}`}
@@ -1498,24 +1421,6 @@ export const Properties: React.FC = () => {
     return `❖ Element: ${(selectedEl as any).id}`;
   })();
 
-  const elementCategories = [
-    { id: 'all', name: 'All Categories', icon: '📑' },
-    { id: 'identity', name: 'Identity', icon: '🪪' },
-    ...(isText ? [{ id: 'text', name: 'Typography', icon: 'T' }] : []),
-    ...(selectedEl.type === 'bitmap' || selectedEl.type === 'video'
-      ? [{ id: 'media', name: 'Media', icon: '🖼️' }]
-      : []),
-    { id: 'layout', name: 'Align & Layout', icon: '📐' },
-    { id: 'transform', name: 'Transform', icon: '⤢' },
-    ...(owningLayer ? [{ id: 'animation', name: 'Animation', icon: '⚡' }] : []),
-    ...(isShape || selectedElementIds.length >= 2
-      ? [
-          { id: 'style', name: 'Fill & Stroke', icon: '🎨' },
-          { id: 'shape', name: 'Shape Controls', icon: '▢' },
-        ]
-      : []),
-  ];
-
   const allElementSectionIds = [
     'element-identity',
     'interactions-statemachine',
@@ -1532,26 +1437,6 @@ export const Properties: React.FC = () => {
     ...(isShape && shapeEl && !(isRectangle && !isCustomizedPath) ? ['vector-corners'] : []),
     ...(selectedElementIds.length >= 2 || isShape ? ['pathfinder'] : []),
   ];
-
-  const elementCategoryCounts: Record<string, number> = {
-    identity: 2,
-    text: isText && textEl ? 3 : 0,
-    media: selectedEl.type === 'bitmap' || selectedEl.type === 'video' ? 1 : 0,
-    layout: 1,
-    transform: 1,
-    animation: owningLayer ? 1 : 0,
-    style: isShape && shapeEl ? 1 : 0,
-    shape:
-      (isRectangle && shapeEl ? 1 : 0) +
-      (isOval && shapeEl ? 1 : 0) +
-      (isStarOrPolygon && shapeEl ? 1 : 0) +
-      (isShape && shapeEl && !(isRectangle && !isCustomizedPath) ? 1 : 0) +
-      (selectedElementIds.length >= 2 || isShape ? 1 : 0),
-  };
-
-  const effectiveElementCategory = elementCategories.some((c) => c.id === activeCategory)
-    ? activeCategory
-    : 'all';
 
   const areAllElementCollapsed =
     allElementSectionIds.length > 0 &&
@@ -1576,19 +1461,6 @@ export const Properties: React.FC = () => {
           <div className={styles.targetChip} title={targetChipText}>
             <span>{targetChipText}</span>
           </div>
-          <select
-            data-testid="properties-category-dropdown"
-            className={styles.categoryDropdown}
-            value={effectiveElementCategory}
-            onChange={(e) => setActiveCategory(e.target.value)}
-            aria-label="Filter Properties Category"
-          >
-            {elementCategories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
         </div>
         <div className={styles.headerRight}>
           <button
@@ -1607,8 +1479,6 @@ export const Properties: React.FC = () => {
       {/* Element Identity */}
       <AccordionSection
         id="element-identity"
-        category="identity"
-        activeCategory={effectiveElementCategory}
         title="Element Identity"
         icon="🪪"
         badge={selectedEl.type === 'instance' ? 'Component Instance' : selectedEl.type}
@@ -1791,8 +1661,6 @@ export const Properties: React.FC = () => {
         return (
           <AccordionSection
             id="interactions-statemachine"
-            category="identity"
-            activeCategory={effectiveElementCategory}
             title="Interactions & State Machine"
             icon="⚡"
             badge={elementListeners.length > 0 ? `${elementListeners.length} Listeners` : undefined}
@@ -1947,8 +1815,6 @@ export const Properties: React.FC = () => {
         return (
           <AccordionSection
             id="text-typography"
-            category="text"
-            activeCategory={effectiveElementCategory}
             title="Typography & Text Type"
             icon="T"
             badge={textTypeBadge}
@@ -2809,8 +2675,6 @@ export const Properties: React.FC = () => {
       {isText && textEl && (
         <AccordionSection
           id="text-i18n"
-          category="text"
-          activeCategory={effectiveElementCategory}
           title="Text Localization (i18n)"
           icon="🌐"
           summary={textEl.i18nKey ? `Key: ${textEl.i18nKey}` : 'No key'}
@@ -2951,8 +2815,6 @@ export const Properties: React.FC = () => {
       {isText && textEl && (
         <AccordionSection
           id="text-state"
-          category="text"
-          activeCategory={effectiveElementCategory}
           title="Variable & State Binding"
           icon="⚡"
           summary={
@@ -2981,7 +2843,7 @@ export const Properties: React.FC = () => {
           <div className={styles.fieldRow}>
             <span className={styles.fieldLabel}>Binding:</span>
             <select
-              className={styles.categoryDropdown}
+              className={styles.selectInput}
               style={{ flex: 1, width: '100%' }}
               value={textEl.stateBinding || textEl.variable || ''}
               onChange={(e) => {
@@ -3015,8 +2877,6 @@ export const Properties: React.FC = () => {
         return (
           <AccordionSection
             id="bitmap-media"
-            category="media"
-            activeCategory={effectiveElementCategory}
             title="Bitmap Image Asset"
             icon="🖼️"
             summary={`${w}×${h}px`}
@@ -3111,8 +2971,6 @@ export const Properties: React.FC = () => {
         return (
           <AccordionSection
             id="video-media"
-            category="media"
-            activeCategory={effectiveElementCategory}
             title="Video Media Element"
             icon="🎥"
             summary={`${w}×${h}px`}
@@ -3243,8 +3101,6 @@ export const Properties: React.FC = () => {
       {/* Transform: Position */}
       <AccordionSection
         id="layout-alignment"
-        category="layout"
-        activeCategory={effectiveElementCategory}
         title="Position & Alignment"
         icon="📐"
         summary={(selectedEl as any).layoutPin ? `Pin: ${(selectedEl as any).layoutPin}` : `X:${Math.round(x)} Y:${Math.round(y)}`}
@@ -3413,8 +3269,6 @@ export const Properties: React.FC = () => {
       {/* Transform: Scale & Rotation */}
       <AccordionSection
         id="element-transform"
-        category="transform"
-        activeCategory={effectiveElementCategory}
         title="Transform & Dimensions"
         icon="⤢"
         summary={`Rot:${Math.round(rotation)}° Scale:${Math.round((scaleX ?? 1) * 100)}%`}
@@ -3714,8 +3568,6 @@ export const Properties: React.FC = () => {
         return (
           <AccordionSection
             id="tween-motion"
-            category="animation"
-            activeCategory={effectiveElementCategory}
             title="Motion Tween & Easing"
             icon="⚡"
             badge={hasTween ? 'Active' : undefined}
@@ -3825,8 +3677,6 @@ export const Properties: React.FC = () => {
       {/* Color & Transparency */}
       <AccordionSection
         id="fill-stroke"
-        category="style"
-        activeCategory={effectiveElementCategory}
         title={isShape ? 'Fill, Stroke & Color' : 'Color & Opacity'}
         icon="🎨"
         summary={`Alpha: ${alphaPercent}%`}
@@ -4038,8 +3888,6 @@ export const Properties: React.FC = () => {
         return (
           <AccordionSection
             id="rectangle-corners"
-            category="shape"
-            activeCategory={effectiveElementCategory}
             title="Rectangle Live Corners"
             icon="▢"
             badge="Live Corners"
@@ -4439,8 +4287,6 @@ export const Properties: React.FC = () => {
         return (
           <AccordionSection
             id="oval-parametric"
-            category="shape"
-            activeCategory={effectiveElementCategory}
             title="Oval & Donut Parametric"
             icon="◯"
             badge="Pie & Donut"
@@ -4581,8 +4427,6 @@ export const Properties: React.FC = () => {
       {isStarOrPolygon && (
         <AccordionSection
           id="star-polygon"
-          category="shape"
-          activeCategory={effectiveElementCategory}
           title="Star & Polygon"
           icon="⭐"
           summary={`${starPts} pts, ${Math.round(starRatio * 100)}%`}
@@ -4818,8 +4662,6 @@ export const Properties: React.FC = () => {
         return (
           <AccordionSection
             id="vector-corners"
-            category="shape"
-            activeCategory={effectiveElementCategory}
             title="Vector Path & Live Corners"
             icon="∿"
             summary={`Radius: ${Math.round(vecRadius)}px`}
@@ -5091,8 +4933,6 @@ export const Properties: React.FC = () => {
       {(selectedElementIds.length >= 2 || isShape) && (
         <AccordionSection
           id="pathfinder"
-          category="shape"
-          activeCategory={effectiveElementCategory}
           title="Pathfinder"
           icon="⊞"
           badge={selectedElementIds.length >= 2 ? `${selectedElementIds.length} Shapes` : undefined}
