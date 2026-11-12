@@ -244,10 +244,9 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  padding: 12px 16px;
-  gap: 16px;
-  background-color: var(--mx-bg-panel);
+  padding: 0;
+  gap: 12px;
+  background-color: transparent;
 }
 
 .sectionTitle {
@@ -282,11 +281,11 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
+  padding: 20px 12px;
   color: var(--mx-text-subtle);
-  font-size: 12px;
+  font-size: 11px;
   text-align: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .filterCard {
