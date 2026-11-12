@@ -591,6 +591,228 @@ export function validate<T extends EditorDocument | AnimDocument>(doc: T): T {
     }
   }
 
+  // 7. Validate State Machines
+  if (doc.stateMachines !== undefined) {
+    if (!Array.isArray(doc.stateMachines)) {
+      throw new ValidationError('Document stateMachines must be an array', 'stateMachines');
+    }
+
+    const stateMachineIds = new Set<string>();
+
+    for (let i = 0; i < doc.stateMachines.length; i++) {
+      const sm = doc.stateMachines[i];
+      const smPath = `stateMachines[${i}]`;
+
+      if (!sm || typeof sm !== 'object') {
+        throw new ValidationError('Invalid state machine definition', smPath);
+      }
+      if (typeof sm.id !== 'string' || !sm.id) {
+        throw new ValidationError('State machine id is required', `${smPath}.id`);
+      }
+      if (stateMachineIds.has(sm.id)) {
+        throw new ValidationError(`Duplicate state machine id: "${sm.id}"`, `${smPath}.id`);
+      }
+      stateMachineIds.add(sm.id);
+
+      if (typeof sm.name !== 'string' || !sm.name) {
+        throw new ValidationError('State machine name is required', `${smPath}.name`);
+      }
+
+      // 7.1 Validate Inputs
+      if (!Array.isArray(sm.inputs)) {
+        throw new ValidationError('State machine inputs must be an array', `${smPath}.inputs`);
+      }
+      const inputIds = new Set<string>();
+      for (let j = 0; j < sm.inputs.length; j++) {
+        const inp = sm.inputs[j];
+        const inpPath = `${smPath}.inputs[${j}]`;
+        if (!inp || typeof inp !== 'object') {
+          throw new ValidationError('Invalid state machine input definition', inpPath);
+        }
+        if (typeof inp.id !== 'string' || !inp.id) {
+          throw new ValidationError('Input id is required', `${inpPath}.id`);
+        }
+        if (inputIds.has(inp.id)) {
+          throw new ValidationError(`Duplicate input id: "${inp.id}"`, `${inpPath}.id`);
+        }
+        inputIds.add(inp.id);
+
+        if (typeof inp.name !== 'string' || !inp.name) {
+          throw new ValidationError('Input name is required', `${inpPath}.name`);
+        }
+        const validTypes = ['boolean', 'number', 'trigger'];
+        if (!validTypes.includes(inp.type)) {
+          throw new ValidationError(`Invalid input type: "${inp.type}"`, `${inpPath}.type`);
+        }
+      }
+
+      // 7.2 Validate States
+      if (!Array.isArray(sm.states)) {
+        throw new ValidationError('State machine states must be an array', `${smPath}.states`);
+      }
+      const stateIds = new Set<string>();
+      for (let j = 0; j < sm.states.length; j++) {
+        const st = sm.states[j];
+        const statePath = `${smPath}.states[${j}]`;
+        if (!st || typeof st !== 'object') {
+          throw new ValidationError('Invalid state definition', statePath);
+        }
+        if (typeof st.id !== 'string' || !st.id) {
+          throw new ValidationError('State id is required', `${statePath}.id`);
+        }
+        if (stateIds.has(st.id)) {
+          throw new ValidationError(`Duplicate state id: "${st.id}"`, `${statePath}.id`);
+        }
+        stateIds.add(st.id);
+
+        if (typeof st.name !== 'string' || !st.name) {
+          throw new ValidationError('State name is required', `${statePath}.name`);
+        }
+        const validStateTypes = ['entry', 'exit', 'clip', 'blend1d', 'blend2d', 'pose'];
+        if (!validStateTypes.includes(st.type)) {
+          throw new ValidationError(`Invalid state type: "${st.type}"`, `${statePath}.type`);
+        }
+      }
+
+      // 7.3 Validate Transitions
+      if (!Array.isArray(sm.transitions)) {
+        throw new ValidationError('State machine transitions must be an array', `${smPath}.transitions`);
+      }
+      const transitionIds = new Set<string>();
+      for (let j = 0; j < sm.transitions.length; j++) {
+        const tr = sm.transitions[j];
+        const trPath = `${smPath}.transitions[${j}]`;
+        if (!tr || typeof tr !== 'object') {
+          throw new ValidationError('Invalid transition definition', trPath);
+        }
+        if (typeof tr.id !== 'string' || !tr.id) {
+          throw new ValidationError('Transition id is required', `${trPath}.id`);
+        }
+        if (transitionIds.has(tr.id)) {
+          throw new ValidationError(`Duplicate transition id: "${tr.id}"`, `${trPath}.id`);
+        }
+        transitionIds.add(tr.id);
+
+        if (typeof tr.fromStateId !== 'string' || !tr.fromStateId) {
+          throw new ValidationError('Transition fromStateId is required', `${trPath}.fromStateId`);
+        }
+        if (typeof tr.toStateId !== 'string' || !tr.toStateId) {
+          throw new ValidationError('Transition toStateId is required', `${trPath}.toStateId`);
+        }
+        if (!stateIds.has(tr.fromStateId)) {
+          throw new ValidationError(
+            `Transition fromStateId "${tr.fromStateId}" not found in states`,
+            `${trPath}.fromStateId`
+          );
+        }
+        if (!stateIds.has(tr.toStateId)) {
+          throw new ValidationError(
+            `Transition toStateId "${tr.toStateId}" not found in states`,
+            `${trPath}.toStateId`
+          );
+        }
+
+        if (tr.conditions !== undefined) {
+          if (!Array.isArray(tr.conditions)) {
+            throw new ValidationError('Transition conditions must be an array', `${trPath}.conditions`);
+          }
+          for (let k = 0; k < tr.conditions.length; k++) {
+            const cond = tr.conditions[k];
+            const condPath = `${trPath}.conditions[${k}]`;
+            if (!cond || typeof cond !== 'object') {
+              throw new ValidationError('Invalid condition definition', condPath);
+            }
+            if (typeof cond.inputId !== 'string' || !cond.inputId) {
+              throw new ValidationError('Condition inputId is required', `${condPath}.inputId`);
+            }
+            if (!inputIds.has(cond.inputId)) {
+              throw new ValidationError(
+                `Condition inputId "${cond.inputId}" not found in inputs`,
+                `${condPath}.inputId`
+              );
+            }
+            const validOps = ['==', '!=', '>', '<', '>=', '<='];
+            if (!validOps.includes(cond.op)) {
+              throw new ValidationError(`Invalid condition operator: "${cond.op}"`, `${condPath}.op`);
+            }
+          }
+        }
+      }
+
+      // 7.4 Validate Listeners
+      if (!Array.isArray(sm.listeners)) {
+        throw new ValidationError('State machine listeners must be an array', `${smPath}.listeners`);
+      }
+      const listenerIds = new Set<string>();
+      for (let j = 0; j < sm.listeners.length; j++) {
+        const lis = sm.listeners[j];
+        const lisPath = `${smPath}.listeners[${j}]`;
+        if (!lis || typeof lis !== 'object') {
+          throw new ValidationError('Invalid listener definition', lisPath);
+        }
+        if (typeof lis.id !== 'string' || !lis.id) {
+          throw new ValidationError('Listener id is required', `${lisPath}.id`);
+        }
+        if (listenerIds.has(lis.id)) {
+          throw new ValidationError(`Duplicate listener id: "${lis.id}"`, `${lisPath}.id`);
+        }
+        listenerIds.add(lis.id);
+
+        const validEvents = [
+          'pointerdown',
+          'pointerup',
+          'pointerenter',
+          'pointerleave',
+          'click',
+          'collision',
+          'keydown',
+          'keyup',
+          'tick',
+        ];
+        if (!validEvents.includes(lis.eventType)) {
+          throw new ValidationError(`Invalid listener eventType: "${lis.eventType}"`, `${lisPath}.eventType`);
+        }
+
+        if (!Array.isArray(lis.actions)) {
+          throw new ValidationError('Listener actions must be an array', `${lisPath}.actions`);
+        }
+        for (let k = 0; k < lis.actions.length; k++) {
+          const act = lis.actions[k];
+          const actPath = `${lisPath}.actions[${k}]`;
+          if (!act || typeof act !== 'object') {
+            throw new ValidationError('Invalid action definition', actPath);
+          }
+          const validActions = ['fire_trigger', 'set_input', 'change_input', 'spawn_clip', 'play_sound'];
+          if (!validActions.includes(act.type)) {
+            throw new ValidationError(`Invalid action type: "${act.type}"`, `${actPath}.type`);
+          }
+          if (act.inputId !== undefined && typeof act.inputId === 'string' && inputIds.size > 0 && !inputIds.has(act.inputId)) {
+            throw new ValidationError(
+              `Action inputId "${act.inputId}" not found in inputs`,
+              `${actPath}.inputId`
+            );
+          }
+        }
+      }
+    }
+
+    if (doc.activeStateMachineId !== undefined) {
+      if (typeof doc.activeStateMachineId !== 'string') {
+        throw new ValidationError('activeStateMachineId must be a string', 'activeStateMachineId');
+      }
+      if (doc.stateMachines.length > 0 && !stateMachineIds.has(doc.activeStateMachineId)) {
+        throw new ValidationError(
+          `Active state machine id "${doc.activeStateMachineId}" not found in stateMachines`,
+          'activeStateMachineId'
+        );
+      }
+    }
+  } else if (doc.activeStateMachineId !== undefined) {
+    if (typeof doc.activeStateMachineId !== 'string') {
+      throw new ValidationError('activeStateMachineId must be a string', 'activeStateMachineId');
+    }
+  }
+
   // 6. Validate Library Symbols Timelines
   if (library.symbols) {
     for (const [symId, sym] of Object.entries(library.symbols)) {

@@ -116,6 +116,101 @@ export interface SpawnClipOptions {
   [key: string]: any;
 }
 
+/* ========================================================================== *
+ * 1.5 Declarative State Machine
+ * ========================================================================== */
+
+export type StateMachineInputType = 'boolean' | 'number' | 'trigger';
+
+export interface StateMachineInput {
+  id: string;
+  name: string;
+  type: StateMachineInputType;
+  value: boolean | number;
+}
+
+export type StateNodeType = 'entry' | 'exit' | 'clip' | 'blend1d' | 'blend2d' | 'pose';
+
+export interface StateNode {
+  id: string;
+  name: string;
+  type: StateNodeType;
+  clipName?: string;
+  timelineId?: string;
+  loop?: boolean | 'loop' | 'ping-pong' | 'one-shot';
+  speed?: number;
+  blendInputId?: string;
+  poseInputId?: string;
+  x?: number;
+  y?: number;
+}
+
+export type ConditionOperator = '==' | '!=' | '>' | '<' | '>=' | '<=';
+
+export interface StateCondition {
+  inputId: string;
+  op: ConditionOperator;
+  value: boolean | number;
+}
+
+export interface StateTransition {
+  id: string;
+  fromStateId: string;
+  toStateId: string;
+  durationMs?: number;
+  easing?: Easing;
+  exitTime?: number;
+  hasExitTime?: boolean;
+  conditions: StateCondition[];
+}
+
+export type StateListenerEventType =
+  | 'pointerdown'
+  | 'pointerup'
+  | 'pointerenter'
+  | 'pointerleave'
+  | 'click'
+  | 'collision'
+  | 'keydown'
+  | 'keyup'
+  | 'tick';
+
+export type StateListenerActionType =
+  | 'fire_trigger'
+  | 'set_input'
+  | 'change_input'
+  | 'spawn_clip'
+  | 'play_sound';
+
+export interface StateListenerAction {
+  type: StateListenerActionType;
+  inputId?: string;
+  value?: boolean | number;
+  delta?: number;
+  symbolId?: string;
+  soundId?: string;
+  x?: number;
+  y?: number;
+}
+
+export interface StateListener {
+  id: string;
+  eventType: StateListenerEventType;
+  targetElementId?: string;
+  collisionWithElementId?: string;
+  keyCode?: string;
+  actions: StateListenerAction[];
+}
+
+export interface StateMachineDef {
+  id: string;
+  name: string;
+  inputs: StateMachineInput[];
+  states: StateNode[];
+  transitions: StateTransition[];
+  listeners: StateListener[];
+}
+
 export interface AnimDocument {
   version: typeof SCHEMA_VERSION;
   meta: DocumentMeta;
@@ -127,6 +222,10 @@ export interface AnimDocument {
   artboards?: Artboard[];
   /** Currently active artboard ID. */
   activeArtboardId?: ID;
+  /** Declarative State Machine definitions. */
+  stateMachines?: StateMachineDef[];
+  /** Currently active state machine ID. */
+  activeStateMachineId?: string;
   /** Optional internationalization dictionary for multi-language text rendering. */
   i18n?: I18nDef;
   /** Document-level shared state variable definitions. */

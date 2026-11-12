@@ -1,4 +1,33 @@
-import type { AnimDocument } from '@flashback/runtime';
+import type {
+  AnimDocument,
+  StateMachineInputType,
+  StateMachineInput,
+  StateNodeType,
+  StateNode,
+  ConditionOperator,
+  StateCondition,
+  StateTransition,
+  StateListenerEventType,
+  StateListenerActionType,
+  StateListenerAction,
+  StateListener,
+  StateMachineDef,
+} from '@flashback/runtime';
+
+export type {
+  StateMachineInputType,
+  StateMachineInput,
+  StateNodeType,
+  StateNode,
+  ConditionOperator,
+  StateCondition,
+  StateTransition,
+  StateListenerEventType,
+  StateListenerActionType,
+  StateListenerAction,
+  StateListener,
+  StateMachineDef,
+};
 
 /**
  * Editor-side representation of a script: raw source text, never executed

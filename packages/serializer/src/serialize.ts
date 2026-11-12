@@ -15,14 +15,65 @@ type Kind =
   | 'doc' | 'meta' | 'stage' | 'library' | 'symbol' | 'timeline' | 'layer' | 'keyframe'
   | 'element' | 'transform' | 'behavior' | 'events' | 'methods' | 'idmap' | 'labels'
   | 'folder' | 'tween' | 'sound' | 'audio' | 'font' | 'bitmap' | 'path' | 'stroke'
-  | 'colorTransform' | 'variableRange' | 'breakpoint' | 'artboard' | 'generic';
+  | 'colorTransform' | 'variableRange' | 'breakpoint' | 'artboard'
+  | 'stateMachine' | 'stateInput' | 'stateNode' | 'stateTransition' | 'stateCondition'
+  | 'stateListener' | 'stateListenerAction'
+  | 'generic';
 
 /** Canonical key orders. Unknown keys follow, sorted alphabetically. */
 const ORDER: Partial<Record<Kind, string[]>> = {
-  doc: ['version', 'meta', 'stage', 'library', 'artboards', 'activeArtboardId', 'root', 'i18n', 'onInit', 'scripts'],
+  doc: [
+    'version',
+    'meta',
+    'stage',
+    'library',
+    'artboards',
+    'activeArtboardId',
+    'stateMachines',
+    'activeStateMachineId',
+    'root',
+    'i18n',
+    'onInit',
+    'scripts',
+  ],
   meta: ['name', 'author', 'createdAt', 'modifiedAt', 'editorVersion'],
   stage: ['width', 'height', 'fps', 'background', 'scaleMode', 'reducedMotion', 'breakpoints'],
   artboard: ['id', 'name', 'width', 'height', 'background', 'breakpoints', 'root'],
+  stateMachine: ['id', 'name', 'inputs', 'states', 'transitions', 'listeners'],
+  stateInput: ['id', 'name', 'type', 'value'],
+  stateNode: [
+    'id',
+    'name',
+    'type',
+    'clipName',
+    'timelineId',
+    'loop',
+    'speed',
+    'blendInputId',
+    'poseInputId',
+    'x',
+    'y',
+  ],
+  stateTransition: [
+    'id',
+    'fromStateId',
+    'toStateId',
+    'durationMs',
+    'easing',
+    'exitTime',
+    'hasExitTime',
+    'conditions',
+  ],
+  stateCondition: ['inputId', 'op', 'value'],
+  stateListener: [
+    'id',
+    'eventType',
+    'targetElementId',
+    'collisionWithElementId',
+    'keyCode',
+    'actions',
+  ],
+  stateListenerAction: ['type', 'inputId', 'value', 'delta', 'symbolId', 'soundId', 'x', 'y'],
   library: ['symbols', 'audio', 'fonts', 'bitmaps', 'folders'],
   symbol: ['id', 'name', 'kind', 'linkageId', 'registration', 'behavior', 'timeline'],
   behavior: ['onConstruct', 'methods'],
@@ -82,7 +133,23 @@ function childKind(parent: Kind, key: string): Kind {
         ? 'timeline'
         : key === 'artboards'
         ? 'artboard'
+        : key === 'stateMachines'
+        ? 'stateMachine'
         : 'generic';
+    case 'stateMachine':
+      return key === 'inputs'
+        ? 'stateInput'
+        : key === 'states'
+        ? 'stateNode'
+        : key === 'transitions'
+        ? 'stateTransition'
+        : key === 'listeners'
+        ? 'stateListener'
+        : 'generic';
+    case 'stateTransition':
+      return key === 'conditions' ? 'stateCondition' : 'generic';
+    case 'stateListener':
+      return key === 'actions' ? 'stateListenerAction' : 'generic';
     case 'artboard':
       return key === 'root' ? 'timeline' : key === 'breakpoints' ? 'breakpoint' : 'generic';
     case 'stage':
@@ -338,6 +405,7 @@ function emitObject(obj: Record<string, unknown>, kind: Kind, indent: string, pa
     kind !== 'events' &&
     kind !== 'methods' &&
     kind !== 'behavior' &&
+    kind !== 'stateMachine' &&
     keys.length <= 6 &&
     keys.every((k) => {
       const val = obj[k];
