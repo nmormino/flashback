@@ -60,15 +60,27 @@ importers:
       '@radix-ui/react-tooltip':
         specifier: ^1.4.1
         version: 1.4.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      bezier-js:
+        specifier: ^6.1.4
+        version: 6.1.4
       canvas-confetti:
         specifier: ^1.9.4
         version: 1.9.4
+      fit-curve:
+        specifier: ^0.2.0
+        version: 0.2.0
       flubber:
         specifier: ^0.4.2
         version: 0.4.2
       lucide-react:
         specifier: ^1.61.0
         version: 1.61.0(@types/react@19.3.0)(react@19.3.1)
+      opentype.js:
+        specifier: ^2.0.0
+        version: 2.0.0
+      paper:
+        specifier: ^0.17.0
+        version: 0.17.0
       react:
         specifier: ^19.0.0
         version: 19.3.1
@@ -78,13 +90,22 @@ importers:
       react-resizable-panels:
         specifier: ^2.1.9
         version: 2.1.9(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      wawoff2:
+        specifier: ^2.0.1
+        version: 2.0.1
     devDependencies:
+      '@types/bezier-js':
+        specifier: ^4.1.3
+        version: 4.1.3
       '@types/canvas-confetti':
         specifier: ^1.9.0
         version: 1.9.0
       '@types/flubber':
         specifier: ^0.4.0
         version: 0.4.0
+      '@types/opentype.js':
+        specifier: ^1.3.10
+        version: 1.3.10
       '@types/react':
         specifier: ^19.0.10
         version: 19.3.0
@@ -1344,6 +1365,9 @@ packages:
   '@types/babel__traverse@7.28.0':
     resolution: {integrity: sha512-8PvcXf70gTDZBgt9ptxJ8elBeBjcLOAcOtoO/mPJjtji1+CdGbHgm77om1GrsPxsiE+uXIpNSK64UYaIwQXd4Q==}
 
+  '@types/bezier-js@4.1.3':
+    resolution: {integrity: sha512-FNVVCu5mx/rJCWBxLTcL7oOajmGtWtBTDjq6DSUWUI12GeePivrZZXz+UgE0D6VYsLEjvExRO03z4hVtu3pTEQ==}
+
   '@types/canvas-confetti@1.9.0':
     resolution: {integrity: sha512-aBGj/dULrimR1XDZLtG9JwxX1b4HPRF6CX9Yfwh3NvstZEm1ZL7RBnel4keCPSqs1ANRu1u2Aoz9R+VmtjYuTg==}
 
@@ -1358,6 +1382,9 @@ packages:
 
   '@types/flubber@0.4.0':
     resolution: {integrity: sha512-q9u6zseKgOBc0sAn/aPyi0vMNtXiLrNHSvj/tMXg+X2vk0jwX7obXgLISBmryGFvfszbId1JGT/8CcwB3vC6yg==}
+
+  '@types/opentype.js@1.3.10':
+    resolution: {integrity: sha512-F67EFyk6j02okHz5JCgata3ZRAcZi9GLnzmkHw/rzJq3OCc8/ZVdoKrxMTYjcQP6IYHGBz2cav1cpzkOkPiPCQ==}
 
   '@types/react-dom@19.3.0':
     resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
@@ -1415,6 +1442,9 @@ packages:
     resolution: {integrity: sha512-4Dj6M28JB+oAH8kFkTLUo+a2jwOFkuqb3yucU0CANcRRUbxS0cP0nZYCGjcc3BNXwRIsUVmDGgzawme7zvJHvg==}
     engines: {node: '>=12'}
 
+  argparse@2.0.1:
+    resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
+
   aria-hidden@1.2.6:
     resolution: {integrity: sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA==}
     engines: {node: '>=10'}
@@ -1427,6 +1457,9 @@ packages:
     resolution: {integrity: sha512-UvuxFU9P3hM29LrQdwu0cD6w6/+SFr+UlB9s/knI7+O2rK9xFxKUwSDWxGdbbqQ9/V7BJ5s0NI5nQAE4uJp3gQ==}
     engines: {node: '>=6.0.0'}
     hasBin: true
+
+  bezier-js@6.1.4:
+    resolution: {integrity: sha512-PA0FW9ZpcHbojUCMu28z9Vg/fNkwTj5YhusSAjHHDfHDGLxJ6YUKrAN2vk1fP2MMOxVw4Oko16FMlRGVBGqLKg==}
 
   blake3-wasm@2.1.5:
     resolution: {integrity: sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g==}
@@ -1551,6 +1584,9 @@ packages:
       picomatch:
         optional: true
 
+  fit-curve@0.2.0:
+    resolution: {integrity: sha512-op7ofeL13getbqL5J5ACeNxTlLWzusn4/jjEjSVA1sS7PfXWumdtNITvLuTjSobis+jZzMil2rsJ3Vhw7OxQyQ==}
+
   flubber@0.4.2:
     resolution: {integrity: sha512-79RkJe3rA4nvRCVc2uXjj7U/BAUq84TS3KHn6c0Hr9K64vhj83ZNLUziNx4pJoBumSPhOl5VjH+Z0uhi+eE8Uw==}
 
@@ -1651,6 +1687,14 @@ packages:
   node-releases@2.0.60:
     resolution: {integrity: sha512-OmO8+GM1JUZqXET720VrJCwkjUCXmCMQm0Z3UDDRbfNLHS4NEAvY60j5jiFv0tkKw2PNNlqOLhahVmwJIOLDIQ==}
     engines: {node: '>=18'}
+
+  opentype.js@2.0.0:
+    resolution: {integrity: sha512-kCyjv6xdDY1W/jLWZ/L3QhhTlKUqDZMQ5+Jdlw12b3dXkKNpYBqqlMMj0YDQPShWFTMwgZI1hG14kN3XUDSg/A==}
+    hasBin: true
+
+  paper@0.17.0:
+    resolution: {integrity: sha512-AWHQVUNScPN/swbCg0wwb2bTerMieraol76Fpn1s+7Zw7R6mMyI0QltMkj/XOS3Jv+9785q0p4eLsYggn63ZQw==}
+    engines: {node: '>=8.0.0'}
 
   path-to-regexp@6.3.0:
     resolution: {integrity: sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ==}
@@ -1941,6 +1985,10 @@ packages:
         optional: true
       jsdom:
         optional: true
+
+  wawoff2@2.0.1:
+    resolution: {integrity: sha512-r0CEmvpH63r4T15ebFqeOjGqU4+EgTx4I510NtK35EMciSdcTxCw3Byy3JnBonz7iyIFZ0AbVo0bbFpEVuhCYA==}
+    hasBin: true
 
   webdriver-bidi-protocol@1.0.1:
     resolution: {integrity: sha512-WXWs/aXF2a6Al1Z2/V/7Gp2oPZOAAmHjJOTmv4KCXRJ122IMj3tSSMc6a4q3K4QOmhQbse/Ahr+oTVJOU2dUiw==}
@@ -2947,6 +2995,8 @@ snapshots:
     dependencies:
       '@babel/types': 7.29.11
 
+  '@types/bezier-js@4.1.3': {}
+
   '@types/canvas-confetti@1.9.0': {}
 
   '@types/chai@5.2.3':
@@ -2959,6 +3009,8 @@ snapshots:
   '@types/estree@1.0.9': {}
 
   '@types/flubber@0.4.0': {}
+
+  '@types/opentype.js@1.3.10': {}
 
   '@types/react-dom@19.3.0(@types/react@19.3.0)':
     dependencies:
@@ -3028,6 +3080,8 @@ snapshots:
 
   ansi-styles@6.2.3: {}
 
+  argparse@2.0.1: {}
+
   aria-hidden@1.2.6:
     dependencies:
       tslib: 2.9.1
@@ -3035,6 +3089,8 @@ snapshots:
   assertion-error@2.0.1: {}
 
   baseline-browser-mapping@2.11.32: {}
+
+  bezier-js@6.1.4: {}
 
   blake3-wasm@2.1.5: {}
 
@@ -3178,6 +3234,8 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
+  fit-curve@0.2.0: {}
+
   flubber@0.4.2:
     dependencies:
       d3-array: 1.2.4
@@ -3255,6 +3313,10 @@ snapshots:
   nanoid@3.3.20: {}
 
   node-releases@2.0.60: {}
+
+  opentype.js@2.0.0: {}
+
+  paper@0.17.0: {}
 
   path-to-regexp@6.3.0: {}
 
@@ -3577,6 +3639,10 @@ snapshots:
       - terser
       - tsx
       - yaml
+
+  wawoff2@2.0.1:
+    dependencies:
+      argparse: 2.0.1
 
   webdriver-bidi-protocol@1.0.1: {}
 
