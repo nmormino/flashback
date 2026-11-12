@@ -33,6 +33,18 @@ import type {
   StateVariable,
   StateVariableType,
 } from '@flashback/runtime';
+import { Matrix2D } from '@flashback/runtime';
+import {
+  unitePaths,
+  subtractPaths,
+  intersectPaths,
+  excludePaths,
+  expandStroke,
+  fitPointsToCurve,
+  convertTextToVectorPath,
+  getGeometryPaperScope,
+  extractPathData,
+} from '../utils/geometry';
 import {
   serialize,
   parse,
@@ -210,6 +222,48 @@ export function fastClone<T>(val: T): T {
 
 function deepCloneDoc(doc: EditorDocument): EditorDocument {
   return fastClone(doc);
+}
+
+function getTransformedPath(shape: ShapeElement): string {
+  const d = shape.basePathD || shape.paths?.[0]?.d || '';
+  if (!d) return '';
+  const t = shape.transform;
+  if (!t) return d;
+  const isIdentity =
+    (t.x === 0 || t.x === undefined) &&
+    (t.y === 0 || t.y === undefined) &&
+    (!t.rotation || t.rotation === 0) &&
+    (t.scaleX === 1 || t.scaleX === undefined) &&
+    (t.scaleY === 1 || t.scaleY === undefined) &&
+    (!t.skewX || t.skewX === 0) &&
+    (!t.skewY || t.skewY === 0) &&
+    (!t.originX || t.originX === 0) &&
+    (!t.originY || t.originY === 0);
+
+  if (isIdentity) return d;
+
+  const m = Matrix2D.fromTransform(t);
+  if (m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1 && m.tx === 0 && m.ty === 0) {
+    return d;
+  }
+
+  try {
+    const scope = getGeometryPaperScope();
+    scope.activate();
+    try {
+      const item = new scope.CompoundPath(d);
+      const pMat = new scope.Matrix(m.a, m.b, m.c, m.d, m.tx, m.ty);
+      item.transform(pMat);
+      const res = extractPathData(item);
+      return res || d;
+    } finally {
+      try {
+        scope.project?.clear();
+      } catch {}
+    }
+  } catch {
+    return d;
+  }
 }
 
 export function adjustElementForPin(
@@ -878,13 +932,14 @@ export const editorActions = {
 
           if (pointsToFit && pointsToFit.length >= 2) {
             const closed = isPathClosed(currentD);
-            const fitted = fitCurveToPoints(pointsToFit, smoothness, closed ? 99999 : 0);
-            if (fitted && fitted.d) {
+            const tolerance = 0.5 + (smoothness / 100) * 15;
+            const fitted = fitPointsToCurve(pointsToFit, tolerance, { closed });
+            if (fitted) {
               shape.paths = shape.paths.map((p, idx) =>
-                idx === 0 ? { ...p, d: fitted.d } : p
+                idx === 0 ? { ...p, d: fitted } : p
               );
               if (shape.basePathD) {
-                shape.basePathD = fitted.d;
+                shape.basePathD = fitted;
               }
               shape.isCustomizedPath = true;
               shape.pencilSmoothness = smoothness;
@@ -899,6 +954,770 @@ export const editorActions = {
       state = { ...state, doc };
       notify();
     }
+  },
+
+  createPencilShape(
+    points: Array<{ x: number; y: number }>,
+    options?: {
+      smoothness?: number;
+      closed?: boolean;
+      fill?: Fill;
+      stroke?: any;
+      strokeWidth?: number;
+    }
+  ): ShapeElement | null {
+    if (!points || points.length < 2) return null;
+
+    const smoothness = options?.smoothness ?? state.pencilConfig.smoothness ?? 50;
+    const tolerance = 0.5 + (smoothness / 100) * 15;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const pt of points) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+    const w = Math.max(8, maxX - minX);
+    const h = Math.max(8, maxY - minY);
+    const originX = Math.round(w / 2);
+    const originY = Math.round(h / 2);
+
+    const first = points[0];
+    const last = points[points.length - 1];
+    const loopDist = Math.hypot(last.x - first.x, last.y - first.y);
+    const isClosed = options?.closed ?? (points.length > 3 && loopDist <= 16);
+
+    const localRawPoints = points.map((p) => ({
+      x: Math.round((p.x - minX) * 100) / 100,
+      y: Math.round((p.y - minY) * 100) / 100,
+    }));
+
+    const fittedD = fitPointsToCurve(localRawPoints, tolerance, { closed: isClosed });
+    if (!fittedD) return null;
+
+    const shouldFill = options?.fill
+      ? true
+      : state.pencilConfig.fillNewStrokes
+      ? Boolean(state.activeFill)
+      : isClosed;
+
+    const newShape: ShapeElement = {
+      id: `pencil_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: 'shape',
+      visible: true,
+      rawPoints: localRawPoints,
+      pencilSmoothness: smoothness,
+      transform: {
+        x: Math.round((minX + originX) * 100) / 100,
+        y: Math.round((minY + originY) * 100) / 100,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        originX,
+        originY,
+      },
+      paths: [
+        {
+          d: fittedD,
+          fill:
+            options?.fill ??
+            (shouldFill
+              ? state.activeFill ?? { type: 'solid', color: state.fillColor }
+              : { type: 'solid', color: 'transparent' }),
+          stroke: options?.stroke ?? {
+            fill: state.activeStroke ?? { type: 'solid', color: state.strokeColor },
+            width: options?.strokeWidth ?? state.strokeWidth,
+            cap: 'round',
+            join: 'round',
+          },
+        },
+      ],
+      alpha: 1,
+    };
+
+    return newShape;
+  },
+
+  uniteSelectedShapes(): void {
+    if (state.selectedElementIds.length < 2) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    interface ShapeTarget {
+      shape: ShapeElement;
+      layer: EditorLayer;
+      kf: EditorKeyframe;
+      index: number;
+    }
+    const selectedTargets: ShapeTarget[] = [];
+    const bottomToTopLayers = [...tl.layers].reverse();
+    for (const layer of bottomToTopLayers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      kf.elements.forEach((el, idx) => {
+        if (state.selectedElementIds.includes(el.id) && el.type === 'shape') {
+          selectedTargets.push({ shape: el as ShapeElement, layer, kf, index: idx });
+        }
+      });
+    }
+
+    if (selectedTargets.length < 2) return;
+
+    const baseShape = selectedTargets[0].shape;
+    const baseLayer = selectedTargets[0].layer;
+    const baseKf = selectedTargets[0].kf;
+
+    const allSameTransform = selectedTargets.every((t) => {
+      const t1 = t.shape.transform;
+      const t2 = baseShape.transform;
+      return (
+        t1.x === t2.x &&
+        t1.y === t2.y &&
+        (t1.scaleX ?? 1) === (t2.scaleX ?? 1) &&
+        (t1.scaleY ?? 1) === (t2.scaleY ?? 1) &&
+        (t1.rotation ?? 0) === (t2.rotation ?? 0) &&
+        (t1.originX ?? 0) === (t2.originX ?? 0) &&
+        (t1.originY ?? 0) === (t2.originY ?? 0)
+      );
+    });
+
+    let unitedD: string;
+    let finalTransform = { ...baseShape.transform };
+
+    if (allSameTransform) {
+      unitedD = baseShape.basePathD || baseShape.paths?.[0]?.d || '';
+      for (let i = 1; i < selectedTargets.length; i++) {
+        const nextD =
+          selectedTargets[i].shape.basePathD || selectedTargets[i].shape.paths?.[0]?.d || '';
+        unitedD = unitePaths(unitedD, nextD);
+      }
+    } else {
+      unitedD = getTransformedPath(baseShape);
+      for (let i = 1; i < selectedTargets.length; i++) {
+        unitedD = unitePaths(unitedD, getTransformedPath(selectedTargets[i].shape));
+      }
+      finalTransform = {
+        x: 0,
+        y: 0,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        originX: 0,
+        originY: 0,
+      };
+    }
+
+    const primaryPath = baseShape.paths?.[0];
+    const newShapeId = baseShape.id;
+    const newShape: ShapeElement = {
+      ...baseShape,
+      id: newShapeId,
+      transform: finalTransform,
+      paths: [
+        {
+          d: unitedD,
+          fill: primaryPath?.fill,
+          stroke: primaryPath?.stroke,
+        },
+      ],
+      isCustomizedPath: true,
+    };
+    delete newShape.rectConfig;
+    delete newShape.ovalConfig;
+    delete newShape.starConfig;
+    delete newShape.basePathD;
+    delete newShape.pathAnchorRadii;
+    delete newShape.pathAnchorTypes;
+    delete newShape.rawPoints;
+
+    const otherIds = new Set(selectedTargets.slice(1).map((t) => t.shape.id));
+    for (const t of selectedTargets.slice(1)) {
+      t.kf.elements = t.kf.elements.filter((e) => !otherIds.has(e.id));
+    }
+    const newIdx = baseKf.elements.findIndex((e) => e.id === baseShape.id);
+    if (newIdx !== -1) {
+      baseKf.elements[newIdx] = newShape;
+    }
+
+    const otherLayerIds = new Set(
+      selectedTargets
+        .slice(1)
+        .map((t) => t.layer.id)
+        .filter((id) => id !== baseLayer.id)
+    );
+    if (otherLayerIds.size > 0) {
+      tl.layers = tl.layers.filter((l) => {
+        if (!otherLayerIds.has(l.id)) return true;
+        return l.keyframes.some((k) => k.elements.length > 0);
+      });
+    }
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: baseLayer.id,
+      selectedElementIds: [newShapeId],
+    };
+    notify();
+  },
+
+  subtractSelectedShapes(): void {
+    if (state.selectedElementIds.length < 2) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    interface ShapeTarget {
+      shape: ShapeElement;
+      layer: EditorLayer;
+      kf: EditorKeyframe;
+      index: number;
+    }
+    const selectedTargets: ShapeTarget[] = [];
+    const bottomToTopLayers = [...tl.layers].reverse();
+    for (const layer of bottomToTopLayers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      kf.elements.forEach((el, idx) => {
+        if (state.selectedElementIds.includes(el.id) && el.type === 'shape') {
+          selectedTargets.push({ shape: el as ShapeElement, layer, kf, index: idx });
+        }
+      });
+    }
+
+    if (selectedTargets.length < 2) return;
+
+    const baseShape = selectedTargets[0].shape;
+    const baseLayer = selectedTargets[0].layer;
+    const baseKf = selectedTargets[0].kf;
+
+    const allSameTransform = selectedTargets.every((t) => {
+      const t1 = t.shape.transform;
+      const t2 = baseShape.transform;
+      return (
+        t1.x === t2.x &&
+        t1.y === t2.y &&
+        (t1.scaleX ?? 1) === (t2.scaleX ?? 1) &&
+        (t1.scaleY ?? 1) === (t2.scaleY ?? 1) &&
+        (t1.rotation ?? 0) === (t2.rotation ?? 0) &&
+        (t1.originX ?? 0) === (t2.originX ?? 0) &&
+        (t1.originY ?? 0) === (t2.originY ?? 0)
+      );
+    });
+
+    let subtractedD: string;
+    let finalTransform = { ...baseShape.transform };
+
+    if (allSameTransform) {
+      subtractedD = baseShape.basePathD || baseShape.paths?.[0]?.d || '';
+      for (let i = 1; i < selectedTargets.length; i++) {
+        const nextD =
+          selectedTargets[i].shape.basePathD || selectedTargets[i].shape.paths?.[0]?.d || '';
+        subtractedD = subtractPaths(subtractedD, nextD);
+      }
+    } else {
+      subtractedD = getTransformedPath(baseShape);
+      for (let i = 1; i < selectedTargets.length; i++) {
+        subtractedD = subtractPaths(subtractedD, getTransformedPath(selectedTargets[i].shape));
+      }
+      finalTransform = {
+        x: 0,
+        y: 0,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        originX: 0,
+        originY: 0,
+      };
+    }
+
+    const primaryPath = baseShape.paths?.[0];
+    const newShapeId = baseShape.id;
+    const newShape: ShapeElement = {
+      ...baseShape,
+      id: newShapeId,
+      transform: finalTransform,
+      paths: [
+        {
+          d: subtractedD,
+          fill: primaryPath?.fill,
+          stroke: primaryPath?.stroke,
+        },
+      ],
+      isCustomizedPath: true,
+    };
+    delete newShape.rectConfig;
+    delete newShape.ovalConfig;
+    delete newShape.starConfig;
+    delete newShape.basePathD;
+    delete newShape.pathAnchorRadii;
+    delete newShape.pathAnchorTypes;
+    delete newShape.rawPoints;
+
+    const otherIds = new Set(selectedTargets.slice(1).map((t) => t.shape.id));
+    for (const t of selectedTargets.slice(1)) {
+      t.kf.elements = t.kf.elements.filter((e) => !otherIds.has(e.id));
+    }
+    const newIdx = baseKf.elements.findIndex((e) => e.id === baseShape.id);
+    if (newIdx !== -1) {
+      baseKf.elements[newIdx] = newShape;
+    }
+
+    const otherLayerIds = new Set(
+      selectedTargets
+        .slice(1)
+        .map((t) => t.layer.id)
+        .filter((id) => id !== baseLayer.id)
+    );
+    if (otherLayerIds.size > 0) {
+      tl.layers = tl.layers.filter((l) => {
+        if (!otherLayerIds.has(l.id)) return true;
+        return l.keyframes.some((k) => k.elements.length > 0);
+      });
+    }
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: baseLayer.id,
+      selectedElementIds: [newShapeId],
+    };
+    notify();
+  },
+
+  intersectSelectedShapes(): void {
+    if (state.selectedElementIds.length < 2) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    interface ShapeTarget {
+      shape: ShapeElement;
+      layer: EditorLayer;
+      kf: EditorKeyframe;
+      index: number;
+    }
+    const selectedTargets: ShapeTarget[] = [];
+    const bottomToTopLayers = [...tl.layers].reverse();
+    for (const layer of bottomToTopLayers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      kf.elements.forEach((el, idx) => {
+        if (state.selectedElementIds.includes(el.id) && el.type === 'shape') {
+          selectedTargets.push({ shape: el as ShapeElement, layer, kf, index: idx });
+        }
+      });
+    }
+
+    if (selectedTargets.length < 2) return;
+
+    const baseShape = selectedTargets[0].shape;
+    const baseLayer = selectedTargets[0].layer;
+    const baseKf = selectedTargets[0].kf;
+
+    const allSameTransform = selectedTargets.every((t) => {
+      const t1 = t.shape.transform;
+      const t2 = baseShape.transform;
+      return (
+        t1.x === t2.x &&
+        t1.y === t2.y &&
+        (t1.scaleX ?? 1) === (t2.scaleX ?? 1) &&
+        (t1.scaleY ?? 1) === (t2.scaleY ?? 1) &&
+        (t1.rotation ?? 0) === (t2.rotation ?? 0) &&
+        (t1.originX ?? 0) === (t2.originX ?? 0) &&
+        (t1.originY ?? 0) === (t2.originY ?? 0)
+      );
+    });
+
+    let intersectedD: string;
+    let finalTransform = { ...baseShape.transform };
+
+    if (allSameTransform) {
+      intersectedD = baseShape.basePathD || baseShape.paths?.[0]?.d || '';
+      for (let i = 1; i < selectedTargets.length; i++) {
+        const nextD =
+          selectedTargets[i].shape.basePathD || selectedTargets[i].shape.paths?.[0]?.d || '';
+        intersectedD = intersectPaths(intersectedD, nextD);
+      }
+    } else {
+      intersectedD = getTransformedPath(baseShape);
+      for (let i = 1; i < selectedTargets.length; i++) {
+        intersectedD = intersectPaths(intersectedD, getTransformedPath(selectedTargets[i].shape));
+      }
+      finalTransform = {
+        x: 0,
+        y: 0,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        originX: 0,
+        originY: 0,
+      };
+    }
+
+    const primaryPath = baseShape.paths?.[0];
+    const newShapeId = baseShape.id;
+    const newShape: ShapeElement = {
+      ...baseShape,
+      id: newShapeId,
+      transform: finalTransform,
+      paths: [
+        {
+          d: intersectedD,
+          fill: primaryPath?.fill,
+          stroke: primaryPath?.stroke,
+        },
+      ],
+      isCustomizedPath: true,
+    };
+    delete newShape.rectConfig;
+    delete newShape.ovalConfig;
+    delete newShape.starConfig;
+    delete newShape.basePathD;
+    delete newShape.pathAnchorRadii;
+    delete newShape.pathAnchorTypes;
+    delete newShape.rawPoints;
+
+    const otherIds = new Set(selectedTargets.slice(1).map((t) => t.shape.id));
+    for (const t of selectedTargets.slice(1)) {
+      t.kf.elements = t.kf.elements.filter((e) => !otherIds.has(e.id));
+    }
+    const newIdx = baseKf.elements.findIndex((e) => e.id === baseShape.id);
+    if (newIdx !== -1) {
+      baseKf.elements[newIdx] = newShape;
+    }
+
+    const otherLayerIds = new Set(
+      selectedTargets
+        .slice(1)
+        .map((t) => t.layer.id)
+        .filter((id) => id !== baseLayer.id)
+    );
+    if (otherLayerIds.size > 0) {
+      tl.layers = tl.layers.filter((l) => {
+        if (!otherLayerIds.has(l.id)) return true;
+        return l.keyframes.some((k) => k.elements.length > 0);
+      });
+    }
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: baseLayer.id,
+      selectedElementIds: [newShapeId],
+    };
+    notify();
+  },
+
+  excludeSelectedShapes(): void {
+    if (state.selectedElementIds.length < 2) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    interface ShapeTarget {
+      shape: ShapeElement;
+      layer: EditorLayer;
+      kf: EditorKeyframe;
+      index: number;
+    }
+    const selectedTargets: ShapeTarget[] = [];
+    const bottomToTopLayers = [...tl.layers].reverse();
+    for (const layer of bottomToTopLayers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      kf.elements.forEach((el, idx) => {
+        if (state.selectedElementIds.includes(el.id) && el.type === 'shape') {
+          selectedTargets.push({ shape: el as ShapeElement, layer, kf, index: idx });
+        }
+      });
+    }
+
+    if (selectedTargets.length < 2) return;
+
+    const baseShape = selectedTargets[0].shape;
+    const baseLayer = selectedTargets[0].layer;
+    const baseKf = selectedTargets[0].kf;
+
+    const allSameTransform = selectedTargets.every((t) => {
+      const t1 = t.shape.transform;
+      const t2 = baseShape.transform;
+      return (
+        t1.x === t2.x &&
+        t1.y === t2.y &&
+        (t1.scaleX ?? 1) === (t2.scaleX ?? 1) &&
+        (t1.scaleY ?? 1) === (t2.scaleY ?? 1) &&
+        (t1.rotation ?? 0) === (t2.rotation ?? 0) &&
+        (t1.originX ?? 0) === (t2.originX ?? 0) &&
+        (t1.originY ?? 0) === (t2.originY ?? 0)
+      );
+    });
+
+    let excludedD: string;
+    let finalTransform = { ...baseShape.transform };
+
+    if (allSameTransform) {
+      excludedD = baseShape.basePathD || baseShape.paths?.[0]?.d || '';
+      for (let i = 1; i < selectedTargets.length; i++) {
+        const nextD =
+          selectedTargets[i].shape.basePathD || selectedTargets[i].shape.paths?.[0]?.d || '';
+        excludedD = excludePaths(excludedD, nextD);
+      }
+    } else {
+      excludedD = getTransformedPath(baseShape);
+      for (let i = 1; i < selectedTargets.length; i++) {
+        excludedD = excludePaths(excludedD, getTransformedPath(selectedTargets[i].shape));
+      }
+      finalTransform = {
+        x: 0,
+        y: 0,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        originX: 0,
+        originY: 0,
+      };
+    }
+
+    const primaryPath = baseShape.paths?.[0];
+    const newShapeId = baseShape.id;
+    const newShape: ShapeElement = {
+      ...baseShape,
+      id: newShapeId,
+      transform: finalTransform,
+      paths: [
+        {
+          d: excludedD,
+          fill: primaryPath?.fill,
+          stroke: primaryPath?.stroke,
+        },
+      ],
+      isCustomizedPath: true,
+    };
+    delete newShape.rectConfig;
+    delete newShape.ovalConfig;
+    delete newShape.starConfig;
+    delete newShape.basePathD;
+    delete newShape.pathAnchorRadii;
+    delete newShape.pathAnchorTypes;
+    delete newShape.rawPoints;
+
+    const otherIds = new Set(selectedTargets.slice(1).map((t) => t.shape.id));
+    for (const t of selectedTargets.slice(1)) {
+      t.kf.elements = t.kf.elements.filter((e) => !otherIds.has(e.id));
+    }
+    const newIdx = baseKf.elements.findIndex((e) => e.id === baseShape.id);
+    if (newIdx !== -1) {
+      baseKf.elements[newIdx] = newShape;
+    }
+
+    const otherLayerIds = new Set(
+      selectedTargets
+        .slice(1)
+        .map((t) => t.layer.id)
+        .filter((id) => id !== baseLayer.id)
+    );
+    if (otherLayerIds.size > 0) {
+      tl.layers = tl.layers.filter((l) => {
+        if (!otherLayerIds.has(l.id)) return true;
+        return l.keyframes.some((k) => k.elements.length > 0);
+      });
+    }
+
+    state = {
+      ...state,
+      doc,
+      selectedLayerId: baseLayer.id,
+      selectedElementIds: [newShapeId],
+    };
+    notify();
+  },
+
+  outlineSelectedStroke(): void {
+    if (state.selectedElementIds.length === 0) return;
+    pushHistorySnapshot();
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+    let modified = false;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+
+      for (let i = 0; i < kf.elements.length; i++) {
+        const el = kf.elements[i];
+        if (state.selectedElementIds.includes(el.id) && el.type === 'shape') {
+          const shape = el as ShapeElement;
+          const currentD = shape.basePathD || shape.paths?.[0]?.d || '';
+          const stroke = shape.paths?.[0]?.stroke;
+          const strokeWidth = stroke?.width ?? 0;
+          if (!currentD || strokeWidth <= 0) continue;
+
+          const strokeFill =
+            stroke?.fill ?? { type: 'solid', color: state.strokeColor || '#000000' };
+          const cap = (stroke?.cap as 'round' | 'butt' | 'square') ?? 'round';
+          const join = (stroke?.join as 'round' | 'miter' | 'bevel') ?? 'round';
+          const miterLimit = (stroke as any)?.miterLimit ?? 4;
+
+          const outlinedD = expandStroke(currentD, strokeWidth, { cap, join, miterLimit });
+          if (outlinedD) {
+            const updatedShape: ShapeElement = {
+              ...shape,
+              paths: [
+                {
+                  d: outlinedD,
+                  fill: strokeFill,
+                  stroke: undefined,
+                },
+              ],
+              isCustomizedPath: true,
+            };
+            delete updatedShape.rectConfig;
+            delete updatedShape.ovalConfig;
+            delete updatedShape.starConfig;
+            delete updatedShape.basePathD;
+            delete updatedShape.pathAnchorRadii;
+            delete updatedShape.pathAnchorTypes;
+            delete updatedShape.rawPoints;
+
+            kf.elements[i] = updatedShape;
+            modified = true;
+          }
+        }
+      }
+    }
+
+    if (modified) {
+      state = { ...state, doc };
+      notify();
+    }
+  },
+
+  async convertSelectedTextToOutlines(): Promise<void> {
+    if (state.selectedElementIds.length === 0) return;
+    const doc = deepCloneDoc(state.doc);
+    const tl = getActiveTimeline(doc, state.isolationStack);
+    const fps = doc.stage.fps || 24;
+
+    let targetKf: EditorKeyframe | null = null;
+    let targetIndex = -1;
+    let textEl: TextElement | null = null;
+
+    for (const layer of tl.layers) {
+      const kf =
+        findKeyframeAtTime(layer, state.currentTime, fps) ??
+        findKeyframeAt(layer, state.currentFrame);
+      if (!kf) continue;
+      const idx = kf.elements.findIndex(
+        (e) => state.selectedElementIds.includes(e.id) && e.type === 'text'
+      );
+      if (idx !== -1) {
+        targetKf = kf;
+        targetIndex = idx;
+        textEl = kf.elements[idx] as TextElement;
+        break;
+      }
+    }
+
+    if (!targetKf || targetIndex === -1 || !textEl) return;
+
+    const text = textEl.text || '';
+    if (!text.trim()) return;
+
+    pushHistorySnapshot();
+
+    let fontBuffer: ArrayBuffer | null = null;
+    const fontAsset = doc.library?.fonts?.[textEl.fontId];
+    if (
+      fontAsset?.src &&
+      !fontAsset.src.endsWith('.css') &&
+      !fontAsset.src.includes('googleapis.com/css')
+    ) {
+      try {
+        if (fontAsset.src.startsWith('data:')) {
+          const base64 = fontAsset.src.split(',')[1];
+          if (typeof atob === 'function') {
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            fontBuffer = bytes.buffer;
+          }
+        } else if (typeof fetch === 'function') {
+          const resp = await fetch(fontAsset.src);
+          if (resp.ok) {
+            fontBuffer = await resp.arrayBuffer();
+          }
+        }
+      } catch {
+        // fallback
+      }
+    }
+
+    const fontSize = textEl.fontSize || 32;
+    const pathData = await convertTextToVectorPath(text, fontBuffer, { fontSize });
+    if (!pathData) return;
+
+    const fill = textEl.fill || {
+      type: 'solid',
+      color: textEl.color || '#000000',
+    };
+
+    const newShapeId = `shape_outline_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newShape: ShapeElement = {
+      id: newShapeId,
+      type: 'shape',
+      visible: textEl.visible ?? true,
+      locked: textEl.locked ?? false,
+      alpha: textEl.alpha ?? 1,
+      transform: { ...textEl.transform },
+      paths: [
+        {
+          d: pathData,
+          fill,
+          stroke: textEl.stroke,
+        },
+      ],
+      isCustomizedPath: true,
+    };
+
+    targetKf.elements[targetIndex] = newShape;
+
+    state = {
+      ...state,
+      doc,
+      selectedElementIds: [newShapeId],
+    };
+    notify();
   },
 
   openShapePath(elementId?: string): void {

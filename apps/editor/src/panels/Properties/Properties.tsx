@@ -1558,7 +1558,7 @@ export const Properties: React.FC = () => {
     { id: 'layout', name: 'Align & Layout', icon: '📐' },
     { id: 'transform', name: 'Transform', icon: '⤢' },
     ...(owningLayer ? [{ id: 'animation', name: 'Animation', icon: '⚡' }] : []),
-    ...(isShape
+    ...(isShape || selectedElementIds.length >= 2
       ? [
           { id: 'style', name: 'Fill & Stroke', icon: '🎨' },
           { id: 'shape', name: 'Shape Controls', icon: '▢' },
@@ -1579,6 +1579,7 @@ export const Properties: React.FC = () => {
     ...(isOval && shapeEl ? ['oval-parametric'] : []),
     ...(isStarOrPolygon && shapeEl ? ['star-polygon'] : []),
     ...(isShape && shapeEl && !(isRectangle && !isCustomizedPath) ? ['vector-corners'] : []),
+    ...(selectedElementIds.length >= 2 || isShape ? ['pathfinder'] : []),
   ];
 
   const elementCategoryCounts: Record<string, number> = {
@@ -1593,7 +1594,8 @@ export const Properties: React.FC = () => {
       (isRectangle && shapeEl ? 1 : 0) +
       (isOval && shapeEl ? 1 : 0) +
       (isStarOrPolygon && shapeEl ? 1 : 0) +
-      (isShape && shapeEl && !(isRectangle && !isCustomizedPath) ? 1 : 0),
+      (isShape && shapeEl && !(isRectangle && !isCustomizedPath) ? 1 : 0) +
+      (selectedElementIds.length >= 2 || isShape ? 1 : 0),
   };
 
   const effectiveElementCategory = elementCategories.some((c) => c.id === activeCategory)
@@ -1913,7 +1915,16 @@ export const Properties: React.FC = () => {
             collapsed={!isSectionExpanded('text-typography')}
             onToggle={() => toggleSection('text-typography')}
           >
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4, gap: 6 }}>
+              <button
+                type="button"
+                className={styles.addFontSmallBtn}
+                onClick={() => editorActions.convertSelectedTextToOutlines()}
+                title="Convert to Outlines"
+                data-testid="convert-to-outlines-btn"
+              >
+                Convert to Outlines
+              </button>
               <button
                 type="button"
                 className={styles.addFontSmallBtn}
@@ -3910,6 +3921,17 @@ export const Properties: React.FC = () => {
                   inputWidth={45}
                   ariaLabel="Stroke width in px"
                 />
+                {currentStrokeWidth > 0 && (
+                  <button
+                    type="button"
+                    className={styles.addFontSmallBtn}
+                    onClick={() => editorActions.outlineSelectedStroke()}
+                    title="Outline Stroke"
+                    data-testid="outline-stroke-btn"
+                  >
+                    Outline Stroke
+                  </button>
+                )}
               </div>
               {shapeStrokeGradientOpen && (
                 <GradientPicker
@@ -5023,6 +5045,80 @@ export const Properties: React.FC = () => {
           </AccordionSection>
         );
       })()}
+
+      {/* Pathfinder Accordion Section */}
+      {(selectedElementIds.length >= 2 || isShape) && (
+        <AccordionSection
+          id="pathfinder"
+          category="shape"
+          activeCategory={effectiveElementCategory}
+          title="Pathfinder"
+          icon="⊞"
+          badge={selectedElementIds.length >= 2 ? `${selectedElementIds.length} Shapes` : undefined}
+          summary={selectedElementIds.length >= 2 ? 'Unite, Subtract, Intersect, Exclude' : 'Select 2+ shapes'}
+          collapsed={!isSectionExpanded('pathfinder')}
+          onToggle={() => toggleSection('pathfinder')}
+          testId="pathfinder-section"
+        >
+          <div className={styles.fieldRow} style={{ flexDirection: 'column', gap: 6, alignItems: 'stretch' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <button
+                type="button"
+                className={styles.addFontSmallBtn}
+                disabled={selectedElementIds.length < 2}
+                onClick={() => editorActions.uniteSelectedShapes()}
+                title="Unite (Add)"
+                aria-label="Unite (Add)"
+                data-testid="pathfinder-unite-btn"
+                style={{ padding: '6px 8px', justifyContent: 'center' }}
+              >
+                ⧉ Unite
+              </button>
+              <button
+                type="button"
+                className={styles.addFontSmallBtn}
+                disabled={selectedElementIds.length < 2}
+                onClick={() => editorActions.subtractSelectedShapes()}
+                title="Minus Front (Subtract)"
+                aria-label="Minus Front (Subtract)"
+                data-testid="pathfinder-subtract-btn"
+                style={{ padding: '6px 8px', justifyContent: 'center' }}
+              >
+                ⊟ Minus Front
+              </button>
+              <button
+                type="button"
+                className={styles.addFontSmallBtn}
+                disabled={selectedElementIds.length < 2}
+                onClick={() => editorActions.intersectSelectedShapes()}
+                title="Intersect"
+                aria-label="Intersect"
+                data-testid="pathfinder-intersect-btn"
+                style={{ padding: '6px 8px', justifyContent: 'center' }}
+              >
+                ⨅ Intersect
+              </button>
+              <button
+                type="button"
+                className={styles.addFontSmallBtn}
+                disabled={selectedElementIds.length < 2}
+                onClick={() => editorActions.excludeSelectedShapes()}
+                title="Exclude (Difference)"
+                aria-label="Exclude (Difference)"
+                data-testid="pathfinder-exclude-btn"
+                style={{ padding: '6px 8px', justifyContent: 'center' }}
+              >
+                ⨂ Exclude
+              </button>
+            </div>
+            {selectedElementIds.length < 2 && (
+              <div style={{ fontSize: '11px', color: 'var(--mx-text-muted, #888)', textAlign: 'center', marginTop: 2 }}>
+                Select 2 or more overlapping shapes to apply Pathfinder operations.
+              </div>
+            )}
+          </div>
+        </AccordionSection>
+      )}
         </div>
       </div>
     </div>

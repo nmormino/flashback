@@ -2852,83 +2852,8 @@ export const Stage: React.FC = () => {
       } else if (dragState.type === 'draw_pencil') {
         const rawPoints = dragState.pencilPoints || [];
         if (rawPoints.length >= 2) {
-          const smoothness = pencilConfig?.smoothness ?? 50;
-          const { d: fittedD, closed } = fitCurveToPoints(rawPoints, smoothness);
-          if (fittedD) {
-            let minX = Infinity;
-            let minY = Infinity;
-            let maxX = -Infinity;
-            let maxY = -Infinity;
-            for (const pt of rawPoints) {
-              if (pt.x < minX) minX = pt.x;
-              if (pt.x > maxX) maxX = pt.x;
-              if (pt.y < minY) minY = pt.y;
-              if (pt.y > maxY) maxY = pt.y;
-            }
-            const w = Math.max(8, maxX - minX);
-            const h = Math.max(8, maxY - minY);
-            const originX = Math.round(w / 2);
-            const originY = Math.round(h / 2);
-
-            const parsed = parseSvgPath(fittedD);
-            const localAnchors = parsed.anchors.map((a) => ({
-              ...a,
-              x: Math.round((a.x - minX) * 100) / 100,
-              y: Math.round((a.y - minY) * 100) / 100,
-              handleIn: a.handleIn
-                ? {
-                    x: Math.round((a.handleIn.x - minX) * 100) / 100,
-                    y: Math.round((a.handleIn.y - minY) * 100) / 100,
-                  }
-                : undefined,
-              handleOut: a.handleOut
-                ? {
-                    x: Math.round((a.handleOut.x - minX) * 100) / 100,
-                    y: Math.round((a.handleOut.y - minY) * 100) / 100,
-                  }
-                : undefined,
-            }));
-            const localD = formatSvgPath(localAnchors, parsed.closed || closed);
-            const localRawPoints = rawPoints.map((p) => ({
-              x: Math.round((p.x - minX) * 100) / 100,
-              y: Math.round((p.y - minY) * 100) / 100,
-            }));
-            const shouldFill = pencilConfig?.fillNewStrokes ? Boolean(activeFill) : closed;
-
-            const newShape: ShapeElement = {
-              id: `pencil_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-              type: 'shape',
-              visible: true,
-              rawPoints: localRawPoints,
-              pencilSmoothness: smoothness,
-              transform: {
-                x: Math.round((minX + originX) * 100) / 100,
-                y: Math.round((minY + originY) * 100) / 100,
-                scaleX: 1,
-                scaleY: 1,
-                rotation: 0,
-                skewX: 0,
-                skewY: 0,
-                originX,
-                originY,
-              },
-              paths: [
-                {
-                  d: localD,
-                  fill: shouldFill
-                    ? (activeFill ?? { type: 'solid', color: fillColor })
-                    : { type: 'solid', color: 'transparent' },
-                  stroke: {
-                    fill: activeStroke ?? { type: 'solid', color: strokeColor },
-                    width: strokeWidth,
-                    cap: 'round',
-                    join: 'round',
-                  },
-                },
-              ],
-              alpha: 1,
-            };
-
+          const newShape = editorActions.createPencilShape(rawPoints);
+          if (newShape) {
             editorActions.addElement(newShape);
             if (pencilConfig?.keepSelected ?? true) {
               editorActions.selectElements([newShape.id]);
@@ -3406,7 +3331,9 @@ export const Stage: React.FC = () => {
   const handleShapeContextMenu = (e: React.MouseEvent, el: EditorElement) => {
     e.preventDefault();
     e.stopPropagation();
-    editorActions.selectElement(el.id);
+    if (!selectedElementIds.includes(el.id)) {
+      editorActions.selectElement(el.id);
+    }
     const clickCoords = getStageCoordinates(e);
     const otherArtboards =
       doc.artboards && doc.artboards.length > 1
@@ -3416,6 +3343,29 @@ export const Stage: React.FC = () => {
       label: `Move to Artboard "${ab.name}"`,
       action: () => editorActions.moveElementToArtboard(el.id, ab.id),
     }));
+
+    const isMultipleSelected = selectedElementIds.length >= 2;
+    const pathfinderItems = isMultipleSelected
+      ? [
+          {
+            label: 'Pathfinder: Unite (Add)',
+            action: () => editorActions.uniteSelectedShapes(),
+          },
+          {
+            label: 'Pathfinder: Minus Front (Subtract)',
+            action: () => editorActions.subtractSelectedShapes(),
+          },
+          {
+            label: 'Pathfinder: Intersect',
+            action: () => editorActions.intersectSelectedShapes(),
+          },
+          {
+            label: 'Pathfinder: Exclude (Difference)',
+            action: () => editorActions.excludeSelectedShapes(),
+          },
+          { separator: true },
+        ]
+      : [];
 
     editorActions.openContextMenu({
       x: e.clientX,
@@ -3444,7 +3394,12 @@ export const Stage: React.FC = () => {
                   editorActions.slicePathAtPoint(shape.id, localPt);
                 },
               },
+              {
+                label: 'Outline Stroke',
+                action: () => editorActions.outlineSelectedStroke(),
+              },
               { separator: true },
+              ...pathfinderItems,
             ]
           : []),
         {
@@ -3511,6 +3466,10 @@ export const Stage: React.FC = () => {
       x: e.clientX,
       y: e.clientY,
       items: [
+        {
+          label: 'Convert to Outlines',
+          action: () => editorActions.convertSelectedTextToOutlines(),
+        },
         {
           label: 'Edit Text (Double-click)',
           action: () => {
@@ -4946,6 +4905,13 @@ export const Stage: React.FC = () => {
                       }}
                       onMouseDown={(e) => handleElementMouseDown(e, displayEl)}
                       onDoubleClick={(e) => handleElementDoubleClick(e, displayEl)}
+                      onContextMenu={(e) => {
+                        if (displayEl.type === 'shape') {
+                          handleShapeContextMenu(e, displayEl);
+                        } else if (displayEl.type === 'text') {
+                          handleTextContextMenu(e, displayEl);
+                        }
+                      }}
                     >
                       {renderElementContent(displayEl)}
 

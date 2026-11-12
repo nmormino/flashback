@@ -26,5 +26,6 @@ export {
 
 export {
   convertTextToVectorPath,
+  getStandardFallbackFontBuffer,
   type TextToVectorOptions,
 } from './textOutlines';
