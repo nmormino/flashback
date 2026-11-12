@@ -7,7 +7,8 @@ import {
   type EditorElement,
   findKeyframeAt,
 } from '../src/state/editorStore';
-import { Scripts } from '../src/panels/Scripts/Scripts';
+import { Properties } from '../src/panels/Properties/Properties';
+import { StateMachinePanel } from '../src/panels/StateMachine/StateMachinePanel';
 import type { ShapeElement } from '@flashback/runtime';
 import { hydrate } from '@flashback/serializer';
 import { WebAnim, DisplayObject } from '@flashback/runtime';
@@ -23,7 +24,7 @@ describe('Element Scripting & Event Execution Pipeline', () => {
     expect(shapeObj.x).toBe(99);
   });
 
-  it('preserves script in Scripts.tsx and doc when typing on a shape, deselecting, and re-selecting', () => {
+  it('binds element interactions via State Machine and displays them in Properties and StateMachinePanel', async () => {
     editorActions.newDocument();
     const doc = getEditorState().doc;
     const layer = doc.root.layers[0];
@@ -62,80 +63,68 @@ describe('Element Scripting & Event Execution Pipeline', () => {
     document.body.appendChild(container);
     const root = createRoot(container);
 
-    act(() => {
-      root.render(<Scripts />);
+    await act(async () => {
+      root.render(<Properties />);
     });
 
-    // 1. Target badge correctly recognizes Shape element
-    expect(container.textContent).toContain('Target: ⬡');
-    expect(container.textContent).toContain('Shape');
+    // 1. Verify Interactions & State Machine section exists
+    expect(container.textContent).toContain('Interactions & State Machine');
 
-    // 2. Select "onPointerEnter — Hover In" event in dropdown
-    const select = container.querySelector('select') as HTMLSelectElement;
-    expect(select).not.toBeNull();
+    // 2. Click "+ Add Click Interaction" button
+    const addClickBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('+ Add Click Interaction')
+    );
+    expect(addClickBtn).toBeDefined();
 
-    act(() => {
-      const selectSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
-      selectSetter?.call(select, 'onPointerEnter');
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+    await act(async () => {
+      addClickBtn?.click();
     });
 
-    // 3. Open code view via </> toggle and type alert('test'); in textarea — auto-saves immediately without clicking Apply
-    const codeToggle = container.querySelector('[data-testid="toggle-code-view-btn"]') as HTMLButtonElement;
-    if (codeToggle) {
-      act(() => {
-        codeToggle.click();
-      });
-    }
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-    expect(textarea).not.toBeNull();
+    // Switched to State Machine tab
+    expect(getEditorState().activeInspectorTab).toBe('statemachine');
 
-    act(() => {
-      const textSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-      textSetter?.call(textarea, "alert('test');");
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    // State machine has a listener targeting the shape
+    let stateMachines = getEditorState().doc.stateMachines;
+    expect(stateMachines).toBeDefined();
+    expect(stateMachines!.length).toBeGreaterThanOrEqual(1);
+
+    const sm = stateMachines![0];
+    expect(sm.listeners).toBeDefined();
+    const clickListener = sm.listeners?.find(
+      (l) => l.targetElementId === shapeId && l.eventType === 'click'
+    );
+    expect(clickListener).toBeDefined();
+
+    // 3. Re-render Properties and click "+ Add Hover Interaction"
+    await act(async () => {
+      root.render(<Properties />);
     });
 
-    // Verify it is immediately persisted to the doc on the shape element
-    const currentDoc = getEditorState().doc;
-    const currentLayer = currentDoc.root.layers[0];
-    const currentKf = findKeyframeAt(currentLayer, 0);
-    const savedShape = currentKf?.elements.find((e) => e.id === shapeId);
+    const addHoverBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('+ Add Hover Interaction')
+    );
+    expect(addHoverBtn).toBeDefined();
 
-    expect(savedShape).toBeDefined();
-    expect(savedShape?.events?.onPointerEnter).toEqual({ __fn: "alert('test');" });
-    // Stable identifier assigned
-    expect(savedShape?.instanceName).toBe(shapeId);
-    // Also recorded in doc.scripts
-    expect((currentDoc as any).scripts?.[shapeId]?.onPointerEnter).toEqual({ __fn: "alert('test');" });
-
-    // 4. Deselect all elements
-    act(() => {
-      editorActions.deselectAll();
-    });
-    expect(getEditorState().selectedElementIds).toHaveLength(0);
-
-    // Scripts panel now shows Frame target
-    expect(container.textContent).toContain('Frame 1');
-
-    // 5. Click back into the shape element
-    act(() => {
-      editorActions.selectElement(shapeId);
-    });
-    expect(getEditorState().selectedElementIds).toEqual([shapeId]);
-
-    // 6. Verify the script is restored in Scripts.tsx!
-    act(() => {
-      select.value = 'onPointerEnter';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+    await act(async () => {
+      addHoverBtn?.click();
     });
 
-    const restoredTextarea = container.querySelector('textarea') as HTMLTextAreaElement;
-    expect(restoredTextarea.value).toBe("alert('test');");
+    const hoverListener = getEditorState().doc.stateMachines![0].listeners?.find(
+      (l) => l.targetElementId === shapeId && l.eventType === 'pointerenter'
+    );
+    expect(hoverListener).toBeDefined();
 
-    // Clean up
-    act(() => {
+    // 4. Render StateMachinePanel and verify listeners are present
+    await act(async () => {
+      root.render(<StateMachinePanel />);
+    });
+
+    expect(container.textContent).toContain('Game Listeners');
+    expect(container.textContent).toContain('click');
+    expect(container.textContent).toContain('pointerenter');
+
+    // 5. Clean up
+    await act(async () => {
       root.unmount();
     });
     container.remove();

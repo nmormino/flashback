@@ -1568,6 +1568,7 @@ export const Properties: React.FC = () => {
 
   const allElementSectionIds = [
     'element-identity',
+    'interactions-statemachine',
     ...(isText && textEl ? ['text-typography', 'text-state', 'text-i18n'] : []),
     ...(selectedEl.type === 'bitmap' ? ['bitmap-media'] : []),
     ...(selectedEl.type === 'video' ? ['video-media'] : []),
@@ -1583,7 +1584,7 @@ export const Properties: React.FC = () => {
   ];
 
   const elementCategoryCounts: Record<string, number> = {
-    identity: 1,
+    identity: 2,
     text: isText && textEl ? 3 : 0,
     media: selectedEl.type === 'bitmap' || selectedEl.type === 'video' ? 1 : 0,
     layout: 1,
@@ -1826,10 +1827,10 @@ export const Properties: React.FC = () => {
               <button
                 type="button"
                 className={styles.editScriptBtn}
-                onClick={() => editorActions.setActiveInspectorTab('scripts')}
-                title="Open script editor targeting this component instance"
+                onClick={() => editorActions.setActiveInspectorTab('statemachine')}
+                title="Open State Machine targeting this component instance"
               >
-                ⚡ Edit Component Script
+                ⚡ State Machine & Interactions
               </button>
             </div>
           );
@@ -1849,6 +1850,146 @@ export const Properties: React.FC = () => {
           </div>
         )}
       </AccordionSection>
+
+      {/* Interactions & State Machine Section for Selected Elements */}
+      {(() => {
+        const activeSm =
+          doc.stateMachines?.find((s) => s.id === doc.activeStateMachineId) ||
+          doc.stateMachines?.[0];
+        const elementListeners = (doc.stateMachines || []).flatMap((sm) =>
+          (sm.listeners || [])
+            .filter((l) => l.targetElementId === selectedEl.id)
+            .map((l) => ({ ...l, smId: sm.id }))
+        );
+
+        const handleAddClickInteraction = () => {
+          let sm = activeSm;
+          if (!sm) {
+            sm = editorActions.addStateMachine();
+          }
+          editorActions.addStateListener(sm.id, {
+            eventType: 'click',
+            targetElementId: selectedEl.id,
+            actions: [],
+          });
+          editorActions.setActiveInspectorTab('statemachine');
+        };
+
+        const handleAddHoverInteraction = () => {
+          let sm = activeSm;
+          if (!sm) {
+            sm = editorActions.addStateMachine();
+          }
+          editorActions.addStateListener(sm.id, {
+            eventType: 'pointerenter',
+            targetElementId: selectedEl.id,
+            actions: [],
+          });
+          editorActions.setActiveInspectorTab('statemachine');
+        };
+
+        return (
+          <AccordionSection
+            id="interactions-statemachine"
+            category="identity"
+            activeCategory={effectiveElementCategory}
+            title="Interactions & State Machine"
+            icon="⚡"
+            badge={elementListeners.length > 0 ? `${elementListeners.length} Listeners` : undefined}
+            summary={
+              elementListeners.length > 0
+                ? `${elementListeners.length} listener${elementListeners.length === 1 ? '' : 's'}`
+                : 'None'
+            }
+            collapsed={!isSectionExpanded('interactions-statemachine')}
+            onToggle={() => toggleSection('interactions-statemachine')}
+            testId="interactions-statemachine-section"
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  className={styles.addFontSmallBtn}
+                  style={{ flex: 1, justifyContent: 'center' }}
+                  onClick={handleAddClickInteraction}
+                  title="Add Click interaction targeting this element and switch to State Machine tab"
+                >
+                  + Add Click Interaction
+                </button>
+                <button
+                  type="button"
+                  className={styles.addFontSmallBtn}
+                  style={{ flex: 1, justifyContent: 'center' }}
+                  onClick={handleAddHoverInteraction}
+                  title="Add Hover interaction targeting this element and switch to State Machine tab"
+                >
+                  + Add Hover Interaction
+                </button>
+              </div>
+
+              {elementListeners.length === 0 ? (
+                <div
+                  style={{
+                    fontSize: '11px',
+                    color: 'var(--mx-text-muted, #888)',
+                    textAlign: 'center',
+                    padding: '4px 0',
+                  }}
+                >
+                  No interactions configured for this element.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {elementListeners.map((lis) => (
+                    <div
+                      key={lis.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '4px 8px',
+                        backgroundColor: 'var(--mx-bg-subtle, #1e1e24)',
+                        border: '1px solid var(--mx-border-subtle, #333338)',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--mx-accent, #3b82f6)' }}>
+                          ⚡ {lis.eventType}
+                        </span>
+                        <span style={{ color: 'var(--mx-text-muted, #888)' }}>
+                          ({lis.actions?.length || 0} action{lis.actions?.length === 1 ? '' : 's'})
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <button
+                          type="button"
+                          className={styles.addFontSmallBtn}
+                          style={{ padding: '2px 6px', fontSize: '10px' }}
+                          onClick={() => editorActions.setActiveInspectorTab('statemachine')}
+                          title="Edit in State Machine"
+                        >
+                          Edit ↗
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.addFontSmallBtn}
+                          style={{ padding: '2px 6px', fontSize: '10px', color: '#f87171' }}
+                          onClick={() => editorActions.deleteStateListener(lis.smId, lis.id)}
+                          title="Delete Listener"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </AccordionSection>
+        );
+      })()}
 
       {/* Rich Typography Controls for Text Elements */}
       {isText && textEl && (() => {

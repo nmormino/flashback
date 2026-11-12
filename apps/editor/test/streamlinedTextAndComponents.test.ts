@@ -5,7 +5,6 @@ import { editorActions, getEditorState, type EditorElement } from '../src/state/
 import { ConvertToComponentDialog } from '../src/dialogs/ConvertToComponentDialog';
 import { Library } from '../src/panels/Library/Library';
 import { Properties } from '../src/panels/Properties/Properties';
-import { Scripts } from '../src/panels/Scripts/Scripts';
 import type { TextElement, SymbolInstance, ShapeElement } from '@flashback/runtime';
 
 describe('Streamlined Text Editing & Component Overhaul', () => {
@@ -304,17 +303,17 @@ describe('Streamlined Text Editing & Component Overhaul', () => {
       expect(container.textContent).toContain('Component Instance: PlayButton');
       expect(container.textContent).toContain('Edit Master Component');
       expect(container.textContent).toContain('Instance Script Name:');
-      expect(container.textContent).toContain('Edit Component Script');
+      expect(container.textContent).toContain('State Machine & Interactions');
 
-      // Click "Edit Component Script" switches inspector tab to scripts
+      // Click "State Machine & Interactions" switches inspector tab to statemachine
       const editScriptBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-        b.textContent?.includes('Edit Component Script')
+        b.textContent?.includes('State Machine & Interactions')
       );
       expect(editScriptBtn).toBeDefined();
       act(() => {
         editScriptBtn?.click();
       });
-      expect(getEditorState().activeInspectorTab).toBe('scripts');
+      expect(getEditorState().activeInspectorTab).toBe('statemachine');
 
       // Click "Edit Master Component" enters isolation mode
       const editMasterBtn = container.querySelector(
@@ -337,27 +336,29 @@ describe('Streamlined Text Editing & Component Overhaul', () => {
       container.remove();
     });
 
-    it('Scripts panel displays Target: ❖ playBtn (Component Instance) and live events including onEnterFrame', () => {
+    it('verifies State Machine targeting for component instances', () => {
       const kf = getEditorState().doc.root.layers[0].keyframes[0];
       const inst = kf.elements.find((e) => e.type === 'instance') as SymbolInstance;
       editorActions.selectElement(inst.id);
 
-      const container = document.createElement('div');
-      document.body.appendChild(container);
-      const root = createRoot(container);
+      editorActions.setActiveInspectorTab('statemachine');
+      expect(getEditorState().activeInspectorTab).toBe('statemachine');
 
-      act(() => {
-        root.render(React.createElement(Scripts));
+      // Verify state listener targeting the component instance
+      let sm = getEditorState().doc.stateMachines?.[0];
+      if (!sm) {
+        sm = editorActions.addStateMachine('Component State Machine');
+      }
+      editorActions.addStateListener(sm.id, {
+        eventType: 'click',
+        targetElementId: inst.id,
+        actions: [],
       });
 
-      expect(container.textContent).toContain('Target: ❖ playBtn (Component Instance)');
-      expect(container.textContent).toContain('onClick');
-      expect(container.textContent).toContain('onEnterFrame');
-
-      act(() => {
-        root.unmount();
-      });
-      container.remove();
+      const updatedSm = getEditorState().doc.stateMachines?.find((s) => s.id === sm.id);
+      const listener = updatedSm?.listeners?.find((l) => l.targetElementId === inst.id);
+      expect(listener).toBeDefined();
+      expect(listener?.eventType).toBe('click');
     });
   });
 });

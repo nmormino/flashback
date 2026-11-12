@@ -9,7 +9,6 @@ export const createPlaybackSlice: SliceCreator<PlaybackSliceActions> = (
   let rafTimer: any = null;
   let lastRafTime = 0;
   let lastCustomLoopCount = 1;
-  const executedKfScriptsMap = new Map<string, number>();
 
   const slice: PlaybackSliceActions = {
     setLoopMode(mode: 'infinite' | number): void {
@@ -156,7 +155,6 @@ export const createPlaybackSlice: SliceCreator<PlaybackSliceActions> = (
     },
 
     stop(): void {
-      executedKfScriptsMap.clear();
       if (rafTimer !== null) {
         if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(rafTimer);
         else clearTimeout(rafTimer);
@@ -271,127 +269,16 @@ export const createPlaybackSlice: SliceCreator<PlaybackSliceActions> = (
         selectedFrameIndex: kfFrame,
         selectedTime: kfTime,
         scriptTriggerFocus: 'keyframe',
-        activeInspectorTab: 'scripts',
+        activeInspectorTab: 'statemachine',
       });
     },
 
     executeKeyframeScriptsInRange(
-      prevTime: number,
-      nextTime: number,
-      includeZeroStart?: boolean
+      _prevTime: number,
+      _nextTime: number,
+      _includeZeroStart?: boolean
     ): void {
-      const state = context.getState();
-      if (!state.liveKeyframeScriptsEnabled) return;
-
-      const tl = context.getActiveTimeline(state.doc, state.isolationStack);
-      const fps = state.doc.stage.fps || 24;
-
-      for (const layer of tl.layers) {
-        for (const kf of layer.keyframes) {
-          const fnObj = kf.actions as { __fn?: string } | undefined;
-          const code = fnObj?.__fn;
-          if (!code || typeof code !== 'string' || !code.trim()) continue;
-
-          const kfTime = context.getKeyframeTime(kf, fps);
-          let triggered = false;
-
-          if (includeZeroStart && prevTime === 0 && Math.abs(kfTime) < 0.001) {
-            triggered = true;
-          } else if (
-            nextTime > prevTime &&
-            kfTime > prevTime + 0.0001 &&
-            kfTime <= nextTime + 0.0001
-          ) {
-            triggered = true;
-          } else if (nextTime < prevTime && Math.abs(kfTime) <= nextTime + 0.0001) {
-            triggered = true;
-          }
-
-          if (triggered) {
-            const scriptKey = `${kf.id}_${kfTime.toFixed(4)}`;
-            const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-            if (
-              executedKfScriptsMap.has(scriptKey) &&
-              now - executedKfScriptsMap.get(scriptKey)! < 50
-            ) {
-              continue;
-            }
-            executedKfScriptsMap.set(scriptKey, now);
-
-            try {
-              const actions = context.getActions();
-              const ctx: any = {
-                stop: () => actions.setPlaying(false),
-                play: () => actions.setPlaying(true),
-                gotoAndStop: (f: number) => {
-                  actions.setPlaying(false);
-                  actions.setCurrentFrame(Math.max(0, Number(f) - 1));
-                },
-                gotoAndPlay: (f: number) => {
-                  actions.setCurrentFrame(Math.max(0, Number(f) - 1));
-                  actions.setPlaying(true);
-                },
-              };
-
-              const gotoArtboard = (idOrName: string) => {
-                const doc = context.getState().doc;
-                const ab = doc.artboards?.find(
-                  (a) => a.id === idOrName || a.name === idOrName
-                );
-                if (ab) actions.switchArtboard(ab.id);
-              };
-
-              const safeAlert = (msg?: any) => {
-                if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-                  window.alert(String(msg ?? ''));
-                } else if (typeof console !== 'undefined' && console.log) {
-                  console.log('[Keyframe Script Alert]', msg);
-                }
-              };
-
-              const safeConsole =
-                typeof console !== 'undefined'
-                  ? console
-                  : {
-                      log: () => {},
-                      warn: () => {},
-                      error: () => {},
-                    };
-
-              let cleanCode = code.trim();
-              const fnMatch = cleanCode.match(
-                /^function\s*(?:[a-zA-Z_$][\w$]*)?\s*\(([^)]*)\)\s*\{([\s\S]*)\}$/
-              );
-              if (fnMatch) {
-                cleanCode = fnMatch[2];
-              }
-
-              const runner = new Function(
-                'gotoArtboard',
-                'alert',
-                'console',
-                'stop',
-                'play',
-                'gotoAndStop',
-                'gotoAndPlay',
-                cleanCode
-              );
-              runner.call(
-                ctx,
-                gotoArtboard,
-                safeAlert,
-                safeConsole,
-                ctx.stop,
-                ctx.play,
-                ctx.gotoAndStop,
-                ctx.gotoAndPlay
-              );
-            } catch (err) {
-              console.warn('[Keyframe Script Error]', err);
-            }
-          }
-        }
-      }
+      // Legacy Scratch keyframe eval is stripped in favor of the State Machine engine
     },
   };
 

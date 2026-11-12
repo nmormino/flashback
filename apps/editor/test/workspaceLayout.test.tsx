@@ -43,11 +43,11 @@ describe('Workspace Layout Overhaul with react-resizable-panels', () => {
     const timelineTab = Array.from(container.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Timeline & Layers')
     );
-    const scriptsTab = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Scripts')
+    const stateMachineTab = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('State Machine')
     );
     expect(timelineTab).toBeTruthy();
-    expect(scriptsTab).toBeTruthy();
+    expect(stateMachineTab).toBeTruthy();
 
     // 5. Right Inspector with permanently docked Properties
     expect(container.textContent).toContain('⚙ Properties');
@@ -59,23 +59,26 @@ describe('Workspace Layout Overhaul with react-resizable-panels', () => {
     expect(resizers.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('switches bottom dock tabs between Timeline & Layers and Scripts', async () => {
+  it('switches bottom dock tabs between Timeline & Layers and State Machine', async () => {
     await act(async () => {
       root.render(<Workspace />);
     });
 
-    const scriptsBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Scripts')
+    const stateMachineBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('State Machine')
     );
-    expect(scriptsBtn).toBeTruthy();
+    expect(stateMachineBtn).toBeTruthy();
 
     await act(async () => {
-      scriptsBtn?.click();
+      stateMachineBtn?.click();
     });
 
-    expect(getEditorState().activeInspectorTab).toBe('scripts');
-    // Scripts panel is rendered in bottom dock
-    expect(container.textContent).toContain('Scripts');
+    expect(getEditorState().activeInspectorTab).toBe('statemachine');
+    // State Machine panel is rendered in bottom dock
+    expect(
+      container.textContent?.includes('No State Machine Defined') ||
+        container.textContent?.includes('Inputs')
+    ).toBe(true);
 
     const timelineBtn = Array.from(container.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Timeline & Layers')
@@ -89,15 +92,15 @@ describe('Workspace Layout Overhaul with react-resizable-panels', () => {
     expect(getEditorState().activeInspectorTab).toBe('timeline');
   });
 
-  it('supports editorActions.setActiveInspectorTab for timeline, scripts, and properties', async () => {
+  it('supports editorActions.setActiveInspectorTab for timeline, statemachine, and properties', async () => {
     await act(async () => {
       root.render(<Workspace />);
     });
 
     act(() => {
-      editorActions.setActiveInspectorTab('scripts');
+      editorActions.setActiveInspectorTab('statemachine');
     });
-    expect(getEditorState().activeInspectorTab).toBe('scripts');
+    expect(getEditorState().activeInspectorTab).toBe('statemachine');
 
     act(() => {
       editorActions.setActiveInspectorTab('properties');

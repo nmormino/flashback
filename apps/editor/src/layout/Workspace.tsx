@@ -9,7 +9,6 @@ import { Localization } from '../panels/Localization/Localization';
 import { StateVariables } from '../panels/StateVariables/StateVariables';
 import { Timeline } from '../panels/Timeline/Timeline';
 import { Properties } from '../panels/Properties/Properties';
-import { Scripts } from '../panels/Scripts/Scripts';
 import { StateMachinePanel } from '../panels/StateMachine/StateMachinePanel';
 import { ContextMenu } from '../ui/ContextMenu';
 import { useEditorStore, editorActions } from '../state/editorStore';
@@ -22,7 +21,7 @@ const ExportModal = React.lazy(() => import('../dialogs/ExportModal').then((m) =
 const ImportModal = React.lazy(() => import('../dialogs/ImportModal').then((m) => ({ default: m.ImportModal })));
 const BezierEditorModal = React.lazy(() => import('../ui/BezierEditorModal').then((m) => ({ default: m.BezierEditorModal })));
 
-export type BottomTab = 'timeline' | 'statemachine' | 'properties' | 'scripts';
+export type BottomTab = 'timeline' | 'statemachine' | 'properties';
 type BottomDockTab = BottomTab;
 
 export const Workspace: React.FC = () => {
@@ -32,9 +31,7 @@ export const Workspace: React.FC = () => {
   const isStateVariablesOpen = useEditorStore((s) => s.isStateVariablesOpen);
 
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>(
-    activeInspectorTab === 'scripts'
-      ? 'scripts'
-      : activeInspectorTab === 'statemachine'
+    activeInspectorTab === 'statemachine'
       ? 'statemachine'
       : 'timeline'
   );
@@ -46,17 +43,7 @@ export const Workspace: React.FC = () => {
 
   // Sync when editorActions.setActiveInspectorTab is invoked
   useEffect(() => {
-    if (activeInspectorTab === 'scripts') {
-      setActiveBottomTab('scripts');
-      if (isBottomCollapsed) {
-        setIsBottomCollapsed(false);
-        try {
-          bottomPanelRef.current?.expand();
-        } catch {
-          // Headless environments without computed layout
-        }
-      }
-    } else if (activeInspectorTab === 'statemachine') {
+    if (activeInspectorTab === 'statemachine') {
       setActiveBottomTab('statemachine');
       if (isBottomCollapsed) {
         setIsBottomCollapsed(false);
@@ -164,7 +151,7 @@ export const Workspace: React.FC = () => {
                 onExpand={() => setIsBottomCollapsed(false)}
               >
                 <div className={styles.bottomDock}>
-                  {/* Tab Bar: [ ⏱ Timeline & Layers ] [ ⚡ State Machine ] [ 📜 Scripts ] [ Collapse/Expand ] */}
+                  {/* Tab Bar: [ ⏱ Timeline & Layers ] [ ⚡ State Machine ] [ Collapse/Expand ] */}
                   <div className={styles.inspectorTabBar}>
                     <button
                       type="button"
@@ -184,15 +171,6 @@ export const Workspace: React.FC = () => {
                     >
                       ⚡ State Machine
                     </button>
-                    <button
-                      type="button"
-                      className={`${styles.tabBtn} ${
-                        activeBottomTab === 'scripts' ? styles.active : ''
-                      }`}
-                      onClick={() => selectBottomTab('scripts')}
-                    >
-                      📜 Scripts
-                    </button>
 
                     <button
                       type="button"
@@ -210,7 +188,6 @@ export const Workspace: React.FC = () => {
                     <div className={styles.tabContent}>
                       {activeBottomTab === 'timeline' && <Timeline />}
                       {activeBottomTab === 'statemachine' && <StateMachinePanel />}
-                      {activeBottomTab === 'scripts' && <Scripts />}
                     </div>
                   )}
                 </div>
