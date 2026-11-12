@@ -237,7 +237,7 @@ export const StateVariables: React.FC = () => {
           <div className={styles.emptyState}>
             No state variables defined yet.
             <br />
-            Click <strong>+ New Variable</strong> above to create shared state (e.g. <code>score</code>, <code>lives</code>) accessible in script tags and bindable to text blocks.
+            Click <strong>+ New Variable</strong> above to create shared state (e.g. <code>score</code>, <code>lives</code>) accessible in State Machine transitions, listeners, and bindable to text blocks.
           </div>
         ) : (
           filteredVars.map((v) => {
@@ -313,7 +313,7 @@ export const StateVariables: React.FC = () => {
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Code size={11} />
-            Web Component & Script API
+            Web Component & State Machine API
           </span>
           {showCodeDrawer ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </button>
@@ -323,11 +323,14 @@ export const StateVariables: React.FC = () => {
             <div>{`// Pass public state into <web-anim>`}</div>
             <div>{`<web-anim state={{ ${variables.map((v) => `${v.name}: ${v.defaultValue}`).slice(0, 3).join(', ') || 'score: 1000'} }} />`}</div>
             <br />
-            <div>{`// In Scripts (Keyframe / Button):`}</div>
-            <div>{`this.state.score += 10;`}</div>
-            <div>{`this.emit('scoreChange', this.state.score);`}</div>
-            <div>{`this.spawnClip('Fly', { x: 100, y: 150 });`}</div>
-            <div>{`this.emitParticles({ preset: 'splat', x: 100, y: 150 });`}</div>
+            <div>{`// In State Machine Transitions & Listeners:`}</div>
+            <div>{`// Inputs and variables drive transition conditions (e.g. score >= 100)`}</div>
+            <div>{`// Listeners trigger state transitions and input mutations`}</div>
+            <br />
+            <div>{`// Web Component API:`}</div>
+            <div>{`const el = document.querySelector('web-anim');`}</div>
+            <div>{`el.setInputValue('score', 100);`}</div>
+            <div>{`const score = el.getInputValue('score');`}</div>
           </div>
         )}
       </div>

@@ -193,21 +193,7 @@ export const Timeline: React.FC = () => {
     };
   }, []);
 
-  // Live playback script execution hook
-  const prevTimeRef = useRef<number>(currentTime);
-  const isFirstTickRef = useRef<boolean>(true);
 
-  useEffect(() => {
-    if (!isPlaying) {
-      isFirstTickRef.current = true;
-      prevTimeRef.current = currentTime;
-      return;
-    }
-    const prevTime = prevTimeRef.current;
-    editorActions.executeKeyframeScriptsInRange(prevTime, currentTime, isFirstTickRef.current);
-    isFirstTickRef.current = false;
-    prevTimeRef.current = currentTime;
-  }, [isPlaying, currentTime]);
 
   const headerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -511,7 +497,6 @@ export const Timeline: React.FC = () => {
 
     const layer = activeTl.layers.find((l) => l.id === layerId);
     const hasTween = kf.tween?.type === 'motion';
-    const hasScript = Boolean((kf.actions as any)?.__fn && String((kf.actions as any).__fn).trim().length > 0);
     // If right-clicked directly on the existing keyframe diamond, insert at playhead or +0.5s
     const insertTime =
       Math.abs(activeTime - kfTime) < 0.02
@@ -545,19 +530,6 @@ export const Timeline: React.FC = () => {
           label: 'Duplicate Keyframe',
           action: () => editorActions.duplicateKeyframe(layerId, kfTime),
         },
-        {
-          label: hasScript ? '⚡ Edit Keyframe Script...' : '⚡ Add Keyframe Script...',
-          action: () => editorActions.openKeyframeScript(layerId, kf.index),
-        },
-        ...(hasScript
-          ? [
-              {
-                label: 'Clear Keyframe Script',
-                danger: true,
-                action: () => editorActions.updateKeyframeScript(layerId, kf.index, ''),
-              },
-            ]
-          : []),
         {
           label: 'Copy Keyframe',
           action: () => editorActions.copyKeyframe(layerId, kfTime),
@@ -1443,52 +1415,34 @@ export const Timeline: React.FC = () => {
                           </div>
 
                           {/* Diamond Keyframe Marker (◆) - Draggable */}
-                          {(() => {
-                            const hasScript = Boolean((kf.actions as any)?.__fn && String((kf.actions as any).__fn).trim().length > 0);
-                            return (
-                              <div
-                                className={`${styles.trackKeyframeDiamond} ${styles.keyframeCell} ${
-                                  isDraggingThisKf ? styles.dragging : ''
-                                } ${hasScript ? styles.keyframeHasScript : ''}`}
-                                style={{
-                                  left: `${kfTime * PIXELS_PER_SECOND}px`,
-                                }}
-                                onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf, element?.id)}
-                                onContextMenu={(e) =>
-                                  handleKeyframeContextMenu(e, layer.id, kf, getClickTimeFromEvent(e))
-                                }
-                                onDoubleClick={(e) => {
-                                  e.stopPropagation();
-                                  if (hasScript) {
-                                    editorActions.openKeyframeScript(layer.id, kf.index);
-                                  } else if (isTween) {
-                                    editorActions.openBezierEditor(layer.id, kf.id, kf.tween?.easing);
-                                  } else {
-                                    editorActions.openKeyframeScript(layer.id, kf.index);
-                                  }
-                                }}
-                                title={`Keyframe at ${kfTime.toFixed(2)}s${hasScript ? ' (⚡ Has Script)' : ''}${isTween ? ' (Double-click to edit easing curve)' : ' (Double-click to edit script)'}`}
-                              >
-                                {kf.elements.length > 0 || kf.transform ? (
-                                  <div className={styles.diamondKeyframe} />
-                                ) : (
-                                  <div className={styles.diamondBlankKeyframe} />
-                                )}
-                                {hasScript && (
-                                  <span
-                                    className={styles.keyframeScriptBadge}
-                                    title="Keyframe has script (Click to edit)"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      editorActions.openKeyframeScript(layer.id, kf.index);
-                                    }}
-                                  >
-                                    ⚡
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })()}
+                          <div
+                            className={`${styles.trackKeyframeDiamond} ${styles.keyframeCell} ${
+                              isDraggingThisKf ? styles.dragging : ''
+                            }`}
+                            style={{
+                              left: `${kfTime * PIXELS_PER_SECOND}px`,
+                            }}
+                            onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf, element?.id)}
+                            onContextMenu={(e) =>
+                              handleKeyframeContextMenu(e, layer.id, kf, getClickTimeFromEvent(e))
+                            }
+                            onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              if (isTween) {
+                                editorActions.openBezierEditor(layer.id, kf.id, kf.tween?.easing);
+                              } else {
+                                editorActions.setSelectedTime(layer.id, kfTime);
+                                editorActions.setActiveInspectorTab('properties');
+                              }
+                            }}
+                            title={`Keyframe at ${kfTime.toFixed(2)}s${isTween ? ' (Double-click to edit easing curve)' : ''}`}
+                          >
+                            {kf.elements.length > 0 || kf.transform ? (
+                              <div className={styles.diamondKeyframe} />
+                            ) : (
+                              <div className={styles.diamondBlankKeyframe} />
+                            )}
+                          </div>
                         </React.Fragment>
                       );
                     })}
@@ -1591,46 +1545,28 @@ export const Timeline: React.FC = () => {
                             <div className={styles.tweenArrowHead} />
                           </div>
                         )}
-                        {(() => {
-                          const hasScript = Boolean((kf.actions as any)?.__fn && String((kf.actions as any).__fn).trim().length > 0);
-                          return (
-                            <div
-                              className={`${styles.trackKeyframeDiamond} ${styles.keyframeCell} ${
-                                isDraggingThisKf ? styles.dragging : ''
-                              } ${hasScript ? styles.keyframeHasScript : ''}`}
-                              style={{
-                                left: `${kfTime * PIXELS_PER_SECOND}px`,
-                              }}
-                              onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf, element.id)}
-                              onContextMenu={(e) => handleKeyframeContextMenu(e, layer.id, kf)}
-                              onDoubleClick={(e) => {
-                                e.stopPropagation();
-                                if (hasScript) {
-                                  editorActions.openKeyframeScript(layer.id, kf.index);
-                                } else if (isTween) {
-                                  editorActions.openBezierEditor(layer.id, kf.id, kf.tween?.easing);
-                                } else {
-                                  editorActions.openKeyframeScript(layer.id, kf.index);
-                                }
-                              }}
-                              title={`Element Keyframe at ${kfTime.toFixed(2)}s${hasScript ? ' (⚡ Has Script)' : ''}${isTween ? ' - Double-click to edit easing curve' : ' - Double-click to edit script'}`}
-                            >
-                              <div className={styles.diamondKeyframe} />
-                              {hasScript && (
-                                <span
-                                  className={styles.keyframeScriptBadge}
-                                  title="Keyframe has script (Click to edit)"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    editorActions.openKeyframeScript(layer.id, kf.index);
-                                  }}
-                                >
-                                  ⚡
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })()}
+                        <div
+                          className={`${styles.trackKeyframeDiamond} ${styles.keyframeCell} ${
+                            isDraggingThisKf ? styles.dragging : ''
+                          }`}
+                          style={{
+                            left: `${kfTime * PIXELS_PER_SECOND}px`,
+                          }}
+                          onMouseDown={(e) => handleKeyframeMouseDown(e, layer.id, kf, element.id)}
+                          onContextMenu={(e) => handleKeyframeContextMenu(e, layer.id, kf)}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            if (isTween) {
+                              editorActions.openBezierEditor(layer.id, kf.id, kf.tween?.easing);
+                            } else {
+                              editorActions.setSelectedTime(layer.id, kfTime);
+                              editorActions.setActiveInspectorTab('properties');
+                            }
+                          }}
+                          title={`Element Keyframe at ${kfTime.toFixed(2)}s${isTween ? ' (Double-click to edit easing curve)' : ''}`}
+                        >
+                          <div className={styles.diamondKeyframe} />
+                        </div>
                       </React.Fragment>
                     );
                   })}

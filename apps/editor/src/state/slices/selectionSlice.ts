@@ -65,13 +65,11 @@ export const createSelectionSlice: SliceCreator<SelectionSliceActions> = (
         context.setState({
           selectedElementIds: next,
           selectedLayerId: nextLayerId,
-          scriptTriggerFocus: 'auto',
         });
       } else {
         context.setState({
           selectedElementIds: [elementId],
           selectedLayerId: nextLayerId,
-          scriptTriggerFocus: 'auto',
         });
       }
     },
@@ -92,7 +90,6 @@ export const createSelectionSlice: SliceCreator<SelectionSliceActions> = (
       context.setState({
         selectedElementIds: elementIds,
         selectedLayerId: nextLayerId,
-        scriptTriggerFocus: 'auto',
       });
     },
 

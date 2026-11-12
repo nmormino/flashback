@@ -102,7 +102,6 @@ export const createPlaybackSlice: SliceCreator<PlaybackSliceActions> = (
 
       lastRafTime = performance.now();
       let loopCycle = 0;
-      let isFirstTick = true;
 
       const tick = (now: number) => {
         const currentState = context.getState();
@@ -113,7 +112,6 @@ export const createPlaybackSlice: SliceCreator<PlaybackSliceActions> = (
         const activeTl = context.getActiveTimeline(currentState.doc, currentState.isolationStack);
         const fps = currentState.doc.stage.fps || 24;
         const totalDuration = context.computeTotalTimelineDuration(activeTl, fps);
-        const prevTime = currentState.currentTime;
         let nextTime = currentState.currentTime + dt;
 
         if (nextTime >= totalDuration) {
@@ -135,10 +133,6 @@ export const createPlaybackSlice: SliceCreator<PlaybackSliceActions> = (
           selectedFrameIndex: nextFrame,
           selectedTime: nextTime,
         });
-
-        const actions = context.getActions();
-        actions.executeKeyframeScriptsInRange(prevTime, nextTime, isFirstTick);
-        isFirstTick = false;
 
         if (typeof requestAnimationFrame !== 'undefined') {
           rafTimer = requestAnimationFrame(tick);
@@ -222,63 +216,6 @@ export const createPlaybackSlice: SliceCreator<PlaybackSliceActions> = (
         context.normalizeLayerKeyframes(layer, doc.stage.fps || 24);
       }
       context.setState({ doc });
-    },
-
-    setScriptTriggerFocus(focus: 'auto' | 'keyframe' | 'element'): void {
-      context.setState({ scriptTriggerFocus: focus });
-    },
-
-    setLiveKeyframeScriptsEnabled(enabled: boolean): void {
-      context.setState({ liveKeyframeScriptsEnabled: enabled });
-    },
-
-    openKeyframeScript(layerId: string, frameIndexOrTime: number, isTime?: boolean): void {
-      const state = context.getState();
-      const tl = context.getActiveTimeline(state.doc, state.isolationStack);
-      const layer = tl.layers.find((l) => l.id === layerId);
-      if (!layer) return;
-
-      const fps = state.doc.stage.fps || 24;
-      let kf: EditorKeyframe | undefined;
-      if (isTime) {
-        kf =
-          context.findKeyframeAtTime(layer, frameIndexOrTime, fps) ??
-          layer.keyframes.find((k) => Math.abs(context.getKeyframeTime(k, fps) - frameIndexOrTime) < 0.05);
-      } else {
-        kf =
-          context.findKeyframeAt(layer, frameIndexOrTime) ??
-          layer.keyframes.find((k) => k.index === frameIndexOrTime);
-      }
-
-      const kfTime = kf
-        ? context.getKeyframeTime(kf, fps)
-        : isTime
-        ? frameIndexOrTime
-        : frameIndexOrTime / fps;
-      const kfFrame = kf
-        ? kf.index
-        : isTime
-        ? Math.round(frameIndexOrTime * fps)
-        : frameIndexOrTime;
-
-      context.setState({
-        selectedLayerId: layerId,
-        selectedElementIds: [],
-        currentFrame: kfFrame,
-        currentTime: kfTime,
-        selectedFrameIndex: kfFrame,
-        selectedTime: kfTime,
-        scriptTriggerFocus: 'keyframe',
-        activeInspectorTab: 'statemachine',
-      });
-    },
-
-    executeKeyframeScriptsInRange(
-      _prevTime: number,
-      _nextTime: number,
-      _includeZeroStart?: boolean
-    ): void {
-      // Legacy Scratch keyframe eval is stripped in favor of the State Machine engine
     },
   };
 

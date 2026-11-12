@@ -101,8 +101,6 @@ export interface PlaybackState {
   currentTime: number;
   isPlaying: boolean;
   loopMode: 'infinite' | number;
-  scriptTriggerFocus: 'auto' | 'keyframe' | 'element';
-  liveKeyframeScriptsEnabled: boolean;
 }
 
 export interface GeometryState {
@@ -220,10 +218,6 @@ export interface PlaybackSliceActions {
   stepForward(stepSec?: number): void;
   stepBackward(stepSec?: number): void;
   reverseFrames?(layerId?: string): void;
-  setScriptTriggerFocus(focus: 'auto' | 'keyframe' | 'element'): void;
-  setLiveKeyframeScriptsEnabled(enabled: boolean): void;
-  openKeyframeScript(layerId: string, frameIndexOrTime: number, isTime?: boolean): void;
-  executeKeyframeScriptsInRange(prevTime: number, nextTime: number, includeZeroStart?: boolean): void;
 }
 
 export interface StateMachineSliceActions {

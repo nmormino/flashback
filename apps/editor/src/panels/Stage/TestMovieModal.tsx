@@ -108,7 +108,7 @@ export const TestMovieModal: React.FC = () => {
           >
             {errorMsg ? (
               <div style={{ color: 'red', padding: 12, fontFamily: 'monospace' }}>
-                Error compiling scripts: {errorMsg}
+                Playback error: {errorMsg}
               </div>
             ) : (
               <web-anim

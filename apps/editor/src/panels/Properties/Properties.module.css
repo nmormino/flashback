@@ -545,7 +545,7 @@
   color: #ffffff;
 }
 
-.editScriptBtn {
+.stateMachineBtn {
   width: 100%;
   display: flex;
   align-items: center;
@@ -562,7 +562,7 @@
   transition: all 0.15s ease;
 }
 
-.editScriptBtn:hover {
+.stateMachineBtn:hover {
   background: var(--mx-accent, #3b82f6);
   color: #ffffff;
   border-color: var(--mx-accent, #3b82f6);

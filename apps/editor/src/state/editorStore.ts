@@ -214,8 +214,6 @@ export function createInitialState(initialDoc: EditorDocument = createDefaultDoc
     isolationStack: [],
     previewLocale: 'en',
     activeBreakpointId: null,
-    scriptTriggerFocus: 'auto',
-    liveKeyframeScriptsEnabled: true,
     isLibraryOpen: true,
     libraryPosition: {
       x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 300) : 720,
@@ -3333,28 +3331,6 @@ export const editorActions = {
       state = { ...state, doc };
       notify();
     }
-  },
-
-  updateKeyframeScript(layerId: string, frameIndex: number, code: string, skipHistory = false): void {
-    if (!skipHistory) {
-      pushHistorySnapshot();
-    }
-    const doc = deepCloneDoc(state.doc);
-    const tl = getActiveTimeline(doc, state.isolationStack);
-    const layer = tl.layers.find((l) => l.id === layerId);
-    if (!layer) return;
-
-    const kf = findKeyframeAt(layer, frameIndex);
-    if (!kf) return;
-
-    if (!code.trim()) {
-      delete kf.actions;
-    } else {
-      kf.actions = { __fn: code } as unknown as ScriptSource;
-    }
-
-    state = { ...state, doc };
-    notify();
   },
 
   /* ========================================================================= *

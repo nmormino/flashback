@@ -150,18 +150,6 @@ describe('Editor Store', () => {
   });
 
   describe('Scripting Operations', () => {
-    it('updateKeyframeScript binds frame script', () => {
-      const layerId = getEditorState().doc.root.layers[0].id;
-      editorActions.updateKeyframeScript(layerId, 0, 'this.stop();');
-
-      const kf = getEditorState().doc.root.layers[0].keyframes[0];
-      expect((kf.actions as any)?.__fn).toBe('this.stop();');
-
-      // Clear script
-      editorActions.updateKeyframeScript(layerId, 0, '');
-      expect(getEditorState().doc.root.layers[0].keyframes[0].actions).toBeUndefined();
-    });
-
     it('updateElementScript binds object event script', () => {
       const inst: EditorElement = {
         id: 'btn_1',

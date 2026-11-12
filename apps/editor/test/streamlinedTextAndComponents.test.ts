@@ -302,7 +302,7 @@ describe('Streamlined Text Editing & Component Overhaul', () => {
 
       expect(container.textContent).toContain('Component Instance: PlayButton');
       expect(container.textContent).toContain('Edit Master Component');
-      expect(container.textContent).toContain('Instance Script Name:');
+      expect(container.textContent).toContain('Instance Name:');
       expect(container.textContent).toContain('State Machine & Interactions');
 
       // Click "State Machine & Interactions" switches inspector tab to statemachine

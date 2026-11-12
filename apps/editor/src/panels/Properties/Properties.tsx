@@ -1761,7 +1761,7 @@ export const Properties: React.FC = () => {
 
               <div className={styles.fieldRow}>
                 <span className={styles.fieldLabel} style={{ width: '135px' }}>
-                  Instance Script Name:
+                  Instance Name:
                 </span>
                 <input
                   type="text"
@@ -1770,7 +1770,7 @@ export const Properties: React.FC = () => {
                   value={instanceName}
                   placeholder="e.g. myButton"
                   onChange={(e) => handleUpdateInstanceName(e.target.value)}
-                  title="Identifier for scripting (e.g. myButton)"
+                  title="Identifier for State Machine transitions and listeners (e.g. myButton)"
                 />
               </div>
 
@@ -1826,7 +1826,7 @@ export const Properties: React.FC = () => {
 
               <button
                 type="button"
-                className={styles.editScriptBtn}
+                className={styles.stateMachineBtn}
                 onClick={() => editorActions.setActiveInspectorTab('statemachine')}
                 title="Open State Machine targeting this component instance"
               >
