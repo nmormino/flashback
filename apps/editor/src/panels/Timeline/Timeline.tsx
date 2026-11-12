@@ -211,6 +211,8 @@ export const Timeline: React.FC = () => {
 
   const headerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrubRafRef = useRef<number | null>(null);
+  const pendingScrubXRef = useRef<number | null>(null);
 
   // Infinite timeline canvas with dynamic expansion
   const fps = doc.stage.fps || 24;
@@ -409,11 +411,25 @@ export const Timeline: React.FC = () => {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isScrubbing) {
-        seekFromClientX(e.clientX);
+        pendingScrubXRef.current = e.clientX;
+        if (scrubRafRef.current === null) {
+          scrubRafRef.current = requestAnimationFrame(() => {
+            scrubRafRef.current = null;
+            if (pendingScrubXRef.current !== null) {
+              seekFromClientX(pendingScrubXRef.current);
+            }
+          });
+        }
       }
     };
-    const handleMouseUp = () => {
+    const handleMouseUp = (e: MouseEvent) => {
       if (isScrubbing) {
+        if (scrubRafRef.current !== null) {
+          cancelAnimationFrame(scrubRafRef.current);
+          scrubRafRef.current = null;
+        }
+        pendingScrubXRef.current = null;
+        seekFromClientX(e.clientX);
         setIsScrubbing(false);
       }
     };
@@ -423,10 +439,26 @@ export const Timeline: React.FC = () => {
       window.addEventListener('mouseup', handleMouseUp);
     }
     return () => {
+      if (scrubRafRef.current !== null) {
+        cancelAnimationFrame(scrubRafRef.current);
+        scrubRafRef.current = null;
+      }
+      pendingScrubXRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isScrubbing]);
+
+  // Clean up scrubbing RAF on unmount
+  useEffect(() => {
+    return () => {
+      if (scrubRafRef.current !== null) {
+        cancelAnimationFrame(scrubRafRef.current);
+        scrubRafRef.current = null;
+      }
+      pendingScrubXRef.current = null;
+    };
+  }, []);
 
   const handleStartRenameLayer = (layer: EditorLayer) => {
     setEditingLayerId(layer.id);

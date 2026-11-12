@@ -976,7 +976,11 @@ export const Stage: React.FC = () => {
   const [hoveredRotateCorner, setHoveredRotateCorner] = useState<'tl' | 'tr' | 'bl' | 'br' | null>(null);
   const [hoveredSkewEdge, setHoveredSkewEdge] = useState<'top' | 'bottom' | 'left' | 'right' | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const dragStateRef = useRef<DragState | null>(null);
+  dragStateRef.current = dragState;
   const rotateDragRef = useRef<{ lastAngle: number; accumulatedRot: number } | null>(null);
+  const dragRafRef = useRef<number | null>(null);
+  const pendingMouseMoveRef = useRef<MouseEvent | null>(null);
 
   const activeArtboard = getActiveArtboard(doc);
   const currentIsolatedSymbol =
@@ -1998,15 +2002,9 @@ export const Stage: React.FC = () => {
   };
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
+    const processDragMove = (dragState: DragState, e: MouseEvent) => {
       const coords = getStageCoordinates(e);
       setMousePos(coords);
-
-      if (activeTool === 'pen') {
-        setPenHoverPoint(coords);
-      }
-
-      if (!dragState) return;
 
       if (dragState.type === 'pan') {
         const dx = e.clientX - (dragState.startClientX ?? 0);
@@ -2017,16 +2015,7 @@ export const Stage: React.FC = () => {
       }
 
       if (dragState.type === 'draw_pencil') {
-        const pts = dragState.pencilPoints ?? [];
-        const last = pts[pts.length - 1];
-        if (!last || Math.hypot(coords.x - last.x, coords.y - last.y) >= 2) {
-          setDragState({
-            ...dragState,
-            currentX: coords.x,
-            currentY: coords.y,
-            pencilPoints: [...pts, coords],
-          });
-        }
+        setDragState({ ...dragState });
         return;
       }
 
@@ -2761,20 +2750,58 @@ export const Stage: React.FC = () => {
         }
       }
 
-      setDragState((prev) =>
-        prev
-          ? {
-              ...prev,
-              currentX: x,
-              currentY: y,
-              shiftKey: e.shiftKey !== undefined ? e.shiftKey : prev.shiftKey,
-            }
-          : null
-      );
+      const nextDragState: DragState = {
+        ...dragState,
+        currentX: x,
+        currentY: y,
+        shiftKey: e.shiftKey !== undefined ? e.shiftKey : dragState.shiftKey,
+      };
+      dragStateRef.current = nextDragState;
+      setDragState(nextDragState);
     };
 
-    const handleMouseUp = (e: MouseEvent) => {
-      if (!dragState) return;
+    const processMouseMove = () => {
+      const e = pendingMouseMoveRef.current;
+      pendingMouseMoveRef.current = null;
+      const currentDrag = dragStateRef.current;
+      if (!e || !currentDrag) return;
+      processDragMove(currentDrag, e);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const currentDrag = dragStateRef.current;
+      if (!currentDrag) {
+        const coords = getStageCoordinates(e);
+        setMousePos(coords);
+        if (activeTool === 'pen') {
+          setPenHoverPoint(coords);
+        }
+        return;
+      }
+
+      if (currentDrag.type === 'draw_pencil') {
+        const coords = getStageCoordinates(e);
+        const pts = currentDrag.pencilPoints ?? [];
+        const last = pts[pts.length - 1];
+        if (!last || Math.hypot(coords.x - last.x, coords.y - last.y) >= 2) {
+          const nextPoints = [...pts, coords];
+          currentDrag.pencilPoints = nextPoints;
+          currentDrag.currentX = coords.x;
+          currentDrag.currentY = coords.y;
+          dragStateRef.current = currentDrag;
+        }
+      }
+
+      pendingMouseMoveRef.current = e;
+      if (dragRafRef.current === null) {
+        dragRafRef.current = requestAnimationFrame(() => {
+          dragRafRef.current = null;
+          processMouseMove();
+        });
+      }
+    };
+
+    const handleMouseUpWithDrag = (dragState: DragState, e: MouseEvent) => {
       setTransformBadge(null);
       rotateDragRef.current = null;
 
@@ -2814,6 +2841,7 @@ export const Stage: React.FC = () => {
             dragState.subselectPathIndex ?? 0
           );
         }
+        dragStateRef.current = null;
         setDragState(null);
         return;
       }
@@ -3166,7 +3194,23 @@ export const Stage: React.FC = () => {
         }
       }
 
+      dragStateRef.current = null;
       setDragState(null);
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+        if (pendingMouseMoveRef.current) {
+          processMouseMove();
+        }
+      }
+      pendingMouseMoveRef.current = null;
+
+      const currentDrag = dragStateRef.current;
+      if (!currentDrag) return;
+      handleMouseUpWithDrag(currentDrag, e);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -3258,6 +3302,15 @@ export const Stage: React.FC = () => {
     window.addEventListener('keyup', handleKeyUp);
 
     return () => {
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+        if (pendingMouseMoveRef.current) {
+          processMouseMove();
+        }
+      }
+      pendingMouseMoveRef.current = null;
+
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('keydown', handleKeyDown);
@@ -3278,6 +3331,17 @@ export const Stage: React.FC = () => {
     currentFrame,
     getStageCoordinates,
   ]);
+
+  // Clean up drag RAF on unmount
+  useEffect(() => {
+    return () => {
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+      }
+      pendingMouseMoveRef.current = null;
+    };
+  }, []);
 
   // Zoom helpers
   const handleZoomFit = () => {
