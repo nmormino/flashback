@@ -20,6 +20,7 @@ export default defineConfig({
             '@radix-ui/react-tooltip',
             '@radix-ui/react-slider'
           ],
+          'vendor-geometry': ['paper', 'opentype.js', 'bezier-js', 'fit-curve', 'wawoff2'],
           'flashback-runtime': ['@flashback/runtime', '@flashback/serializer']
         }
       }
